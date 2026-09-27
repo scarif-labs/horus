@@ -1,0 +1,6 @@
+[submodule "native/proot"]
+	path = native/proot
+	url = https://github.com/termux/proot.git
+[submodule "native/libandroid-shmem"]
+	path = native/libandroid-shmem
+	url = https://github.com/termux/libandroid-shmem.git

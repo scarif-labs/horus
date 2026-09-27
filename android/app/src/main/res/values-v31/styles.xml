@@ -1,0 +1,12 @@
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@drawable/horus_splash_window</item>
+        <item name="android:statusBarColor">@color/horus_splash_background</item>
+        <item name="android:navigationBarColor">@color/horus_splash_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowSplashScreenBackground">@color/horus_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/horus_splash_mark</item>
+    </style>
+</resources>

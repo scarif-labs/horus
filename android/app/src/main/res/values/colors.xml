@@ -1,0 +1,5 @@
+<resources>
+    <color name="horus_splash_background">#090C0D</color>
+    <color name="horus_icon_gradient_center">#17231A</color>
+    <color name="horus_icon_gradient_edge">#080C0A</color>
+</resources>

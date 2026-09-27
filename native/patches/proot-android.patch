@@ -1,0 +1,467 @@
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index 447d723..b5cd83b 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -23,6 +23,10 @@
+ #include <sched.h>      /* CLONE_*,  */
+ #include <sys/types.h>  /* pid_t, size_t, */
+ #include <stdlib.h>     /* NULL, */
++#include <unistd.h>     /* getpid(2), */
++#include <stdio.h>      /* snprintf(3), */
++#include <dirent.h>     /* opendir(3), readdir(3), */
++#include <limits.h>     /* INT_MAX, */
+ #include <assert.h>     /* assert(3), */
+ #include <string.h>     /* bzero(3), */
+ #include <stdbool.h>    /* bool, true, false, */
+@@ -207,6 +211,96 @@ no_mem:
+ 
+ static uint64_t next_vpid = 1;
+ 
++/* Read host IDs, including non-leader TIDs which /proc does not enumerate. */
++static bool read_child_ids(pid_t pid, int *tgid, int *ppid, int *tracer)
++{
++	char path[64];
++	char line[256];
++	FILE *file;
++
++	*tgid = *ppid = *tracer = -1;
++	snprintf(path, sizeof(path), "/proc/%d/status", pid);
++	file = fopen(path, "r");
++	if (file == NULL)
++		return false;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		if (sscanf(line, "Tgid: %d", tgid) == 1
++		    || sscanf(line, "PPid: %d", ppid) == 1
++		    || sscanf(line, "TracerPid: %d", tracer) == 1)
++			continue;
++	}
++	fclose(file);
++	return *tgid > 0 && *ppid >= 0 && *tracer >= 0;
++}
++
++/*
++ * Android may withhold GETEVENTMSG. Recover only a unique, uninitialized
++ * child owned by this tracer, using host parent/thread-group relationships.
++ * A child's SIGSTOP can precede the parent's event: its pending Tracee must
++ * be reused so new_child() can inherit configuration and restart it.
++ * PID order cannot identify the event child (PIDs wrap and threads race).
++ */
++static pid_t find_uninitialized_child(const Tracee *parent, word_t clone_flags)
++{
++	char path[64];
++	DIR *proc;
++	struct dirent *entry;
++	pid_t found = -ESRCH;
++	int parent_tgid, parent_ppid, parent_tracer;
++	bool thread = (clone_flags & CLONE_THREAD) != 0;
++
++	if (!read_child_ids(parent->pid, &parent_tgid, &parent_ppid, &parent_tracer)
++	    || parent_tracer != getpid())
++		return -ESRCH;
++
++	if (thread)
++		snprintf(path, sizeof(path), "/proc/%d/task", parent->pid);
++	else
++		snprintf(path, sizeof(path), "/proc");
++	proc = opendir(path);
++	if (proc == NULL)
++		return -errno;
++
++	while ((entry = readdir(proc)) != NULL) {
++		char *end;
++		long candidate;
++		int tgid, ppid, tracer;
++		Tracee *known;
++
++		errno = 0;
++		candidate = strtol(entry->d_name, &end, 10);
++		if (errno != 0 || end == entry->d_name || *end != '\0'
++		    || candidate <= 0 || candidate > INT_MAX
++		    || candidate == parent->pid)
++			continue;
++
++		/* Do not use get_tracee(): even lookup flushes the tracee's ctx. */
++		LIST_FOREACH(known, &tracees, link)
++			if (known->pid == candidate)
++				break;
++		if (known != NULL && (known->exe != NULL || known->parent != NULL
++		    || known->sigstop != SIGSTOP_PENDING || known->terminated))
++			continue;
++		if (!read_child_ids((pid_t) candidate, &tgid, &ppid, &tracer)
++		    || tracer != getpid())
++			continue;
++		if (thread ? tgid != parent_tgid
++		    : (tgid != candidate || ppid != ((clone_flags & CLONE_PARENT)
++			? parent_ppid : parent_tgid)))
++			continue;
++
++		if (found > 0) {
++			found = -EAGAIN;
++			break;
++		}
++		found = (pid_t) candidate;
++	}
++
++	(void) closedir(proc);
++
++	return found;
++}
++
+ /**
+  * Allocate a new entry for the tracee @pid, then set its destructor
+  * and add it to the list of tracees.  This function returns NULL if
+@@ -383,7 +477,7 @@ void free_terminated_tracees()
+ int new_child(Tracee *parent, word_t clone_flags)
+ {
+ 	int ptrace_options;
+-	unsigned long pid;
++	unsigned long pid = 0;
+ 	Tracee *child;
+ 	int status;
+ 
+@@ -408,8 +502,20 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 	/* Get the pid of the parent's new child.  */
+ 	status = ptrace(PTRACE_GETEVENTMSG, parent->pid, NULL, &pid);
+ 	if (status < 0 || pid == 0) {
+-		note(parent, WARNING, SYSTEM, "ptrace(GETEVENTMSG)");
+-		return status;
++		int event_errno = status < 0 ? errno : EIO;
++		pid_t recovered = find_uninitialized_child(parent, clone_flags);
++		if (recovered <= 0) {
++			errno = event_errno;
++			note(parent, ERROR, SYSTEM,
++				"ptrace(GETEVENTMSG): child recovery failed (%d)", -recovered);
++			/* The event loop ignores new_child's return value. Its atexit
++			 * handler kills tracees; do not resume an untracked fork. */
++			exit(EXIT_FAILURE);
++		}
++		pid = (unsigned long) recovered;
++		VERBOSE(parent, 1,
++			"ptrace(GETEVENTMSG) unavailable; recovered child pid %lu from /proc",
++			pid);
+ 	}
+ 
+ 	child = get_tracee(parent, (pid_t) pid, true);
+diff --git a/src/syscall/enter.c b/src/syscall/enter.c
+index 93f4306..91aa02c 100644
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -1808,6 +1808,19 @@ static void maybe_redirect_userns_file(Tracee *tracee, Reg reg)
+ 	(void) set_sysarg_path(tracee, "/dev/null", reg);
+ }
+ 
++static bool disable_proc_fd_access(Tracee *tracee, Reg path_reg)
++{
++	char path[PATH_MAX];
++
++	if (getenv("PROOT_NO_O_TMPFILE") == NULL)
++		return false;
++	if (get_sysarg_path(tracee, path, path_reg) < 0)
++		return false;
++
++	return strcmp(path, "/proc/self/fd") == 0
++		|| strcmp(path, "/proc/self/fd/") == 0;
++}
++
+ /**
+  * Translate the input arguments of the current @tracee's syscall in the
+  * @tracee->pid process area. This function sets @tracee->status to
+@@ -2350,6 +2363,16 @@ int translate_syscall_enter(Tracee *tracee)
+ #undef POKE_WORD
+ 
+ 	case PR_access:
++		if (disable_proc_fd_access(tracee, SYSARG_1)) {
++			poke_reg(tracee, SYSARG_RESULT, (word_t) -ENOENT);
++			set_sysnum(tracee, PR_void);
++			status = 0;
++			break;
++		}
++
++		status = translate_sysarg(tracee, SYSARG_1, REGULAR);
++		break;
++
+ 	case PR_acct:
+ 	case PR_chmod:
+ 	case PR_chown:
+@@ -2508,6 +2531,13 @@ int translate_syscall_enter(Tracee *tracee)
+ 	case PR_fchmodat:
+ 	case PR_faccessat:
+ 	case PR_faccessat2:
++		if (disable_proc_fd_access(tracee, SYSARG_2)) {
++			poke_reg(tracee, SYSARG_RESULT, (word_t) -ENOENT);
++			set_sysnum(tracee, PR_void);
++			status = 0;
++			break;
++		}
++
+ 	case PR_futimesat:
+ 	case PR_mknodat:
+diff --git a/src/tracee/seccomp.c b/src/tracee/seccomp.c
+index 6a4e1f8..9a7f8dd 100644
+--- a/src/tracee/seccomp.c
++++ b/src/tracee/seccomp.c
+@@ -3,6 +3,9 @@
+ #include <unistd.h>    /* getpgid, */
+ #include <utime.h>     /* utimbuf, */
+ #include <sys/vfs.h>   /* statfs64 */
++#include <talloc.h>    /* talloc_*, */
++#include <fcntl.h>     /* AT_FDCWD, */
++#include <limits.h>    /* PATH_MAX, */
+ #include <string.h>    /* memset   */
+ #include <linux/net.h> /* SYS_SENDMMSG */
+ #include <assert.h>    /* assert(3), */
+@@ -258,6 +261,13 @@
+ 		poke_reg(tracee, SYSARG_4, 0);
+ 		restart_syscall_after_seccomp(tracee);
+ 		break;
++	case PR_fchmodat:
++		/* Samsung's app seccomp policy traps fchmodat with ENOSYS. PRoot
++		 * only needs the chmod side effect for its temporary staging path;
++		 * treating this outer-filter event as a successful no-op preserves
++		 * the guest operation and avoids aborting the probe. */
++		set_result_after_seccomp(tracee, 0);
++		break;
+ 
+ 	case PR_chown:
+ 	case PR_lchown:
+ 	case PR_chown32:
+@@ -623,9 +633,119 @@
+ 		if (sxid != sxid_ && sxid != -1)
+ 			ret = -EPERM;
+ 		set_result_after_seccomp(tracee, ret);
++		break;
++	}
++
++	case PR_chdir:
++	{
++		char path[PATH_MAX];
++		char translated[PATH_MAX];
++		int size;
++
++		size = read_string(tracee, path, peek_reg(tracee, ORIGINAL, SYSARG_1), PATH_MAX);
++		if (size < 0) {
++			set_result_after_seccomp(tracee, size);
++			break;
++		}
++		if (size >= PATH_MAX) {
++			set_result_after_seccomp(tracee, -ENAMETOOLONG);
++			break;
++		}
++
++		ret = translate_path(tracee, translated, AT_FDCWD, path, true);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++
++		set_result_after_seccomp(tracee, 0);
++		ret = detranslate_path(tracee, translated, NULL);
++		if (ret >= 0) {
++			chop_finality(translated);
++			char *cwd = talloc_strdup(tracee->fs, translated);
++			if (cwd != NULL) {
++				TALLOC_FREE(tracee->fs->cwd);
++				tracee->fs->cwd = cwd;
++				talloc_set_name_const(tracee->fs->cwd, "$cwd");
++			}
++		}
++		break;
++	}
++
++	case PR_fchdir:
++	{
++		char translated[PATH_MAX];
++		int dirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
++
++		ret = translate_path(tracee, translated, dirfd, ".", true);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++
++		set_result_after_seccomp(tracee, 0);
++		ret = detranslate_path(tracee, translated, NULL);
++		if (ret >= 0) {
++			chop_finality(translated);
++			char *cwd = talloc_strdup(tracee->fs, translated);
++			if (cwd != NULL) {
++				TALLOC_FREE(tracee->fs->cwd);
++				tracee->fs->cwd = cwd;
++				talloc_set_name_const(tracee->fs->cwd, "$cwd");
++			}
++		}
+ 		break;
+ 	}
+ 
++	case PR_getcwd:
++	{
++		char path[PATH_MAX];
++		word_t output = peek_reg(tracee, ORIGINAL, SYSARG_1);
++		size_t size = (size_t) peek_reg(tracee, ORIGINAL, SYSARG_2);
++		if (size == 0) {
++			set_result_after_seccomp(tracee, -EINVAL);
++			break;
++		}
++
++		ret = translate_path(tracee, path, AT_FDCWD, ".", false);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++		size_t cwdSize = strlen(tracee->fs->cwd) + 1;
++		if (size < cwdSize) {
++			set_result_after_seccomp(tracee, -ERANGE);
++			break;
++		}
++		ret = write_data(tracee, output, tracee->fs->cwd, cwdSize);
++		set_result_after_seccomp(tracee, ret < 0 ? ret : (word_t) cwdSize);
++		break;
++	}
++
++	case PR_faccessat:
++		set_result_after_seccomp(tracee, 0);
++		break;
++
++	case PR_faccessat2:
++		set_sysnum(tracee, PR_faccessat);
++		poke_reg(tracee, SYSARG_4, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_renameat2:
++		set_sysnum(tracee, PR_renameat);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_setuid:
++	case PR_setgid:
++	case PR_setreuid:
++	case PR_setregid:
++	case PR_setfsuid:
++	case PR_setfsgid:
++		set_result_after_seccomp(tracee, 0);
++		break;
++
+ 	case PR_set_robust_list:
+ 	default:
+ 		/* Set errno to -ENOSYS */
+diff --git a/src/extension/ashmem_memfd/ashmem_memfd.c b/src/extension/ashmem_memfd/ashmem_memfd.c
+index 8ddf27a..9ef4d25 100644
+--- a/src/extension/ashmem_memfd/ashmem_memfd.c
++++ b/src/extension/ashmem_memfd/ashmem_memfd.c
+@@ -3,6 +3,7 @@
+ #include <stdlib.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <string.h>
+ #include <sys/syscall.h>  /* __NR_memfd_create,  */
+ #include <linux/ashmem.h> /* ASHMEM_GET_SIZE,  */
+ #include <linux/memfd.h>  /* MFD_CLOEXEC  */
+diff --git a/src/extension/sysvipc/sysvipc_shm.c b/src/extension/sysvipc/sysvipc_shm.c
+index 5c4d812..d6d4710 100644
+--- a/src/extension/sysvipc/sysvipc_shm.c
++++ b/src/extension/sysvipc/sysvipc_shm.c
+@@ -29,6 +29,17 @@
+ 
+ #if defined(WITH_LIBANDROID_SHMEM)
+ #include <sys/shm.h>
++
++/* Termux's libandroid-shmem exports the System V compatibility entry points,
++ * but the Android NDK hides the platform declarations when compiling for an
++ * API level below 26. Keep the dependency explicit so the Android PRoot
++ * build does not silently bind to unavailable bionic symbols. */
++extern int libandroid_shmget(key_t key, size_t size, int shmflg);
++extern int libandroid_shmctl(int shmid, int cmd, struct shmid_ds *buf);
++extern int libandroid_shmat_fd(int shmid, size_t *out_size);
++extern int libandroid_shmdt_fd(int fd);
++#define shmget libandroid_shmget
++#define shmctl libandroid_shmctl
+ #endif
+diff --git a/src/extension/fake_id0/fake_id0.c b/src/extension/fake_id0/fake_id0.c
+index 9bd8dad..abd513d 100644
+--- a/src/extension/fake_id0/fake_id0.c
++++ b/src/extension/fake_id0/fake_id0.c
+@@ -532,6 +532,24 @@ static int adjust_elf_auxv(Tracee *tracee, Config *config)
+ 	return 0;
+ }
+ 
++static bool is_owner_change(word_t sysnum) {
++	switch (sysnum) {
++	case PR_chmod:
++	case PR_fchmod:
++	case PR_fchmodat:
++	case PR_chown:
++	case PR_chown32:
++	case PR_fchown:
++	case PR_fchown32:
++	case PR_lchown:
++	case PR_lchown32:
++	case PR_fchownat:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static int handle_perm_err_exit_end(Tracee *tracee, Config *config, bool even_if_not_root) {
+ 	word_t result;
+ 
+@@ -551,6 +569,15 @@ static int handle_perm_err_exit_end(Tracee *tracee, Config *config, bool even_if
+ 	if ((int) result != -EPERM && (int) result != -EACCES)
+ 		return 0;
+ 
++	/* Horus: every guest file really belongs to the app, so the kernel's
++	 * owner checks pass and EACCES from chown/chmod is in practice
++	 * Android's SELinux policy (e.g. on /dev/pts entries, which sshd must
++	 * chown for each login). Report success for any guest user, as for
++	 * root; EPERM keeps the emulated rules below.  */
++	if ((int) result == -EACCES && is_owner_change(get_sysnum(tracee, ORIGINAL))) {
++		poke_reg(tracee, SYSARG_RESULT, 0);
++		return 0;
++	}
++
+ 	/* Force success if the tracee was supposed to have
+ 	 * the capability.  */
+ 	if (even_if_not_root || config->euid == 0) /* TODO: || HAS_CAP(...) */
+diff --git a/src/extension/link2symlink/link2symlink.c b/src/extension/link2symlink/link2symlink.c
+index 9c67b10..f4ddfb0 100644
+--- a/src/extension/link2symlink/link2symlink.c
++++ b/src/extension/link2symlink/link2symlink.c
+@@ -294,7 +294,7 @@ static int my_readlink(const char symlink[PATH_MAX], char value[PATH_MAX])
+ 		? readlink(symlink, value, PATH_MAX)
+ 		: readlinkat(dir_fd, name, value, PATH_MAX);
+ 	if (size < 0)
+-		return size;
++		return errno > 0 ? -errno : -EINVAL;
+ 	if (size >= PATH_MAX)
+ 		return -ENAMETOOLONG;
+ 	value[size] = '\0';
+@@ -849,9 +849,13 @@ static int handle_sysexit_end(Extension *extension)
+ 		if (!S_ISLNK(statl.st_mode))
+ 			return 0;
+ 
++		/* Horus: a faked hard link whose intermediate or final file is
++		 * gone (e.g. `rm -rf` reached the .l2s entries first) is left
++		 * as the plain symlink it is, so it can still be stat'ed and
++		 * removed; failing here made it undeletable with EPERM.  */
+ 		size = my_readlink(original, intermediate);
+ 		if (size < 0)
+-			return size;
++			return 0;
+ 
+ 		name = strrchr(intermediate, '/');
+ 		if (name == NULL)
+@@ -864,11 +868,11 @@ static int handle_sysexit_end(Extension *extension)
+ 
+ 		intermediate_proc: size = my_readlink(intermediate, final);
+ 		if (size < 0)
+-			return size;
++			return 0;
+ 
+ 		final_proc: status = lstat(final,&finalStat);
+ 		if (status < 0)
+-			return status;
++			return 0;
+ 
+ 		finalStat.st_nlink = atoi(final + strlen(final) - 4);
+ 

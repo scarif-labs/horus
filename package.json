@@ -1,0 +1,78 @@
+{
+  "name": "horus",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "lint": "eslint .",
+    "start": "react-native start",
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "jest --runInBand",
+    "test:unit:failure-probe": "node scripts/ts-unit-failure-probe.js",
+    "test:kotlin": "cd android && ./gradlew :app:testDebugUnitTest --no-daemon",
+    "test:android:connected": "cd android && ./gradlew :app:connectedDebugAndroidTest --no-daemon",
+    "build:android:debug": "cd android && ./gradlew :app:assembleDebug --no-daemon",
+    "build:android:release": "cd android && ./gradlew :app:assembleRelease --no-daemon",
+    "test:clean-install": "node scripts/clean-install.js",
+    "codegen:clean": "node scripts/clean-codegen.js",
+    "codegen": "cd android && ./gradlew :app:generateCodegenArtifactsFromSchema --no-daemon",
+    "scan:terminal-boundary": "node scripts/scan-terminal-boundary.js",
+    "test:alpine-p0": "node scripts/alpine-poc/p0-baseline.js",
+    "test:android:alpine-p0": "node scripts/alpine-poc/p0-device.js",
+    "test:alpine-p1": "node scripts/alpine-poc/p1-baseline.js",
+    "test:android:alpine-p1": "node scripts/alpine-poc/p1-device.js",
+    "test:alpine-p2": "node scripts/alpine-poc/p2-baseline.js",
+    "test:alpine-p2:resume": "node scripts/alpine-poc/p2-baseline.js --resume-after-glm-baseline",
+    "test:android:alpine-p2": "node scripts/alpine-poc/p2-device.js",
+    "test:android:alpine-p3": "node scripts/alpine-poc/p3-screen-device.js",
+    "test:android:alpine-p4": "node scripts/alpine-poc/p4-lifecycle-device.js",
+    "test:android:alpine-p5": "node scripts/alpine-poc/p5-cumulative.js",
+    "test:android:alpine-p6": "node scripts/alpine-poc/p6-cli-compatibility-device.js",
+    "test:codegen:kotlin": "npm run codegen:clean && npm run codegen && cd android && ./gradlew :app:compileDebugKotlin --no-daemon",
+    "environment:report": "node scripts/environment-report.js",
+    "environment:validate": "node scripts/validate-environment-report.js"
+  },
+  "codegenConfig": {
+    "name": "HorusSpec",
+    "type": "modules",
+    "jsSrcsDir": "src/native",
+    "android": {
+      "javaPackageName": "com.scariflabs.horus.specs"
+    }
+  },
+  "dependencies": {
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/headless": "6.0.0",
+    "fast-text-encoding": "1.0.6",
+    "react": "19.2.3",
+    "react-native": "0.87.0",
+    "react-native-get-random-values": "2.0.0",
+    "web-streams-polyfill": "4.3.0"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/plugin-transform-class-static-block": "7.29.7",
+    "@babel/plugin-transform-export-namespace-from": "7.29.7",
+    "@babel/preset-env": "7.29.7",
+    "@babel/runtime": "7.29.7",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native/babel-preset": "0.87.0",
+    "@react-native/eslint-config": "0.87.0",
+    "@react-native/jest-preset": "0.87.0",
+    "@react-native/metro-config": "0.87.0",
+    "@react-native/typescript-config": "0.87.0",
+    "@types/jest": "29.5.14",
+    "@types/react": "19.2.18",
+    "@types/react-test-renderer": "19.1.0",
+    "eslint": "8.57.1",
+    "jest": "29.7.0",
+    "prettier": "2.8.8",
+    "react-test-renderer": "19.2.3",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
+  }
+}

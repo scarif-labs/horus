@@ -1,0 +1,37 @@
+{
+  "name": "horus-cli",
+  "version": "1.0.0",
+  "description": "Use Android phones running Horus like small Linux machines over USB: pair, ssh, exec on many phones, copy, and forward ports.",
+  "license": "MIT",
+  "homepage": "https://github.com/scarif-labs/horus/tree/main/cli#readme",
+  "bugs": {
+    "url": "https://github.com/scarif-labs/horus/issues"
+  },
+  "keywords": [
+    "android",
+    "ssh",
+    "adb",
+    "phone",
+    "proot",
+    "alpine",
+    "claude-code",
+    "codex"
+  ],
+  "bin": {
+    "horus": "bin/horus.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scarif-labs/horus.git",
+    "directory": "cli"
+  }
+}

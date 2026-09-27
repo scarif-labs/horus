@@ -1,0 +1,328 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+/**
+ * This is the configuration block to customize your React Native Android app.
+ * By default you don't need to apply any configuration, just uncomment the lines you need.
+ */
+react {
+    // Keep the debug APK installable without Metro while retaining __DEV__ behavior.
+    debuggableVariants = []
+
+    /* Folders */
+    //   The root of your project, i.e. where "package.json" lives. Default is '../..'
+    // root = file("../../")
+    //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
+    // reactNativeDir = file("../../node_modules/react-native")
+    //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
+    // codegenDir = file("../../node_modules/@react-native/codegen")
+    //   The cli.js file which is the React Native CLI entrypoint. Default is ../../node_modules/react-native/cli.js
+    // cliFile = file("../../node_modules/react-native/cli.js")
+
+    /* Variants */
+    //   The list of variants to that are debuggable. For those we're going to
+    //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
+    //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
+    // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
+
+    /* Bundling */
+    //   A list containing the node command and its flags. Default is just 'node'.
+    // nodeExecutableAndArgs = ["node"]
+    //
+    //   The command to run when bundling. By default is 'bundle'
+    // bundleCommand = "ram-bundle"
+    //
+    //   The path to the CLI configuration file. Default is empty.
+    // bundleConfig = file(../rn-cli.config.js)
+    //
+    //   The name of the generated asset file containing your JS bundle
+    // bundleAssetName = "MyApplication.android.bundle"
+    //
+    //   The entry file for bundle generation. Default is 'index.android.js' or 'index.js'
+    // entryFile = file("../js/MyApplication.android.js")
+    //
+    //   A list of extra flags to pass to the 'bundle' commands.
+    //   See https://github.com/react-native-community/cli/blob/main/docs/commands.md#bundle
+    // extraPackagerArgs = []
+
+    /* Hermes Commands */
+    //   The hermes compiler command to run. By default it is 'hermesc'
+    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
+    // Lets source-only builds (F-Droid) use a hermesc compiled from source
+    // instead of the prebuilt one in node_modules/hermes-compiler.
+    if (findProperty("horus.hermesCommand")) {
+        hermesCommand = findProperty("horus.hermesCommand")
+    }
+    //
+    //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
+    // hermesFlags = ["-O", "-output-source-map"]
+
+    /* Autolinking */
+    autolinkLibrariesWithApp()
+}
+
+// The React Native plugin configures bundle tasks later in variant setup, so
+// override its production-mode default after those task inputs are registered.
+afterEvaluate {
+    tasks.named("createBundleDebugJsAndAssets") {
+        devEnabled.set(true)
+    }
+}
+
+/**
+ * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ */
+def enableProguardInReleaseBuilds = false
+
+/**
+ * The preferred build flavor of JavaScriptCore (JSC)
+ *
+ * For example, to use the international variant, you can use:
+ * `def jscFlavor = io.github.react-native-community:jsc-android-intl:2026004.+`
+ *
+ * The international variant includes ICU i18n library and necessary data
+ * allowing to use e.g. `Date.toLocaleString` and `String.localeCompare` that
+ * give correct results when using with locales other than en-US. Note that
+ * this variant is about 6MiB larger per architecture than default.
+ */
+// Hermes is the only configured runtime; keep the dormant JSC fallback reproducible.
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004'
+def forceKotlinUnitFailure = providers.gradleProperty("horus.forceKotlinUnitFailure").getOrElse("false")
+
+// Alpine terminal runtime (PRoot + loader), compiled from the pinned sources
+// under native/ by scripts/native/build-proot-runtime.sh with the pinned NDK.
+// Shipped through the JNI-library packaging path so the APK extraction rules
+// preserve executable permissions. The packaged manifest asset records the
+// digests of exactly these binaries; ProotRuntimeLocator fails closed on any
+// mismatch at runtime.
+def nativeSourceDir = file("../../native")
+def alpineRuntimeBuildScript = file("../../scripts/native/build-proot-runtime.sh")
+def alpineRuntimeStagingDir = file("$buildDir/generated/alpine-runtime-jniLibs")
+def alpineRuntimeAbiDir = new File(alpineRuntimeStagingDir, "arm64-v8a")
+def alpineRuntimeManifestTemplate = file("src/main/alpine-runtime/manifest.template.json")
+def alpineRuntimeAssetsDir = file("$buildDir/generated/alpine-runtime-assets")
+
+tasks.register("buildAlpineRuntime", Exec) {
+    inputs.file(alpineRuntimeBuildScript)
+    inputs.files(fileTree(nativeSourceDir) { exclude("**/.git") })
+    outputs.dir(alpineRuntimeAbiDir)
+    commandLine "bash", alpineRuntimeBuildScript.absolutePath,
+            android.ndkDirectory.absolutePath,
+            rootProject.ext.minSdkVersion.toString(),
+            alpineRuntimeAbiDir.absolutePath
+}
+
+tasks.register("generateAlpineRuntimeManifest") {
+    dependsOn("buildAlpineRuntime")
+    def manifestOutput = new File(alpineRuntimeAssetsDir, "alpine-runtime/manifest.json")
+    inputs.file(alpineRuntimeManifestTemplate)
+    inputs.dir(alpineRuntimeAbiDir)
+    outputs.file(manifestOutput)
+    doLast {
+        def manifest = new groovy.json.JsonSlurper().parse(alpineRuntimeManifestTemplate)
+        manifest.target.artifacts = manifest.target.artifacts.collect { artifact ->
+            def binary = new File(alpineRuntimeAbiDir, artifact.jniName)
+            if (!binary.isFile()) {
+                throw new GradleException("Alpine runtime build did not produce ${binary}")
+            }
+            def digest = java.security.MessageDigest.getInstance("SHA-256").digest(binary.bytes)
+            artifact + [sizeBytes: binary.length(), sha256: digest.encodeHex().toString()]
+        }
+        manifestOutput.parentFile.mkdirs()
+        manifestOutput.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(manifest)) + "\n"
+    }
+}
+
+// Alpine terminal PoC Phase 2 PTY helper. Built from
+// app-owned C source with the pinned NDK's clang — no prebuilt binary is
+// vendored — and staged through the same JNI-library packaging path so the
+// APK extraction rules keep the loadable .so in app-native storage. The PoC
+// is ARM64-only by decision, matching the packaged PRoot runtime.
+def ptyHelperSource = file("src/main/cpp/terminal_pty.c")
+def ptyHelperStagingDir = file("$buildDir/generated/horus-pty-jniLibs")
+
+def resolveNdkClang = {
+    def prebuiltDir = new File(android.ndkDirectory, "toolchains/llvm/prebuilt")
+    def hostDirs = prebuiltDir.listFiles()?.findAll { it.isDirectory() } ?: []
+    def clangDir = hostDirs.find { new File(it, "bin/clang").canExecute() }
+    if (clangDir == null) {
+        throw new GradleException("Cannot locate the NDK clang toolchain under ${prebuiltDir}")
+    }
+    new File(clangDir, "bin/clang")
+}
+
+tasks.register("buildHorusPtyHelper", Exec) {
+    def ptyOutputDir = new File(ptyHelperStagingDir, "arm64-v8a")
+    def ptyOutput = new File(ptyOutputDir, "libhorus_pty.so")
+    inputs.file(ptyHelperSource)
+    outputs.file(ptyOutput)
+    doFirst {
+        ptyOutputDir.mkdirs()
+    }
+    commandLine resolveNdkClang(),
+            "--target=aarch64-linux-android${rootProject.ext.minSdkVersion}",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-Wl,-z,max-page-size=16384",
+            ptyHelperSource.absolutePath,
+            "-o",
+            ptyOutput.absolutePath
+}
+
+// React Native's CMake entry point checks for app-level Codegen at CMake
+// configure time.  The React Gradle plugin already makes preBuild generate
+// Codegen, but AGP can configure an existing .cxx graph before that generated
+// directory has been observed.  Make the native configure/build tasks consume
+// the generated JNI directory so a stale graph is invalidated whenever the
+// app bindings are created or regenerated.
+def appCodegenJniDir = file("$buildDir/generated/source/codegen/jni")
+def appCodegenArtifactsTask = tasks.named("generateCodegenArtifactsFromSchema")
+def verifyAppCodegenArtifacts = tasks.register("verifyAppCodegenArtifacts") {
+    dependsOn(appCodegenArtifactsTask)
+    inputs.dir(appCodegenJniDir)
+    doLast {
+        def requiredFiles = [
+                new File(appCodegenJniDir, "CMakeLists.txt"),
+                new File(appCodegenJniDir, "HorusSpec-generated.cpp"),
+                new File(appCodegenJniDir, "HorusSpec.h"),
+        ]
+        def missingFiles = requiredFiles.findAll { !it.isFile() }
+        if (!missingFiles.isEmpty()) {
+            throw new GradleException(
+                    "App Codegen did not produce the required JNI bindings: " +
+                            missingFiles.collect { it.absolutePath }.join(", ")
+            )
+        }
+    }
+}
+
+def invalidateStaleDebugCodegenCmake = tasks.register("invalidateStaleDebugCodegenCmake") {
+    dependsOn(verifyAppCodegenArtifacts)
+    inputs.dir(appCodegenJniDir)
+    doLast {
+        def debugCxxDir = file("$projectDir/.cxx/Debug")
+        if (!debugCxxDir.isDirectory()) {
+            return
+        }
+
+        def staleGraphs = fileTree(debugCxxDir) {
+            include("**/build.ninja")
+        }.files.findAll { graph ->
+            // Only inspect AGP's ABI graphs. CMake also creates nested
+            // compiler-probe Ninja files which can never contain app bindings.
+            def relativeGraphPath = debugCxxDir.toPath().relativize(graph.toPath()).toString()
+            if (relativeGraphPath.split(java.util.regex.Pattern.quote(File.separator)).size() != 3) {
+                return false
+            }
+            def graphText = graph.getText("UTF-8")
+            !graphText.contains("HorusSpec-generated.cpp") ||
+                    !graphText.contains("REACT_NATIVE_APP_MODULE_PROVIDER=HorusSpec_ModuleProvider")
+        }
+        if (!staleGraphs.isEmpty()) {
+            delete(debugCxxDir)
+            logger.lifecycle(
+                    "Invalidated ${staleGraphs.size()} stale debug CMake graph(s) before Codegen reconfiguration"
+            )
+        }
+    }
+}
+
+// Keep this dependency variant-aware: release already has a valid graph, and
+// every debug CMake/model/native task must regenerate and verify app Codegen
+// before AGP invokes CMake.  The generated directory is also an input so an
+// old .cxx graph cannot remain up-to-date after Codegen appears.
+tasks.configureEach { nativeTask ->
+    def isDebugNativeTask = nativeTask.name ==~
+            /(?:configureCMake|generateJsonModel|buildCMake|externalNativeBuild)(?:Debug|DebugOptimized)(?:\[.*\])?/
+    if (isDebugNativeTask) {
+        nativeTask.dependsOn(invalidateStaleDebugCodegenCmake)
+        nativeTask.inputs.dir(appCodegenJniDir)
+    }
+}
+
+// Ensure every APK variant that packages native libraries has built the
+// runtime and generated its digest manifest first.
+tasks.named("preBuild").configure {
+    dependsOn("generateAlpineRuntimeManifest", verifyAppCodegenArtifacts, "buildHorusPtyHelper")
+}
+
+tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+    systemProperty("horus.forceKotlinUnitFailure", forceKotlinUnitFailure)
+}
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "com.scariflabs.horus"
+    defaultConfig {
+        applicationId "com.scariflabs.horus"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    sourceSets {
+        main {
+            jniLibs.srcDir(alpineRuntimeStagingDir)
+            jniLibs.srcDir(ptyHelperStagingDir)
+            assets.srcDir(alpineRuntimeAssetsDir)
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+    // Release builds are unsigned unless a keystore is supplied, e.g. in
+    // ~/.gradle/gradle.properties. F-Droid builds and signs releases itself.
+    def releaseStoreFile = findProperty("horus.releaseStoreFile")
+    signingConfigs {
+        if (releaseStoreFile) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword findProperty("horus.releaseStorePassword")
+                keyAlias findProperty("horus.releaseKeyAlias")
+                keyPassword findProperty("horus.releaseKeyPassword")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (releaseStoreFile) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+dependencies {
+    // The version of react-native is set by the React Native Gradle Plugin
+    implementation("com.facebook.react:react-android")
+
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+
+    testImplementation("junit:junit:4.13.2")
+    // Local JVM tests otherwise resolve Android's deliberately non-functional
+    // org.json stubs instead of the real parser used by the file journal.
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+}

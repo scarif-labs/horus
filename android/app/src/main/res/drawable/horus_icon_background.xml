@@ -1,0 +1,9 @@
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:type="radial"
+        android:centerX="50%"
+        android:centerY="44%"
+        android:gradientRadius="82dp"
+        android:startColor="@color/horus_icon_gradient_center"
+        android:endColor="@color/horus_icon_gradient_edge" />
+</shape>

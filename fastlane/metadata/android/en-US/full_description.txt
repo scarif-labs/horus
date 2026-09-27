@@ -1,0 +1,20 @@
+<p>Horus puts a real Alpine Linux ARM64 workspace on your phone and lets you run coding agents (<b>Claude Code</b>, <b>Codex</b>, and <b>OpenCode</b>) or a plain zsh shell inside it. No root and no Termux are required: the app ships its own PRoot runtime, a native PTY, and a native terminal renderer.</p>
+
+<p><b>Features</b></p>
+<ul>
+<li><b>Alpine workspace on first launch.</b> Horus downloads a pinned Alpine minirootfs, checks its SHA-256 digest, and extracts it into app-private storage. Base tools such as git, curl, jq, ripgrep, python3, and Node are installed on demand.</li>
+<li><b>Coding agents in one tap.</b> Each agent is installed into its own home directory the first time you open it, with the installer output visible in the terminal. Sign-in happens inside each CLI; Horus never handles provider credentials.</li>
+<li><b>Projects.</b> Create a local folder, clone any HTTPS/SSH Git URL, or pick one of your GitHub repositories.</li>
+<li><b>Real terminal.</b> Resize, Ctrl-C, and job control work. An extra key bar provides Esc, Tab, arrows, and sticky Ctrl/Alt.</li>
+<li><b>Sessions survive the UI.</b> Terminals run in a foreground service and keep running when you switch apps, when the app locks, or when Android reclaims the UI.</li>
+<li><b>Local lock.</b> An optional password protects the app; the workspace locks after 15 minutes in the background.</li>
+<li><b>Read-only file browser</b> for your home directory and workspace, with text previews.</li>
+<li><b>Optional remote access over USB.</b> Pair a computer with the open-source horus command-line tool to get an SSH shell on the phone, copy files, forward ports, and run commands on several phones at once. It is off by default, listens only on the phone's loopback (reached through adb), and accepts only computers paired with your Horus password.</li>
+</ul>
+
+<p><b>Things to know</b></p>
+<ul>
+<li>Requires an ARM64 (arm64-v8a) device.</li>
+<li>The Alpine system, its packages, and the coding agents are downloaded from their upstream sources at runtime. Claude Code and Codex are proprietary tools that need accounts with their providers.</li>
+<li>Android's app sandbox is the only security boundary. PRoot emulates user IDs but provides no kernel isolation, so do not run code you do not trust.</li>
+</ul>

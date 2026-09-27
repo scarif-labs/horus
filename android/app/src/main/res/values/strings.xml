@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Horus</string>
+    <string name="terminal_service_channel_name">Terminal sessions</string>
+    <string name="terminal_service_channel_description">Keeps Horus terminal sessions and toolchain work available while another app is visible.</string>
+    <string name="terminal_service_title">Horus terminal runtime active</string>
+    <string name="terminal_service_text">A terminal session or bounded setup task is running.</string>
+    <string name="terminal_session_title_working">%1$s is working on your prompt</string>
+    <string name="terminal_session_title_open">%1$s session is open</string>
+    <string name="terminal_session_title_working_detached">%1$s is still working</string>
+    <string name="terminal_session_title_open_detached">%1$s session is still open</string>
+    <string name="terminal_session_text_working">Tap to follow along.</string>
+    <string name="terminal_session_text_open">Tap to pick up where you left off.</string>
+    <string name="terminal_session_text_detached">Android closed Horus to free up memory, but your session kept running. Tap to pick up where you left off.</string>
+    <string name="terminal_session_subtext">Started %1$s</string>
+    <string name="terminal_turn_channel_name">Turn updates</string>
+    <string name="terminal_turn_channel_description">Tells you when Claude Code, Codex, or OpenCode stops working and needs you while Horus is in the background.</string>
+    <string name="terminal_turn_title">%1$s is waiting for you</string>
+    <string name="terminal_turn_text">It finished its turn or needs your approval. Tap to reply.</string>
+    <string name="remote_access_title">Remote access is on</string>
+    <string name="remote_access_text">Paired computers can open a shell on this phone over USB.</string>
+    <string name="remote_access_text_installing">Installing the SSH server for remote access…</string>
+    <string name="remote_access_stop">Turn off</string>
+</resources>

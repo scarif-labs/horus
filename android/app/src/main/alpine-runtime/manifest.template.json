@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 2,
+  "status": "available",
+  "source": {
+    "packages": [
+      {
+        "name": "proot",
+        "version": "5.1.107.92",
+        "path": "native/proot",
+        "repository": "https://github.com/termux/proot",
+        "revision": "7266fb3e8516535682f5a9c8f3a7e70f6506eddb",
+        "license": "GPL-2.0-only"
+      },
+      {
+        "name": "libtalloc",
+        "version": "2.4.3",
+        "path": "native/talloc",
+        "srcurl": "https://www.samba.org/ftp/talloc/talloc-2.4.3.tar.gz",
+        "srcSha256": "dc46c40b9f46bb34dd97fe41f548b0e8b247b77a918576733c528e83abd854dd",
+        "license": "LGPL-3.0-or-later"
+      },
+      {
+        "name": "libandroidShmem",
+        "version": "0.7",
+        "path": "native/libandroid-shmem",
+        "repository": "https://github.com/termux/libandroid-shmem",
+        "revision": "7f0bd7e25dbdd146265aff7c6a890029e374622d",
+        "license": "BSD-3-Clause"
+      }
+    ]
+  },
+  "target": {
+    "abi": "arm64-v8a",
+    "artifacts": [
+      {
+        "stagedAs": "proot",
+        "jniName": "libproot.so",
+        "linkage": "PIE executable; talloc and libandroid-shmem linked statically"
+      },
+      {
+        "stagedAs": "loader",
+        "jniName": "libproot_loader.so",
+        "linkage": "static executable"
+      }
+    ]
+  },
+  "packaging": {
+    "mechanism": "APK JNI library path",
+    "forbidAssetExtractionAsExecutable": true,
+    "launcherContract": {
+      "executable": "libproot.so",
+      "loaderEnv": "PROOT_LOADER=libproot_loader.so (the compiled-in loader path is never used)",
+      "envMarkers": ["PROOT_LOADER", "PROOT_LOADER_32"]
+    }
+  },
+  "build": {
+    "script": "scripts/native/build-proot-runtime.sh",
+    "note": "Built from source at APK build time; sizeBytes and sha256 for each artifact are filled in by the generateAlpineRuntimeManifest Gradle task",
+    "patches": [
+      {
+        "sourcePatch": "native/patches/proot-android.patch",
+        "changes": [
+          "Recover a unique uninitialized fork/clone child, including pending SIGSTOP entries and CLONE_THREAD tasks, using host Tgid/PPid/TracerPid from /proc; fail explicitly if recovery is missing or ambiguous",
+          "Handle Android outer-seccomp traps for fchmodat, chdir/fchdir/getcwd, faccessat/faccessat2, renameat2, and guest identity calls inside PRoot's seccomp event path",
+          "Bind System V shm calls to libandroid-shmem explicitly when targeting API levels below 26"
+        ]
+      }
+    ]
+  }
+}

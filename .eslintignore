@@ -1,0 +1,6 @@
+artifacts/
+android/app/build/
+android/build/
+android/app/.cxx/
+android/.gradle/
+vendor/

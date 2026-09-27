@@ -1,0 +1,6 @@
+First release.
+
+- Alpine Linux workspace with a native terminal
+- Claude Code, Codex, OpenCode, and a zsh shell
+- Optional SSH access from a computer over USB with the horus CLI
+- PRoot runtime built from source

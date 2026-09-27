@@ -1,0 +1,12 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/horus_splash_background" />
+    <item
+        android:width="256dp"
+        android:height="256dp"
+        android:gravity="center">
+        <bitmap
+            android:src="@drawable/horus_splash_mark"
+            android:gravity="center"
+            android:filter="true" />
+    </item>
+</layer-list>
