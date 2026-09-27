@@ -36,7 +36,8 @@ PRoot runtime, a native PTY, and a native terminal renderer.
   in the background.
 - **Read-only file browser** for your home directory and `/workspace`, with
   text previews.
-- **Optional remote access over USB.** Pair a computer with the `horus` CLI to
+- **Optional remote access over USB.** Pair a computer with the
+  [`horus` CLI](https://www.npmjs.com/package/horus-cli) to
   get an SSH shell on the phone, copy and sync files, forward ports, and run
   commands on several phones at once. It is off by default and nothing else
   depends on it (see [Remote access](#remote-access-optional)).
@@ -113,14 +114,16 @@ on the phone over USB. You can connect several phones at once.
 ### Install the CLI
 
 You need Node 18+, `adb` (Android platform-tools), and OpenSSH (`ssh`, `scp`;
-`rsync` for `horus sync`).
+`rsync` for `horus sync`). On macOS, `brew install android-platform-tools`
+gives you `adb`; on Linux it's usually the `adb` or `android-tools` package.
 
 ```sh
 npm install -g horus-cli
 horus help
 ```
 
-The CLI has no dependencies. To run it from a clone of this repo instead,
+The CLI ([horus-cli on npm](https://www.npmjs.com/package/horus-cli)) has no
+dependencies. To run it from a clone of this repo instead,
 use `npm install -g ./cli`.
 
 ### Connect a phone

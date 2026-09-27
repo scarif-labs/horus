@@ -10,7 +10,8 @@ Remote access is optional. Horus works fully on the phone without it.
 ## Install
 
 Needs Node 18+, `adb` (Android platform-tools), and OpenSSH (`ssh`, `scp`;
-`rsync` for `horus sync`).
+`rsync` for `horus sync`). On macOS, `brew install android-platform-tools`
+gives you `adb`; on Linux it's usually the `adb` or `android-tools` package.
 
 ```sh
 npm install -g horus-cli
