@@ -17,6 +17,9 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.scariflabs.horus.specs.NativeTerminalRuntimeSpec
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
@@ -1290,6 +1293,76 @@ class TerminalRuntimeModule(
           putDouble("sizeBytes", outcome.sizeBytes.toDouble())
         }
       }
+    }
+  }
+
+  // Exports can take minutes, so they get their own worker and never block
+  // folder browsing. Only one export runs at a time.
+  private val guestExportExecutor: ExecutorService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    Executors.newSingleThreadExecutor { runnable ->
+      Thread(runnable, "guest-file-export").apply { isDaemon = true }
+    }
+  }
+  private val guestExportInProgress = AtomicBoolean(false)
+
+  /**
+   * Copies every regular file below a guest home/workspace directory into
+   * the shared Download/Horus folder so it can be opened by other apps.
+   */
+  override fun exportGuestDirectory(request: ReadableMap, promise: Promise) {
+    val requestId = stringField(request, "requestId")
+    val responseRequestId = requestId ?: INVALID_REQUEST_ID
+    if (isInvalidated()) {
+      promise.resolve(guestFileError(responseRequestId, "internal_error"))
+      return
+    }
+    val parsed = guestFileRequest(request)
+    if (!TerminalRuntimeContract.isValidRequestId(requestId) || parsed == null) {
+      promise.resolve(guestFileError(responseRequestId, "invalid_request"))
+      return
+    }
+    val (root, path) = parsed
+    val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+    val sink = DownloadsExportSink(appContext, GuestFileBrowser.exportFolderName(root, path, timestamp))
+    if (!sink.hasWriteAccess()) {
+      promise.resolve(guestFileError(responseRequestId, "permission_denied"))
+      return
+    }
+    if (!guestExportInProgress.compareAndSet(false, true)) {
+      promise.resolve(guestFileError(responseRequestId, "busy"))
+      return
+    }
+    try {
+      guestExportExecutor.execute {
+        val response = try {
+          if (isInvalidated()) {
+            guestFileError(responseRequestId, "internal_error")
+          } else {
+            when (val outcome = guestFileBrowser().export(root, path, sink)) {
+              is GuestFileBrowser.ExportOutcome.Failure -> guestFileError(responseRequestId, outcome.errorCode)
+              is GuestFileBrowser.ExportOutcome.Success -> {
+                sink.finish()
+                Arguments.createMap().apply {
+                  putString("requestId", responseRequestId)
+                  putString("status", "success")
+                  putString("destination", sink.displayPath)
+                  putInt("fileCount", outcome.fileCount)
+                  putDouble("byteCount", outcome.byteCount.toDouble())
+                  putInt("skippedCount", outcome.skippedCount)
+                }
+              }
+            }
+          }
+        } catch (_: Exception) {
+          guestFileError(responseRequestId, "internal_error")
+        } finally {
+          guestExportInProgress.set(false)
+        }
+        deliver(promise, response)
+      }
+    } catch (_: RejectedExecutionException) {
+      guestExportInProgress.set(false)
+      deliver(promise, guestFileError(responseRequestId, "internal_error"))
     }
   }
 

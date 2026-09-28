@@ -435,6 +435,34 @@ export type ReadGuestFileResponse = {
   errorCode?: GuestFileErrorCode;
 };
 
+export type ExportGuestDirectoryRequest = {
+  requestId: string;
+  root: GuestFileRootName;
+  path: string[];
+};
+
+export type ExportGuestDirectoryErrorCode =
+  | 'internal_error'
+  | 'invalid_request'
+  | 'invalid_path'
+  | 'not_found'
+  | 'too_large'
+  | 'command_failed'
+  | 'permission_denied'
+  | 'busy';
+
+export type ExportGuestDirectoryResponse = {
+  requestId: string;
+  status: 'success' | 'error';
+  /** Shared-storage folder the files were written to, e.g. Download/Horus/src-20260928-143205. */
+  destination?: string;
+  fileCount?: number;
+  byteCount?: number;
+  /** Symlinks, special files, undecodable names, and files that failed to copy. */
+  skippedCount?: number;
+  errorCode?: ExportGuestDirectoryErrorCode;
+};
+
 /**
  * Event payloads delivered on TERMINAL_SESSION_EVENT_NAME via the device
  * event emitter (they do not pass through codegen). Output chunks carry a
@@ -496,6 +524,8 @@ export interface Spec extends TurboModule {
   listGuestDirectory(request: ListGuestDirectoryRequest): Promise<ListGuestDirectoryResponse>;
   /** Reads a capped regular-file preview directly from app-private storage. */
   readGuestFile(request: ReadGuestFileRequest): Promise<ReadGuestFileResponse>;
+  /** Copies a guest directory's regular files into the shared Download/Horus folder. */
+  exportGuestDirectory(request: ExportGuestDirectoryRequest): Promise<ExportGuestDirectoryResponse>;
   /** No-op required by NativeEventEmitter; events are emitted natively. */
   addListener(eventName: string): void;
   /** No-op required by NativeEventEmitter; events are emitted natively. */

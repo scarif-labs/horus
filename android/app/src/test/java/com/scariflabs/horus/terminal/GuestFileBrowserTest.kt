@@ -205,6 +205,60 @@ class GuestFileBrowserTest {
     assertEquals(GuestFileBrowser.LIST_LIMIT, capped.entries.size + capped.hiddenInvalidNameCount)
   }
 
+  @Test
+  fun exportsEveryRegularFileRecursivelyAndSkipsLinks() {
+    File(workspace, "project/src/deep").mkdirs()
+    File(workspace, "project/README.md").writeText("hi")
+    File(workspace, "project/.env").writeText("A=1\n")
+    File(workspace, "project/src/deep/main.ts").writeText("x")
+    File(workspace, "project/empty").mkdir()
+    File(home, "secret").writeText("outside")
+    Files.createSymbolicLink(File(workspace, "project/escape").toPath(), File(home, "secret").toPath())
+    Files.createSymbolicLink(File(workspace, "project/dir-link").toPath(), home.toPath())
+
+    val written = sortedMapOf<String, String>()
+    val outcome = browser.export("workspace", listOf("project")) { relative, source ->
+      written[relative.joinToString("/")] = source.readBytes().toString(Charsets.UTF_8)
+    }
+
+    assertEquals(GuestFileBrowser.ExportOutcome.Success(fileCount = 3, byteCount = 7, skippedCount = 2), outcome)
+    assertEquals(mapOf(".env" to "A=1\n", "README.md" to "hi", "src/deep/main.ts" to "x"), written)
+  }
+
+  @Test
+  fun exportCountsFilesTheSinkRejectsAsSkipped() {
+    File(workspace, "a.txt").writeText("a")
+    File(workspace, "b.txt").writeText("bb")
+
+    val outcome = browser.export("workspace", emptyList()) { relative, _ ->
+      if (relative == listOf("a.txt")) throw java.io.IOException("disk full")
+    }
+
+    assertEquals(GuestFileBrowser.ExportOutcome.Success(fileCount = 1, byteCount = 2, skippedCount = 1), outcome)
+  }
+
+  @Test
+  fun exportRejectsBadPathsSymlinkedFoldersAndOversizedTrees() {
+    Files.createSymbolicLink(File(workspace, "linked").toPath(), home.toPath())
+    val sink = GuestFileBrowser.ExportSink { _, _ -> error("must not write") }
+    assertEquals(GuestFileBrowser.ExportOutcome.Failure("invalid_path"), browser.export("workspace", listOf(".."), sink))
+    assertEquals(GuestFileBrowser.ExportOutcome.Failure("invalid_path"), browser.export("workspace", listOf("linked"), sink))
+    assertEquals(GuestFileBrowser.ExportOutcome.Failure("not_found"), browser.export("workspace", listOf("missing"), sink))
+    assertEquals(GuestFileBrowser.ExportOutcome.Failure("invalid_path"), browser.export("elsewhere", emptyList(), sink))
+
+    repeat(GuestFileBrowser.EXPORT_MAX_FILES + 1) { index -> File(home, "f$index").createNewFile() }
+    assertEquals(GuestFileBrowser.ExportOutcome.Failure("too_large"), browser.export("home", emptyList(), sink))
+  }
+
+  @Test
+  fun namesExportFoldersSafelyForSharedStorage() {
+    assertEquals("project-20260928-143205", GuestFileBrowser.exportFolderName("workspace", listOf("a", "project"), "20260928-143205"))
+    assertEquals("home-1", GuestFileBrowser.exportFolderName("home", emptyList(), "1"))
+    assertEquals("a_b_c_", GuestFileBrowser.exportSafeName("a:b?c*"))
+    assertEquals(".env", GuestFileBrowser.exportSafeName(".env"))
+    assertEquals("_", GuestFileBrowser.exportSafeName("..."))
+  }
+
   private fun entry(name: String, kind: GuestFileBrowser.EntryKind, size: Long) =
     GuestFileBrowser.Entry(name, kind, size)
 }

@@ -1,3 +1,4 @@
+import {PermissionsAndroid, Platform} from 'react-native';
 import nativeTerminalRuntime, {type Spec as TerminalRuntimeSpec} from '../native/NativeTerminalRuntime';
 import {buildZshScriptCommand, shellQuote} from '../terminal/commandFactory';
 import {decodeBase64} from '../terminal/session/sessionContract';
@@ -644,6 +645,109 @@ async function readGuestTextFileNatively(
   try {
     const response = await runtime.readGuestFile({requestId, root, path: [...path]});
     return mapNativeGuestFileResponse(response, requestId);
+  } catch {
+    return {kind: 'error', errorCode: 'internal_error'};
+  }
+}
+
+export type GuestExportErrorCode =
+  | 'internal_error'
+  | 'invalid_request'
+  | 'invalid_path'
+  | 'invalid_output'
+  | 'not_found'
+  | 'too_large'
+  | 'command_failed'
+  | 'permission_denied'
+  | 'busy'
+  | 'unsupported';
+
+export type GuestExportResult =
+  | Readonly<{
+      kind: 'success';
+      destination: string;
+      fileCount: number;
+      byteCount: number;
+      skippedCount: number;
+    }>
+  | Readonly<{kind: 'error'; errorCode: GuestExportErrorCode}>;
+
+/** Mirrors EXPORT_MAX_FILES / EXPORT_MAX_BYTES in GuestFileBrowser.kt. */
+export const GUEST_FILE_EXPORT_MAX_FILES = 20_000 as const;
+export const GUEST_FILE_EXPORT_MAX_BYTES = 2 * 1024 ** 3;
+
+const EXPORT_ERROR_CODES: readonly GuestExportErrorCode[] = [
+  'internal_error',
+  'invalid_request',
+  'invalid_path',
+  'not_found',
+  'too_large',
+  'command_failed',
+  'permission_denied',
+  'busy',
+];
+
+export type GuestExportNativeRuntime = Pick<TerminalRuntimeSpec, 'exportGuestDirectory'>;
+
+export function mapNativeGuestExportResponse(response: unknown, requestId: string): GuestExportResult {
+  if (!isRecord(response) || response.requestId !== requestId) {
+    return {kind: 'error', errorCode: 'invalid_output'};
+  }
+  if (response.status === 'error') {
+    const code = response.errorCode;
+    return typeof code === 'string' && (EXPORT_ERROR_CODES as readonly string[]).includes(code)
+      ? {kind: 'error', errorCode: code as GuestExportErrorCode}
+      : {kind: 'error', errorCode: 'invalid_output'};
+  }
+  const {destination, fileCount, byteCount, skippedCount} = response;
+  if (
+    response.status !== 'success' ||
+    typeof destination !== 'string' ||
+    destination.length === 0 ||
+    !isSafeSize(fileCount) ||
+    !isSafeSize(byteCount) ||
+    !isSafeSize(skippedCount)
+  ) {
+    return {kind: 'error', errorCode: 'invalid_output'};
+  }
+  return {kind: 'success', destination, fileCount, byteCount, skippedCount};
+}
+
+/**
+ * Android 7-9 need WRITE_EXTERNAL_STORAGE to write the public Download
+ * folder; 10+ write through MediaStore without any permission.
+ */
+async function ensureDownloadsWritable(): Promise<boolean> {
+  if (Platform.OS !== 'android' || Number(Platform.Version) >= 29) return true;
+  try {
+    const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+    return result === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copies every regular file below a guest directory into the shared
+ * Download/Horus/<folder>-<timestamp> folder. Native-only: the PTY fallback
+ * has no route to shared storage.
+ */
+export async function exportGuestDirectory(
+  root: GuestFileRoot,
+  path: GuestFilePath,
+  runtime: Partial<GuestExportNativeRuntime> | null = nativeTerminalRuntime,
+): Promise<GuestExportResult> {
+  if (!isGuestFileRoot(root) || !isValidGuestFilePath(path)) {
+    return {kind: 'error', errorCode: 'invalid_path'};
+  }
+  if (runtime === null || runtime === undefined || typeof runtime.exportGuestDirectory !== 'function') {
+    return {kind: 'error', errorCode: 'unsupported'};
+  }
+  if (!(await ensureDownloadsWritable())) return {kind: 'error', errorCode: 'permission_denied'};
+  const requestId = nextRequestId('export');
+  try {
+    const response = await runtime.exportGuestDirectory({requestId, root, path: [...path]});
+    return mapNativeGuestExportResponse(response, requestId);
   } catch {
     return {kind: 'error', errorCode: 'internal_error'};
   }

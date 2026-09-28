@@ -5,11 +5,13 @@ import {encodeTestBase64} from '../src/testSupport/base64';
 import {
   buildListGuestDirectoryCommand,
   buildReadGuestTextFileCommand,
+  exportGuestDirectory,
   GUEST_FILE_LIST_LIMIT,
   GUEST_FILE_QUERY_TIMEOUT_MS,
   type GuestFileNativeRuntime,
   listGuestDirectory,
   mapNativeGuestDirectoryResponse,
+  mapNativeGuestExportResponse,
   mapNativeGuestFileResponse,
   parseGuestDirectoryOutput,
   parseGuestTextFileOutput,
@@ -413,5 +415,42 @@ describe('guest file explorer native direct-storage queries', () => {
     ].join('\n')));
     pty.emit({type: 'exit', sessionId: 's-1-1', reason: 'exited', exitCode: 0});
     await expect(resultPromise).resolves.toEqual({kind: 'success', entries: [], truncated: false, hiddenInvalidNameCount: 0});
+  });
+});
+
+describe('guest folder export to Downloads', () => {
+  test('exports through the native module and validates its response', async () => {
+    const exportMock = jest.fn(async (request: {requestId: string; root: string; path: string[]}) => ({
+      requestId: request.requestId,
+      status: 'success',
+      destination: 'Download/Horus/src-20260928-143205',
+      fileCount: 3,
+      byteCount: 42,
+      skippedCount: 1,
+    }));
+    const runtime = {exportGuestDirectory: exportMock} as never;
+
+    await expect(exportGuestDirectory('workspace', ['src'], runtime)).resolves.toEqual({
+      kind: 'success',
+      destination: 'Download/Horus/src-20260928-143205',
+      fileCount: 3,
+      byteCount: 42,
+      skippedCount: 1,
+    });
+    expect(exportMock).toHaveBeenCalledWith(expect.objectContaining({root: 'workspace', path: ['src']}));
+
+    await expect(exportGuestDirectory('workspace', ['..'], runtime)).resolves.toEqual({kind: 'error', errorCode: 'invalid_path'});
+    await expect(exportGuestDirectory('home', [], null)).resolves.toEqual({kind: 'error', errorCode: 'unsupported'});
+    expect(exportMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('maps native export errors and rejects malformed success payloads', () => {
+    const id = 'files-export-1';
+    expect(mapNativeGuestExportResponse({requestId: id, status: 'error', errorCode: 'too_large'}, id)).toEqual({kind: 'error', errorCode: 'too_large'});
+    expect(mapNativeGuestExportResponse({requestId: id, status: 'error', errorCode: 'permission_denied'}, id)).toEqual({kind: 'error', errorCode: 'permission_denied'});
+    expect(mapNativeGuestExportResponse({requestId: id, status: 'error', errorCode: 'bogus'}, id)).toEqual({kind: 'error', errorCode: 'invalid_output'});
+    expect(mapNativeGuestExportResponse({requestId: 'other', status: 'success'}, id)).toEqual({kind: 'error', errorCode: 'invalid_output'});
+    expect(mapNativeGuestExportResponse({requestId: id, status: 'success', destination: '', fileCount: 1, byteCount: 1, skippedCount: 0}, id)).toEqual({kind: 'error', errorCode: 'invalid_output'});
+    expect(mapNativeGuestExportResponse({requestId: id, status: 'success', destination: 'd', fileCount: -1, byteCount: 1, skippedCount: 0}, id)).toEqual({kind: 'error', errorCode: 'invalid_output'});
   });
 });

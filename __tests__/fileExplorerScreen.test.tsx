@@ -3,7 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import {BackHandler} from 'react-native';
 import {FileExplorerScreen} from '../src/ui/FileExplorerScreen';
 import {BrandHeader} from '../src/ui/brand';
-import {listGuestDirectory, readGuestTextFile} from '../src/files/fileExplorer';
+import {exportGuestDirectory, listGuestDirectory, readGuestTextFile} from '../src/files/fileExplorer';
 
 jest.mock('../src/files/fileExplorer', () => ({
   listGuestDirectory: jest.fn(async (_root: string, path: readonly string[]) => ({
@@ -19,6 +19,14 @@ jest.mock('../src/files/fileExplorer', () => ({
     hiddenInvalidNameCount: 0,
   })),
   readGuestTextFile: jest.fn(async () => ({kind: 'success', content: 'hello files', sizeBytes: 11})),
+  exportGuestDirectory: jest.fn(async () => ({
+    kind: 'success',
+    destination: 'Download/Horus/projects-20260928-143205',
+    fileCount: 2,
+    byteCount: 2048,
+    skippedCount: 1,
+  })),
+  GUEST_FILE_EXPORT_MAX_FILES: 20000,
 }));
 
 describe('FileExplorerScreen', () => {
@@ -177,6 +185,44 @@ describe('FileExplorerScreen', () => {
 
     expect(renderer?.root.findByProps({testID: 'file-hidden-invalid-names'}).props.children)
       .toBe('1 entry with a non-UTF-8 name is hidden.');
+    await ReactTestRenderer.act(async () => {
+      renderer?.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  test('copies the current folder to Downloads after confirmation', async () => {
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<FileExplorerScreen onBack={() => undefined} />);
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-entry-directory'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-export'}).props.onPress();
+    });
+    expect(renderer?.root.findAllByProps({testID: 'file-export-confirm'}).length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-export-cancel'}).props.onPress();
+    });
+    expect(exportGuestDirectory).not.toHaveBeenCalled();
+
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-export'}).props.onPress();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-export-run'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    expect(exportGuestDirectory).toHaveBeenCalledWith('home', ['projects']);
+    expect(renderer?.root.findByProps({testID: 'file-export-result'}).props.children).toBe(
+      'Copied 2 files (2 KB) to Download/Horus/projects-20260928-143205. 1 item was skipped (symlinks, special files, or unreadable files).',
+    );
+
     await ReactTestRenderer.act(async () => {
       renderer?.unmount();
       await Promise.resolve();

@@ -2,6 +2,7 @@ package com.scariflabs.horus.terminal
 
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file.DirectoryStream
@@ -51,6 +52,19 @@ class GuestFileBrowser(
 
     data class Failure(val errorCode: String) : ReadOutcome
   }
+
+  /** Receives each exported regular file; directories are implied by [relativePath]. */
+  fun interface ExportSink {
+    /** [relativePath] is the folder components below the export, then the file name. */
+    fun writeFile(relativePath: List<String>, source: InputStream)
+  }
+
+  sealed interface ExportOutcome {
+    data class Success(val fileCount: Int, val byteCount: Long, val skippedCount: Int) : ExportOutcome
+    data class Failure(val errorCode: String) : ExportOutcome
+  }
+
+  private class ExportFile(val relativePath: List<String>, val path: Path, val sizeBytes: Long)
 
   private sealed interface Resolved {
     data class Found(val root: Path, val target: Path) : Resolved
@@ -136,6 +150,93 @@ class GuestFileBrowser(
     return ReadOutcome.Success(bytes, size)
   }
 
+  /**
+   * Copies every regular file below a guest directory into [sink]. The whole
+   * tree is scanned first so an oversized export fails before writing
+   * anything. Symlinks, special files, undecodable names, and anything past
+   * EXPORT_MAX_DEPTH are skipped and counted; a file that fails to copy is
+   * skipped too, so one unreadable file does not abort the rest.
+   */
+  fun export(root: String, path: List<String>, sink: ExportSink): ExportOutcome {
+    if (!isValidPath(path)) return ExportOutcome.Failure(INVALID_PATH)
+    val rootDir = rootFor(root) ?: return ExportOutcome.Failure(INVALID_PATH)
+    val resolved = when (val result = resolveDirectory(rootDir, path)) {
+      is Resolved.Failure -> return ExportOutcome.Failure(result.errorCode)
+      is Resolved.Found -> result
+    }
+    val files = ArrayList<ExportFile>()
+    var skipped = 0
+    var totalBytes = 0L
+    val pending = ArrayDeque<Pair<Path, List<String>>>()
+    pending.addLast(resolved.target to emptyList())
+    while (pending.isNotEmpty()) {
+      val (directory, relative) = pending.removeFirst()
+      val stream: DirectoryStream<Path> = try {
+        Files.newDirectoryStream(directory)
+      } catch (_: IOException) {
+        skipped += 1
+        continue
+      } catch (_: SecurityException) {
+        skipped += 1
+        continue
+      }
+      try {
+        for (entry in stream) {
+          val name = decodedName(directory, entry)
+          val attributes = lstat(entry)
+          if (name == null || attributes == null || attributes.isSymbolicLink) {
+            skipped += 1
+            continue
+          }
+          val entryRelative = relative + name
+          when {
+            attributes.isDirectory -> {
+              if (entryRelative.size >= EXPORT_MAX_DEPTH) skipped += 1 else pending.addLast(entry to entryRelative)
+            }
+            attributes.isRegularFile -> {
+              val size = attributes.size().coerceAtLeast(0)
+              totalBytes += size
+              if (files.size >= EXPORT_MAX_FILES || totalBytes > EXPORT_MAX_BYTES) {
+                return ExportOutcome.Failure(TOO_LARGE)
+              }
+              files += ExportFile(entryRelative, entry, size)
+            }
+            else -> skipped += 1
+          }
+        }
+      } catch (_: RuntimeException) {
+        // DirectoryIteratorException: keep what was listed, as list() does.
+      } finally {
+        try {
+          stream.close()
+        } catch (_: IOException) {
+          // Nothing useful to report.
+        }
+      }
+    }
+    var copied = 0
+    var copiedBytes = 0L
+    for (file in files) {
+      // The tree may have changed since the scan; never follow a new link out.
+      if (!staysUnderRoot(resolved.root, file.path)) {
+        skipped += 1
+        continue
+      }
+      try {
+        Files.newInputStream(file.path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).use { input ->
+          sink.writeFile(file.relativePath, input)
+        }
+        copied += 1
+        copiedBytes += file.sizeBytes
+      } catch (_: IOException) {
+        skipped += 1
+      } catch (_: SecurityException) {
+        skipped += 1
+      }
+    }
+    return ExportOutcome.Success(copied, copiedBytes, skipped)
+  }
+
   private fun rootFor(root: String): File? = when (root) {
     ROOT_HOME -> homeRoot
     ROOT_WORKSPACE -> workspaceRoot
@@ -209,6 +310,32 @@ class GuestFileBrowser(
 
     /** Mirrors GUEST_FILE_PREVIEW_LIMIT_BYTES in src/files/fileExplorer.ts. */
     const val PREVIEW_LIMIT_BYTES = 65_536
+
+    /** Mirrors GUEST_FILE_EXPORT_MAX_FILES in src/files/fileExplorer.ts. */
+    const val EXPORT_MAX_FILES = 20_000
+
+    /** Mirrors GUEST_FILE_EXPORT_MAX_BYTES in src/files/fileExplorer.ts. */
+    const val EXPORT_MAX_BYTES = 2L * 1024 * 1024 * 1024
+
+    const val EXPORT_MAX_DEPTH = 32
+
+    /**
+     * Makes one path component safe for shared storage, which is often
+     * FAT-like: reserved characters and control characters become '_'.
+     */
+    fun exportSafeName(name: String): String {
+      val cleaned = buildString(name.length) {
+        for (char in name) append(if (char < ' ' || char == '\u007f' || char in "\"*/:<>?\\|") '_' else char)
+      }.trimEnd(' ', '.')
+      return cleaned.ifEmpty { "_" }
+    }
+
+    /**
+     * Names the export's top-level folder after the exported directory (or
+     * root) plus a timestamp, so repeated exports never merge or overwrite.
+     */
+    fun exportFolderName(root: String, path: List<String>, timestamp: String): String =
+      "${exportSafeName(path.lastOrNull() ?: root)}-$timestamp"
 
     /**
      * Mirrors isValidGuestFilePath in src/files/fileExplorer.ts, including
