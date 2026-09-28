@@ -1,0 +1,2 @@
+- Copy a folder from the workspace to Download/Horus from the file explorer
+- Smaller APK: release builds are now shrunk with R8
