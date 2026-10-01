@@ -391,6 +391,17 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     client.dispose();
   }, [client]);
 
+  /** Forgets the session after a normal exit and reports how it ended. */
+  const handleSessionExited = React.useCallback((signal: string | undefined) => {
+    isAttachedRef.current = false;
+    activeSessionRef.current = undefined;
+    attachmentRef.current = undefined;
+    setState('stopped');
+    setError(signal === undefined ? undefined : `exited:${signal}`);
+    deliverCompletion();
+    deliverCommandFailure();
+  }, [deliverCommandFailure, deliverCompletion]);
+
   const openTerminalLink = React.useCallback((url: string) => {
     void openTrustedTerminalLink(url).catch(() => {
       if (mountedRef.current) setError('link_unavailable');
@@ -480,14 +491,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           return;
         }
         if (outcome.sessionState === 'exited') {
-          isAttachedRef.current = false;
-          activeSessionRef.current = undefined;
-          attachmentRef.current = undefined;
-          setState('stopped');
-          setError(outcome.signal === undefined ? undefined : `exited:${outcome.signal}`);
           // The exit happened while backgrounded, so onExit never ran.
-          deliverCompletion();
-          deliverCommandFailure();
+          handleSessionExited(outcome.signal);
           return;
         }
         setError(undefined);
@@ -500,7 +505,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       });
     });
     return () => subscription.remove();
-  }, [client, deliverCommandFailure, deliverCompletion, disposeAttachment]);
+  }, [client, disposeAttachment, handleSessionExited]);
 
   const readRuntimeStatus = React.useCallback(async (): Promise<TerminalRuntimeStatusView> => {
     if (runtime === undefined) return readTerminalRuntimeStatus();
@@ -641,17 +646,14 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         setTerminalInputSessionId(undefined);
         setNativeHarnessReady(false);
         if (!mountedRef.current) return;
-        activeSessionRef.current = undefined;
         if (!installReadyRef.current) {
+          activeSessionRef.current = undefined;
           setState('error');
           setError(toolchainInstallError(toolchain));
           deliverCommandFailure();
-        } else {
-          setState('stopped');
-          setError(exit.signal === undefined ? undefined : `exited:${exit.signal}`);
-          deliverCompletion();
-          deliverCommandFailure();
+          return;
         }
+        handleSessionExited(exit.signal);
       },
       onProtocolError: protocolError => {
         if (!mountedRef.current) return;
@@ -687,13 +689,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       }
       if (subscription.sessionState === 'exited') {
         disposeAttachment();
-        isAttachedRef.current = false;
-        activeSessionRef.current = undefined;
-        attachmentRef.current = undefined;
-        setState('stopped');
-        setError(subscription.signal === undefined ? undefined : `exited:${subscription.signal}`);
-        deliverCompletion();
-        deliverCommandFailure();
+        handleSessionExited(subscription.signal);
         return;
       }
       if (mountedRef.current && activeSessionRef.current === sessionId) {
@@ -713,7 +709,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       setError('subscription_failed');
       deliverCommandFailure();
     }
-  }, [client, completionMarker, deliverCommandFailure, deliverCompletion, disposeAttachment, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain]);
+  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, handleSessionExited, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain]);
 
   const start = React.useCallback(async () => {
     if (activeSessionRef.current !== undefined || startingRef.current) return;
