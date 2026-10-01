@@ -1,27 +1,17 @@
 import React from 'react';
-import {ActivityIndicator, AppState, StyleSheet, Text, TextInput, View} from 'react-native';
+import {ActivityIndicator, StyleSheet, Text, TextInput, View} from 'react-native';
 import {AuthScreenLayout, authStyles} from './AuthScreenLayout';
 import {uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {UI_FONT_FAMILY} from './typography';
 import {
-  readBackgroundPermissions,
-  requestBatteryUnrestricted,
-  requestNotifications,
-  type BackgroundPermissions,
-} from '../device/backgroundPermissions';
+  BackgroundPermissionRows,
+  DEFAULT_BACKGROUND_PERMISSION_ACTIONS,
+  useBackgroundPermissions,
+  type BackgroundPermissionActions,
+} from './BackgroundPermissions';
 
-export type OnboardingPermissions = Readonly<{
-  read: () => Promise<BackgroundPermissions | null>;
-  requestNotifications: () => Promise<void>;
-  requestBattery: () => Promise<void>;
-}>;
-
-const DEFAULT_PERMISSIONS: OnboardingPermissions = {
-  read: readBackgroundPermissions,
-  requestNotifications,
-  requestBattery: requestBatteryUnrestricted,
-};
+export type OnboardingPermissions = BackgroundPermissionActions;
 
 export type OnboardingScreenProps = Readonly<{
   runtimeReady: boolean;
@@ -30,7 +20,7 @@ export type OnboardingScreenProps = Readonly<{
   permissions?: OnboardingPermissions;
 }>;
 
-export function OnboardingScreen({runtimeReady, onComplete, error, permissions = DEFAULT_PERMISSIONS}: OnboardingScreenProps): React.JSX.Element {
+export function OnboardingScreen({runtimeReady, onComplete, error, permissions = DEFAULT_BACKGROUND_PERMISSION_ACTIONS}: OnboardingScreenProps): React.JSX.Element {
   const [step, setStep] = React.useState<'permissions' | 'password'>('permissions');
   if (step === 'permissions') {
     return <PermissionsStep permissions={permissions} onContinue={() => setStep('password')} />;
@@ -48,79 +38,19 @@ type PermissionsStepProps = Readonly<{
  * the user never hears that a session needs them.
  */
 function PermissionsStep({permissions, onContinue}: PermissionsStepProps): React.JSX.Element {
-  const [granted, setGranted] = React.useState<BackgroundPermissions | null>(null);
-  const {read} = permissions;
-
-  const refresh = React.useCallback(() => {
-    read().then(setGranted).catch(() => undefined);
-  }, [read]);
-
-  React.useEffect(() => {
-    refresh();
-    // Both requests hand over to a system screen; re-check on the way back.
-    const subscription = AppState.addEventListener('change', state => {
-      if (state === 'active') refresh();
-    });
-    return () => subscription.remove();
-  }, [refresh]);
-
-  const request = React.useCallback(async (action: () => Promise<void>) => {
-    await action();
-    refresh();
-  }, [refresh]);
-
-  const allGranted = granted?.notifications === true && granted.batteryUnrestricted;
+  const state = useBackgroundPermissions(permissions);
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-permissions">
       <View style={authStyles.card}>
         <Text style={styles.stepTitle}>Keep your agents running</Text>
         <Text style={styles.stepDetail}>Sessions keep working while the screen is off or you use other apps. Android needs two permissions for that.</Text>
-        <PermissionRow
-          detail="Shows running sessions and tells you when an agent needs you."
-          granted={granted?.notifications === true}
-          label="NOTIFICATIONS"
-          onRequest={() => { request(permissions.requestNotifications).catch(() => undefined); }}
-          testID="permission-notifications"
-        />
-        <PermissionRow
-          detail="Lets Android keep sessions running in the background instead of pausing them."
-          granted={granted?.batteryUnrestricted === true}
-          label="UNRESTRICTED BATTERY"
-          onRequest={() => { request(permissions.requestBattery).catch(() => undefined); }}
-          testID="permission-battery"
-        />
+        <BackgroundPermissionRows state={state} />
         <Pressable accessibilityRole="button" onPress={onContinue} style={authStyles.button} testID="permissions-continue">
-          <Text style={authStyles.buttonText}>{allGranted ? 'CONTINUE  →' : 'SKIP FOR NOW  →'}</Text>
+          <Text style={authStyles.buttonText}>{state.allGranted ? 'CONTINUE  →' : 'SKIP FOR NOW  →'}</Text>
         </Pressable>
-        {allGranted ? null : <Text style={styles.stepHint}>You can change these later in Android settings.</Text>}
+        {state.allGranted ? null : <Text style={styles.stepHint}>You can allow these later in Horus Settings.</Text>}
       </View>
     </AuthScreenLayout>
-  );
-}
-
-type PermissionRowProps = Readonly<{
-  label: string;
-  detail: string;
-  granted: boolean;
-  onRequest: () => void;
-  testID: string;
-}>;
-
-function PermissionRow({label, detail, granted, onRequest, testID}: PermissionRowProps): React.JSX.Element {
-  return (
-    <View style={styles.permission} testID={testID}>
-      <View style={styles.permissionCopy}>
-        <Text style={styles.permissionLabel}>{label}</Text>
-        <Text style={styles.permissionDetail}>{detail}</Text>
-      </View>
-      {granted ? (
-        <Text style={styles.permissionGranted} testID={`${testID}-granted`}>ALLOWED</Text>
-      ) : (
-        <Pressable accessibilityLabel={`Allow ${label.toLowerCase()}`} accessibilityRole="button" onPress={onRequest} style={styles.permissionButton} testID={`${testID}-allow`}>
-          <Text style={styles.permissionButtonText}>ALLOW</Text>
-        </Pressable>
-      )}
-    </View>
   );
 }
 
@@ -200,22 +130,4 @@ const styles = StyleSheet.create({
   stepTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 16, fontWeight: '800'},
   stepDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8},
   stepHint: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 10, textAlign: 'center'},
-  permission: {
-    alignItems: 'center',
-    backgroundColor: uiColors.background,
-    borderColor: uiColors.borderSoft,
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  permissionCopy: {flex: 1},
-  permissionLabel: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.5},
-  permissionDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 4},
-  permissionGranted: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.5},
-  permissionButton: {alignItems: 'center', borderColor: uiColors.accent, borderRadius: 7, borderWidth: 1, justifyContent: 'center', minHeight: 34, minWidth: 64, paddingHorizontal: 10},
-  permissionButtonText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.5},
 });

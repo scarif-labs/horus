@@ -1,6 +1,7 @@
 import React from 'react';
 import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import {ScreenShell} from '../screen/ScreenShell';
+import {BackgroundPermissionsPanel} from './BackgroundPermissions';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
@@ -127,6 +128,8 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
             </Pressable>
           )}
         </View>
+
+        <BackgroundPermissionsPanel />
 
         <RemoteAccessPanel />
       </ScrollView>
