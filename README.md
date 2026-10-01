@@ -170,10 +170,6 @@ npm run test:kotlin              # JVM unit tests for the native layer
 npm run test:android:connected   # instrumented tests on a connected device
 ```
 
-The `scripts/alpine-poc/` directory holds host and device acceptance scripts
-(`npm run test:alpine-p*`, `npm run test:android:alpine-p*`). The device
-scripts need `adb` and an installed release APK.
-
 ## Remote access (optional)
 
 Horus works entirely on the phone. To also use it from a Mac or Linux
