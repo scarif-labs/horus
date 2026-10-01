@@ -448,13 +448,14 @@ internal class NativeTerminalEngine(
     return AutoCloseable { listeners.remove(listener) }
   }
 
+  // Takes ownership of [bytes] uncopied; callers never write to it again (output arrives as a fresh Binder-unparcelled array).
   fun enqueue(seq: Long, bytes: ByteArray): Boolean {
     if (closed.get() || seq < 1L || bytes.isEmpty()) return false
     while (true) {
       val previous = highestQueuedSeq.get()
       if (seq <= previous) return true
       if (highestQueuedSeq.compareAndSet(previous, seq)) {
-        if (commands.offer(Command.Output(seq, bytes.copyOf()))) return true
+        if (commands.offer(Command.Output(seq, bytes))) return true
         highestQueuedSeq.compareAndSet(seq, previous)
         return false
       }
