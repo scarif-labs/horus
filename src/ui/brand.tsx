@@ -1,5 +1,6 @@
 import React from 'react';
-import {Image, StyleSheet, Text, View} from 'react-native';
+import {StyleSheet, Text, View} from 'react-native';
+import {BrandMark} from '../terminal/BrandMark';
 import {HORUS_WORDMARK_FONT_FAMILY, UI_FONT_FAMILY} from './typography';
 
 export const uiColors = {
@@ -27,14 +28,6 @@ type BrandHeaderProps = Readonly<{
   action?: React.ReactNode;
 }>;
 
-export function BrandMark(): React.JSX.Element {
-  return (
-    <View accessible accessibilityLabel="Horus" style={styles.mark}>
-      <Image source={require('../../assets/brand/horus.png')} resizeMode="contain" style={styles.markImage} />
-    </View>
-  );
-}
-
 export function BrandHeader({title, eyebrow = 'HORUS', meta = 'v0.1', action}: BrandHeaderProps): React.JSX.Element {
   const hasEyebrow = eyebrow.length > 0;
   return (
@@ -59,8 +52,6 @@ export function BrandHeader({title, eyebrow = 'HORUS', meta = 'v0.1', action}: B
 const styles = StyleSheet.create({
   header: {marginBottom: 12, paddingTop: 8},
   headerRow: {alignItems: 'center', flexDirection: 'row', height: 60},
-  mark: {height: 42, justifyContent: 'center', marginRight: 9, width: 42},
-  markImage: {height: 42, width: 42},
   divider: {backgroundColor: uiColors.border, height: 44, marginRight: 10, width: 1},
   heading: {flex: 1, minWidth: 0},
   singleHeading: {justifyContent: 'center'},

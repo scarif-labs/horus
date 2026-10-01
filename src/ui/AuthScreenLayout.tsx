@@ -15,7 +15,7 @@ export function AuthScreenLayout({children, screenTestID, brandTestID}: AuthScre
     <ScreenShell keyboardAware testID={screenTestID}>
       <ScrollView contentContainerStyle={authStyles.content} keyboardShouldPersistTaps="handled">
         <View style={authStyles.brand} testID={`${brandTestID}-brand`}>
-          <Image accessibilityLabel="Horus eye logo" resizeMode="contain" source={require('../../assets/brand/horus.png')} style={authStyles.logo} testID={`${brandTestID}-logo`} />
+          <Image accessibilityLabel="Horus eye logo" resizeMode="contain" source={require('../terminal/horus.png')} style={authStyles.logo} testID={`${brandTestID}-logo`} />
           <Text style={authStyles.wordmark} testID={`${brandTestID}-wordmark`}>HORUS</Text>
         </View>
         {children}
