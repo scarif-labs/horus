@@ -36,6 +36,7 @@ import {findGithubDeviceLoginUrl} from '../projects/githubDeviceLogin';
 import type {ActiveTerminalSession, TrustedSessionOperation} from './session/sessionContract';
 import {openTrustedTerminalLink} from './terminalLinks';
 import {BrandMark} from './BrandMark';
+import {sessionTitle, toolchainInstallLabel} from './toolchainLabels';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 
 export type TerminalScreenProps = Readonly<{
@@ -192,22 +193,6 @@ function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'codex') return 'toolchain_codex_install_failed';
   if (target === 'opencode') return 'toolchain_opencode_install_failed';
   return 'toolchain_install_failed';
-}
-
-function toolchainInstallLabel(target: TerminalToolchainTarget): string {
-  if (target === 'github') return 'GitHub CLI';
-  if (target === 'claude') return 'Claude Code';
-  if (target === 'codex') return 'Codex';
-  if (target === 'opencode') return 'OpenCode';
-  return 'Alpine shell';
-}
-
-function sessionTitle(session: ActiveTerminalSession): string {
-  if (session.toolchain === 'claude') return 'Claude Code';
-  if (session.toolchain === 'codex') return 'Codex';
-  if (session.toolchain === 'opencode') return 'OpenCode';
-  if (session.toolchain === 'github') return 'GitHub CLI';
-  return 'Bare terminal';
 }
 
 function formatSessionAge(startedAtMs: number): string {

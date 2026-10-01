@@ -23,6 +23,7 @@ import {SessionSettingsScreen} from './src/ui/SessionSettingsScreen';
 import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
 import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
+import {sessionTitle} from './src/terminal/toolchainLabels';
 
 type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
@@ -43,14 +44,6 @@ type PendingProjectClone = Readonly<{
 function nextSessionRequestId(prefix: string): string {
   sessionRequestSequence = sessionRequestSequence >= Number.MAX_SAFE_INTEGER ? 1 : sessionRequestSequence + 1;
   return `launcher-${prefix}-${sessionRequestSequence.toString(36)}`;
-}
-
-function sessionTitle(session: ActiveTerminalSession): string {
-  if (session.toolchain === 'claude') return 'Claude Code';
-  if (session.toolchain === 'codex') return 'Codex';
-  if (session.toolchain === 'opencode') return 'OpenCode';
-  if (session.toolchain === 'github') return 'GitHub CLI';
-  return 'Bare terminal';
 }
 
 function workspaceProjectDirectory(name: string): string | undefined {

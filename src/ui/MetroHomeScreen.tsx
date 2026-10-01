@@ -6,6 +6,7 @@ import type {GithubAccount} from '../projects/githubRepositories';
 import {buildZshCommand, buildZshScriptCommand} from '../terminal/commandFactory';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import type {ActiveTerminalSession} from '../terminal/session/sessionContract';
+import {sessionTitle} from '../terminal/toolchainLabels';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
@@ -76,14 +77,6 @@ function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.
       {detail === undefined ? null : <Text numberOfLines={1} style={styles.appDetail}>{detail}</Text>}
     </Pressable>
   );
-}
-
-function sessionTitle(session: ActiveTerminalSession): string {
-  if (session.toolchain === 'claude') return 'Claude Code';
-  if (session.toolchain === 'codex') return 'Codex';
-  if (session.toolchain === 'opencode') return 'OpenCode';
-  if (session.toolchain === 'github') return 'GitHub CLI';
-  return 'Bare terminal';
 }
 
 function formatSessionAge(startedAtMs: number): string {
