@@ -437,32 +437,23 @@ class TerminalRuntimeModule(
   }
 
   override fun installRootfs(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(installError(INVALID_REQUEST_ID, "internal_error"))
-      return
+    withRequestId(request, promise, ::installError) { requestId ->
+      val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
+        request.getString("rootfsId")
+      } else {
+        AlpineRootfsCatalog.ROOTFS_ID
+      }
+      if (requestedId != AlpineRootfsCatalog.ROOTFS_ID) {
+        promise.resolve(installError(requestId, "invalid_request"))
+        return
+      }
+      if (!installInProgress.compareAndSet(false, true)) {
+        promise.resolve(installError(requestId, "install_in_progress"))
+        return
+      }
+      TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$requestId")
+      runRootfsInstall(requestId, promise, imported = null)
     }
-    val requestId = request.takeIf { it.hasKey("requestId") && it.getType("requestId") == ReadableType.String }
-      ?.getString("requestId")
-    val responseRequestId: String = requestId ?: INVALID_REQUEST_ID
-    if (!TerminalRuntimeContract.isValidRequestId(requestId)) {
-      promise.resolve(installError(responseRequestId, "invalid_request"))
-      return
-    }
-    val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
-      request.getString("rootfsId")
-    } else {
-      AlpineRootfsCatalog.ROOTFS_ID
-    }
-    if (requestedId != AlpineRootfsCatalog.ROOTFS_ID) {
-      promise.resolve(installError(responseRequestId, "invalid_request"))
-      return
-    }
-    if (!installInProgress.compareAndSet(false, true)) {
-      promise.resolve(installError(responseRequestId, "install_in_progress"))
-      return
-    }
-    TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$responseRequestId")
-    runRootfsInstall(responseRequestId, promise, imported = null)
   }
 
   /**
@@ -472,50 +463,41 @@ class TerminalRuntimeModule(
    * as a download.
    */
   override fun importRootfs(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(installError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = request.takeIf { it.hasKey("requestId") && it.getType("requestId") == ReadableType.String }
-      ?.getString("requestId")
-    val responseRequestId: String = requestId ?: INVALID_REQUEST_ID
-    if (!TerminalRuntimeContract.isValidRequestId(requestId)) {
-      promise.resolve(installError(responseRequestId, "invalid_request"))
-      return
-    }
-    val activity = appContext.currentActivity
-    if (activity == null) {
-      promise.resolve(installError(responseRequestId, "runtime_unavailable"))
-      return
-    }
-    if (!installInProgress.compareAndSet(false, true)) {
-      promise.resolve(installError(responseRequestId, "install_in_progress"))
-      return
-    }
-    val listener = object : BaseActivityEventListener() {
-      override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != IMPORT_ROOTFS_REQUEST_CODE) return
-        appContext.removeActivityEventListener(this)
-        val uri = data?.data
-        if (resultCode != Activity.RESULT_OK || uri == null) {
-          installInProgress.set(false)
-          deliverInstallResponse(promise, installError(responseRequestId, "import_cancelled"))
-          return
-        }
-        TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$responseRequestId")
-        runRootfsInstall(responseRequestId, promise, imported = uri)
+    withRequestId(request, promise, ::installError) { requestId ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.resolve(installError(requestId, "runtime_unavailable"))
+        return
       }
-    }
-    appContext.addActivityEventListener(listener)
-    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-      .addCategory(Intent.CATEGORY_OPENABLE)
-      .setType("*/*")
-    try {
-      activity.startActivityForResult(intent, IMPORT_ROOTFS_REQUEST_CODE)
-    } catch (_: ActivityNotFoundException) {
-      appContext.removeActivityEventListener(listener)
-      installInProgress.set(false)
-      promise.resolve(installError(responseRequestId, "runtime_unavailable"))
+      if (!installInProgress.compareAndSet(false, true)) {
+        promise.resolve(installError(requestId, "install_in_progress"))
+        return
+      }
+      val listener = object : BaseActivityEventListener() {
+        override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+          if (requestCode != IMPORT_ROOTFS_REQUEST_CODE) return
+          appContext.removeActivityEventListener(this)
+          val uri = data?.data
+          if (resultCode != Activity.RESULT_OK || uri == null) {
+            installInProgress.set(false)
+            deliverInstallResponse(promise, installError(requestId, "import_cancelled"))
+            return
+          }
+          TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$requestId")
+          runRootfsInstall(requestId, promise, imported = uri)
+        }
+      }
+      appContext.addActivityEventListener(listener)
+      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        .addCategory(Intent.CATEGORY_OPENABLE)
+        .setType("*/*")
+      try {
+        activity.startActivityForResult(intent, IMPORT_ROOTFS_REQUEST_CODE)
+      } catch (_: ActivityNotFoundException) {
+        appContext.removeActivityEventListener(listener)
+        installInProgress.set(false)
+        promise.resolve(installError(requestId, "runtime_unavailable"))
+      }
     }
   }
 
@@ -587,300 +569,228 @@ class TerminalRuntimeModule(
    * the UI bridge only carries the typed result back to JavaScript.
    */
   override fun provisionToolchain(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(provisionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val target = stringField(request, "target")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || !TerminalRuntimeContract.isValidToolchainTarget(target)) {
-      promise.resolve(provisionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.provisionToolchain(responseRequestId, target!!) { response ->
-      deliver(promise, provisionResponse(response, responseRequestId))
+    withRequestId(request, promise, ::provisionError) { requestId ->
+      val target = stringField(request, "target")?.takeIf(TerminalRuntimeContract::isValidToolchainTarget)
+      if (target == null) {
+        promise.resolve(provisionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.provisionToolchain(requestId, target) { response ->
+        deliver(promise, provisionResponse(response, requestId))
+      }
     }
   }
 
   override fun resetRuntime(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(resetError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = request.takeIf { it.hasKey("requestId") && it.getType("requestId") == ReadableType.String }
-      ?.getString("requestId")
-    val responseRequestId: String = requestId ?: INVALID_REQUEST_ID
-    val scope = if (request.hasKey("scope") && request.getType("scope") == ReadableType.String) {
-      request.getString("scope")
-    } else {
-      null
-    }
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || !TerminalRuntimeContract.isValidResetScope(scope)) {
-      promise.resolve(resetError(responseRequestId, "invalid_request"))
-      return
-    }
-    val result = try {
-      store.reset(
-        deleteHome = scope == TerminalRuntimeContract.RESET_SCOPE_HOME ||
-          scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
-        deleteWorkspaces = scope == TerminalRuntimeContract.RESET_SCOPE_WORKSPACE ||
-          scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
+    withRequestId(request, promise, ::resetError) { requestId ->
+      val scope = stringField(request, "scope")
+      if (!TerminalRuntimeContract.isValidResetScope(scope)) {
+        promise.resolve(resetError(requestId, "invalid_request"))
+        return
+      }
+      val result = try {
+        store.reset(
+          deleteHome = scope == TerminalRuntimeContract.RESET_SCOPE_HOME ||
+            scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
+          deleteWorkspaces = scope == TerminalRuntimeContract.RESET_SCOPE_WORKSPACE ||
+            scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
+        )
+      } catch (_: Exception) {
+        promise.resolve(resetError(requestId, "internal_error"))
+        return
+      }
+      promise.resolve(
+        Arguments.createMap().apply {
+          putString("requestId", requestId)
+          putString("status", "success")
+          putArray("removedVersionIds", Arguments.fromList(result.removedVersionIds))
+          putBoolean("homeRemoved", result.homeRemoved)
+          putBoolean("workspacesRemoved", result.workspacesRemoved)
+        },
       )
-    } catch (_: Exception) {
-      promise.resolve(resetError(responseRequestId, "internal_error"))
-      return
     }
-    promise.resolve(
-      Arguments.createMap().apply {
-        putString("requestId", responseRequestId)
-        putString("status", "success")
-        putArray("removedVersionIds", Arguments.fromList(result.removedVersionIds))
-        putBoolean("homeRemoved", result.homeRemoved)
-        putBoolean("workspacesRemoved", result.workspacesRemoved)
-      },
-    )
   }
 
   override fun startSession(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    if (!TerminalRuntimeContract.isValidRequestId(requestId)) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    val rows = intField(request, "rows") ?: DEFAULT_SESSION_ROWS
-    val columns = intField(request, "columns") ?: DEFAULT_SESSION_COLUMNS
-    val sessionCommand = if (!request.hasKey("command")) {
-      null
-    } else {
-      stringField(request, "command")?.takeIf { it.isNotEmpty() && it.length <= TerminalSessionContract.MAX_COMMAND_LENGTH }
-    }
-    val toolchainTarget = if (!request.hasKey("toolchain")) {
-      null
-    } else {
-      stringField(request, "toolchain")
-    }
-    val countsAgainstSessionLimit = if (!request.hasKey(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT)) {
-      true
-    } else if (request.getType(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT) == ReadableType.Boolean) {
-      request.getBoolean(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT)
-    } else {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    if (request.hasKey("command") && sessionCommand == null) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    if (request.hasKey("toolchain") && !TerminalRuntimeContract.isValidToolchainTarget(toolchainTarget)) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    if (!TerminalSessionContract.isValidRows(rows) || !TerminalSessionContract.isValidColumns(columns)) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    android.util.Log.i(
-      LOG_TAG,
-      "module_start_session request=$responseRequestId target=${toolchainTarget ?: "none"}",
-    )
-    TerminalDebugLog.record(
-      appContext,
-      "module_start_session request=$responseRequestId target=${toolchainTarget ?: "none"}",
-    )
-    try {
-      sessionServiceClient.startSession(responseRequestId, rows, columns, sessionCommand, toolchainTarget, countsAgainstSessionLimit) { response ->
-        deliver(promise, sessionStartResponse(response, responseRequestId, rows, columns))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val rows = intField(request, "rows") ?: DEFAULT_SESSION_ROWS
+      val columns = intField(request, "columns") ?: DEFAULT_SESSION_COLUMNS
+      val sessionCommand = if (!request.hasKey("command")) {
+        null
+      } else {
+        stringField(request, "command")?.takeIf { it.isNotEmpty() && it.length <= TerminalSessionContract.MAX_COMMAND_LENGTH }
       }
-    } catch (error: Exception) {
-      android.util.Log.e(
+      val toolchainTarget = if (!request.hasKey("toolchain")) {
+        null
+      } else {
+        stringField(request, "toolchain")
+      }
+      val countsAgainstSessionLimit = if (!request.hasKey(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT)) {
+        true
+      } else if (request.getType(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT) == ReadableType.Boolean) {
+        request.getBoolean(TerminalSessionServiceProtocol.KEY_COUNTS_AGAINST_SESSION_LIMIT)
+      } else {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      if (request.hasKey("command") && sessionCommand == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      if (request.hasKey("toolchain") && !TerminalRuntimeContract.isValidToolchainTarget(toolchainTarget)) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      if (!TerminalSessionContract.isValidRows(rows) || !TerminalSessionContract.isValidColumns(columns)) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      android.util.Log.i(
         LOG_TAG,
-        "module_start_session_failed type=${error::class.java.simpleName} message=${error.message?.take(160)}",
+        "module_start_session request=$requestId target=${toolchainTarget ?: "none"}",
       )
-      TerminalDebugLog.record(appContext, "module_start_session_failed request=$responseRequestId")
-      promise.resolve(sessionError(responseRequestId, "internal_error"))
+      TerminalDebugLog.record(
+        appContext,
+        "module_start_session request=$requestId target=${toolchainTarget ?: "none"}",
+      )
+      try {
+        sessionServiceClient.startSession(requestId, rows, columns, sessionCommand, toolchainTarget, countsAgainstSessionLimit) { response ->
+          deliver(promise, sessionStartResponse(response, requestId, rows, columns))
+        }
+      } catch (error: Exception) {
+        android.util.Log.e(
+          LOG_TAG,
+          "module_start_session_failed type=${error::class.java.simpleName} message=${error.message?.take(160)}",
+        )
+        TerminalDebugLog.record(appContext, "module_start_session_failed request=$requestId")
+        promise.resolve(sessionError(requestId, "internal_error"))
+      }
     }
   }
 
   override fun listTerminalSessions(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    if (!TerminalRuntimeContract.isValidRequestId(requestId)) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.listSessions(responseRequestId) { response ->
-      deliver(promise, sessionListResponse(response, responseRequestId))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      sessionServiceClient.listSessions(requestId) { response ->
+        deliver(promise, sessionListResponse(response, requestId))
+      }
     }
   }
 
   override fun writeSessionInput(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val base64 = stringField(request, "base64")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      base64 == null || base64.isEmpty() ||
-      base64.length > TerminalSessionContract.MAX_INPUT_BASE64_CHARS
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    val bytes = try {
-      Base64.decode(base64, Base64.NO_WRAP)
-    } catch (_: IllegalArgumentException) {
-      null
-    }
-    if (bytes == null || bytes.isEmpty() || bytes.size > TerminalSessionContract.MAX_INPUT_BYTES) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.writeSession(responseRequestId, sessionId!!, bytes) { response ->
-      deliver(promise, sessionWriteResponse(response, responseRequestId))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val base64 = stringField(request, "base64")
+      if (sessionId == null ||
+        base64 == null || base64.isEmpty() ||
+        base64.length > TerminalSessionContract.MAX_INPUT_BASE64_CHARS
+      ) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      val bytes = try {
+        Base64.decode(base64, Base64.NO_WRAP)
+      } catch (_: IllegalArgumentException) {
+        null
+      }
+      if (bytes == null || bytes.isEmpty() || bytes.size > TerminalSessionContract.MAX_INPUT_BYTES) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.writeSession(requestId, sessionId, bytes) { response ->
+        deliver(promise, sessionWriteResponse(response, requestId))
+      }
     }
   }
 
   override fun resizeSession(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val rows = intField(request, "rows")
-    val columns = intField(request, "columns")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      rows == null || columns == null ||
-      !TerminalSessionContract.isValidRows(rows) ||
-      !TerminalSessionContract.isValidColumns(columns)
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.resizeSession(responseRequestId, sessionId!!, rows, columns) { response ->
-      if (isSessionSuccess(response)) NativeTerminalEngineRegistry.get(sessionId)?.resize(rows, columns)
-      deliver(promise, sessionResizeResponse(response, responseRequestId, rows, columns))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val rows = intField(request, "rows")
+      val columns = intField(request, "columns")
+      if (sessionId == null ||
+        rows == null || columns == null ||
+        !TerminalSessionContract.isValidRows(rows) ||
+        !TerminalSessionContract.isValidColumns(columns)
+      ) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.resizeSession(requestId, sessionId, rows, columns) { response ->
+        if (isSessionSuccess(response)) NativeTerminalEngineRegistry.get(sessionId)?.resize(rows, columns)
+        deliver(promise, sessionResizeResponse(response, requestId, rows, columns))
+      }
     }
   }
 
   override fun signalSession(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val signalName = stringField(request, "signal")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      TerminalSessionContract.signalNumber(signalName) == null
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.signalSession(responseRequestId, sessionId!!, signalName!!) { response ->
-      deliver(promise, sessionSignalResponse(response, responseRequestId, signalName))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val signalName = stringField(request, "signal")?.takeIf { TerminalSessionContract.signalNumber(it) != null }
+      if (sessionId == null || signalName == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.signalSession(requestId, sessionId, signalName) { response ->
+        deliver(promise, sessionSignalResponse(response, requestId, signalName))
+      }
     }
   }
 
   override fun stopSession(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val reason = stringField(request, "reason")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      !TerminalSessionContract.isValidStopReason(reason)
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.stopSession(responseRequestId, sessionId!!, reason!!) { response ->
-      if (isSessionSuccess(response)) {
-        NativeTerminalEngineRegistry.close(sessionId)
-        nativeAckBatcher.clear(sessionId)
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val reason = stringField(request, "reason")?.takeIf(TerminalSessionContract::isValidStopReason)
+      if (sessionId == null || reason == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
       }
-      deliver(promise, sessionStopResponse(response, responseRequestId, sessionId))
+      sessionServiceClient.stopSession(requestId, sessionId, reason) { response ->
+        if (isSessionSuccess(response)) {
+          NativeTerminalEngineRegistry.close(sessionId)
+          nativeAckBatcher.clear(sessionId)
+        }
+        deliver(promise, sessionStopResponse(response, requestId, sessionId))
+      }
     }
   }
 
   override fun stopAllTerminalSessions(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val reason = stringField(request, "reason")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidStopReason(reason)
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.stopAll(responseRequestId, reason!!) { response ->
-      deliver(promise, sessionResponseBase(response, responseRequestId))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val reason = stringField(request, "reason")?.takeIf(TerminalSessionContract::isValidStopReason)
+      if (reason == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.stopAll(requestId, reason) { response ->
+        deliver(promise, sessionResponseBase(response, requestId))
+      }
     }
   }
 
   override fun subscribeSessionEvents(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val afterSeq = if (request.hasKey("afterSeq")) longField(request, "afterSeq") else 0L
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      afterSeq == null
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.subscribeSession(responseRequestId, sessionId!!, afterSeq) { response ->
-      deliver(promise, sessionSubscribeResponse(response, responseRequestId, sessionId))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val afterSeq = if (request.hasKey("afterSeq")) longField(request, "afterSeq") else 0L
+      if (sessionId == null || afterSeq == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.subscribeSession(requestId, sessionId, afterSeq) { response ->
+        deliver(promise, sessionSubscribeResponse(response, requestId, sessionId))
+      }
     }
   }
 
   override fun detachTerminalSession(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId)
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.detachSession(responseRequestId, sessionId!!) { response ->
-      deliver(promise, sessionResponseBase(response, responseRequestId))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      if (sessionId == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.detachSession(requestId, sessionId) { response ->
+        deliver(promise, sessionResponseBase(response, requestId))
+      }
     }
   }
 
@@ -889,45 +799,34 @@ class TerminalRuntimeModule(
   }
 
   override fun updateUnlockGrant(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val op = stringField(request, "op")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || !SessionUnlockGrant.isValidOp(op)) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.updateUnlockGrant(responseRequestId, op!!) { response ->
-      deliver(
-        promise,
-        sessionResponseBase(response, responseRequestId).apply {
-          putBoolean("unlocked", response.getBoolean(TerminalSessionServiceProtocol.KEY_UNLOCKED, false))
-        },
-      )
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val op = stringField(request, "op")?.takeIf(SessionUnlockGrant::isValidOp)
+      if (op == null) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.updateUnlockGrant(requestId, op) { response ->
+        deliver(
+          promise,
+          sessionResponseBase(response, requestId).apply {
+            putBoolean("unlocked", response.getBoolean(TerminalSessionServiceProtocol.KEY_UNLOCKED, false))
+          },
+        )
+      }
     }
   }
 
   override fun acknowledgeSessionOutput(request: ReadableMap, promise: Promise) {
-    if (isInvalidated()) {
-      promise.resolve(sessionError(INVALID_REQUEST_ID, "internal_error"))
-      return
-    }
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    val sessionId = stringField(request, "sessionId")
-    val seq = longField(request, "seq")
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) ||
-      !TerminalSessionContract.isValidSessionId(sessionId) ||
-      seq == null || seq < 1L
-    ) {
-      promise.resolve(sessionError(responseRequestId, "invalid_request"))
-      return
-    }
-    sessionServiceClient.acknowledgeOutput(responseRequestId, sessionId!!, seq) { response ->
-      deliver(promise, sessionAcknowledgeResponse(response, responseRequestId, sessionId, seq))
+    withRequestId(request, promise, ::sessionError) { requestId ->
+      val sessionId = sessionIdField(request)
+      val seq = longField(request, "seq")
+      if (sessionId == null || seq == null || seq < 1L) {
+        promise.resolve(sessionError(requestId, "invalid_request"))
+        return
+      }
+      sessionServiceClient.acknowledgeOutput(requestId, sessionId, seq) { response ->
+        deliver(promise, sessionAcknowledgeResponse(response, requestId, sessionId, seq))
+      }
     }
   }
 
@@ -970,8 +869,39 @@ class TerminalRuntimeModule(
     }
   }
 
+  /**
+   * Shared preamble for requestId-carrying bridge methods: fail closed after
+   * invalidate(), then require a well-formed requestId before running [block]
+   * with it. [error] is the method's own error builder, so each method keeps
+   * its response shape. The invalidated path reports INVALID_REQUEST_ID
+   * unless [echoRequestIdWhenInvalidated] is set, in which case it echoes the
+   * caller's raw requestId when one was sent.
+   */
+  private inline fun withRequestId(
+    request: ReadableMap,
+    promise: Promise,
+    error: (requestId: String, errorCode: String) -> WritableMap,
+    echoRequestIdWhenInvalidated: Boolean = false,
+    block: (requestId: String) -> Unit,
+  ) {
+    if (isInvalidated()) {
+      val reported = if (echoRequestIdWhenInvalidated) stringField(request, "requestId") else null
+      promise.resolve(error(reported ?: INVALID_REQUEST_ID, "internal_error"))
+      return
+    }
+    val requestId = stringField(request, "requestId")
+    if (requestId == null || !TerminalRuntimeContract.isValidRequestId(requestId)) {
+      promise.resolve(error(requestId ?: INVALID_REQUEST_ID, "invalid_request"))
+      return
+    }
+    block(requestId)
+  }
+
   private fun stringField(request: ReadableMap, key: String): String? =
     request.takeIf { it.hasKey(key) && it.getType(key) == ReadableType.String }?.getString(key)
+
+  private fun sessionIdField(request: ReadableMap): String? =
+    stringField(request, "sessionId")?.takeIf(TerminalSessionContract::isValidSessionId)
 
   private fun intField(request: ReadableMap, key: String): Int? =
     request.takeIf { it.hasKey(key) && it.getType(key) == ReadableType.Number }?.let { it.getDouble(key).toInt() }
@@ -1297,40 +1227,36 @@ class TerminalRuntimeModule(
    * app-private storage. GuestFileBrowser re-validates the path natively.
    */
   override fun listGuestDirectory(request: ReadableMap, promise: Promise) {
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    if (isInvalidated()) {
-      promise.resolve(guestFileError(responseRequestId, "internal_error"))
-      return
-    }
-    val parsed = guestFileRequest(request)
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || parsed == null) {
-      promise.resolve(guestFileError(responseRequestId, "invalid_request"))
-      return
-    }
-    val (root, path) = parsed
-    runGuestFileQuery(responseRequestId, promise) {
-      when (val outcome = guestFileBrowser().list(root, path)) {
-        is GuestFileBrowser.ListOutcome.Failure -> guestFileError(responseRequestId, outcome.errorCode)
-        is GuestFileBrowser.ListOutcome.Success -> Arguments.createMap().apply {
-          putString("requestId", responseRequestId)
-          putString("status", "success")
-          putArray(
-            "entries",
-            Arguments.createArray().apply {
-              outcome.entries.forEach { entry ->
-                pushMap(
-                  Arguments.createMap().apply {
-                    putString("name", entry.name)
-                    putString("kind", entry.kind.wireName)
-                    putDouble("sizeBytes", entry.sizeBytes.toDouble())
-                  },
-                )
-              }
-            },
-          )
-          putBoolean("truncated", outcome.truncated)
-          putInt("hiddenInvalidNameCount", outcome.hiddenInvalidNameCount)
+    withRequestId(request, promise, ::guestFileError, echoRequestIdWhenInvalidated = true) { requestId ->
+      val parsed = guestFileRequest(request)
+      if (parsed == null) {
+        promise.resolve(guestFileError(requestId, "invalid_request"))
+        return
+      }
+      val (root, path) = parsed
+      runGuestFileQuery(requestId, promise) {
+        when (val outcome = guestFileBrowser().list(root, path)) {
+          is GuestFileBrowser.ListOutcome.Failure -> guestFileError(requestId, outcome.errorCode)
+          is GuestFileBrowser.ListOutcome.Success -> Arguments.createMap().apply {
+            putString("requestId", requestId)
+            putString("status", "success")
+            putArray(
+              "entries",
+              Arguments.createArray().apply {
+                outcome.entries.forEach { entry ->
+                  pushMap(
+                    Arguments.createMap().apply {
+                      putString("name", entry.name)
+                      putString("kind", entry.kind.wireName)
+                      putDouble("sizeBytes", entry.sizeBytes.toDouble())
+                    },
+                  )
+                }
+              },
+            )
+            putBoolean("truncated", outcome.truncated)
+            putInt("hiddenInvalidNameCount", outcome.hiddenInvalidNameCount)
+          }
         }
       }
     }
@@ -1341,26 +1267,22 @@ class TerminalRuntimeModule(
    * and binary checks stay in JS so they match the PTY query exactly.
    */
   override fun readGuestFile(request: ReadableMap, promise: Promise) {
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    if (isInvalidated()) {
-      promise.resolve(guestFileError(responseRequestId, "internal_error"))
-      return
-    }
-    val parsed = guestFileRequest(request)
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || parsed == null) {
-      promise.resolve(guestFileError(responseRequestId, "invalid_request"))
-      return
-    }
-    val (root, path) = parsed
-    runGuestFileQuery(responseRequestId, promise) {
-      when (val outcome = guestFileBrowser().read(root, path)) {
-        is GuestFileBrowser.ReadOutcome.Failure -> guestFileError(responseRequestId, outcome.errorCode)
-        is GuestFileBrowser.ReadOutcome.Success -> Arguments.createMap().apply {
-          putString("requestId", responseRequestId)
-          putString("status", "success")
-          putString("base64", Base64.encodeToString(outcome.bytes, Base64.NO_WRAP))
-          putDouble("sizeBytes", outcome.sizeBytes.toDouble())
+    withRequestId(request, promise, ::guestFileError, echoRequestIdWhenInvalidated = true) { requestId ->
+      val parsed = guestFileRequest(request)
+      if (parsed == null) {
+        promise.resolve(guestFileError(requestId, "invalid_request"))
+        return
+      }
+      val (root, path) = parsed
+      runGuestFileQuery(requestId, promise) {
+        when (val outcome = guestFileBrowser().read(root, path)) {
+          is GuestFileBrowser.ReadOutcome.Failure -> guestFileError(requestId, outcome.errorCode)
+          is GuestFileBrowser.ReadOutcome.Success -> Arguments.createMap().apply {
+            putString("requestId", requestId)
+            putString("status", "success")
+            putString("base64", Base64.encodeToString(outcome.bytes, Base64.NO_WRAP))
+            putDouble("sizeBytes", outcome.sizeBytes.toDouble())
+          }
         }
       }
     }
@@ -1380,59 +1302,55 @@ class TerminalRuntimeModule(
    * the shared Download/Horus folder so it can be opened by other apps.
    */
   override fun exportGuestDirectory(request: ReadableMap, promise: Promise) {
-    val requestId = stringField(request, "requestId")
-    val responseRequestId = requestId ?: INVALID_REQUEST_ID
-    if (isInvalidated()) {
-      promise.resolve(guestFileError(responseRequestId, "internal_error"))
-      return
-    }
-    val parsed = guestFileRequest(request)
-    if (!TerminalRuntimeContract.isValidRequestId(requestId) || parsed == null) {
-      promise.resolve(guestFileError(responseRequestId, "invalid_request"))
-      return
-    }
-    val (root, path) = parsed
-    val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-    val sink = DownloadsExportSink(appContext, GuestFileBrowser.exportFolderName(root, path, timestamp))
-    if (!sink.hasWriteAccess()) {
-      promise.resolve(guestFileError(responseRequestId, "permission_denied"))
-      return
-    }
-    if (!guestExportInProgress.compareAndSet(false, true)) {
-      promise.resolve(guestFileError(responseRequestId, "busy"))
-      return
-    }
-    try {
-      guestExportExecutor.execute {
-        val response = try {
-          if (isInvalidated()) {
-            guestFileError(responseRequestId, "internal_error")
-          } else {
-            when (val outcome = guestFileBrowser().export(root, path, sink)) {
-              is GuestFileBrowser.ExportOutcome.Failure -> guestFileError(responseRequestId, outcome.errorCode)
-              is GuestFileBrowser.ExportOutcome.Success -> {
-                sink.finish()
-                Arguments.createMap().apply {
-                  putString("requestId", responseRequestId)
-                  putString("status", "success")
-                  putString("destination", sink.displayPath)
-                  putInt("fileCount", outcome.fileCount)
-                  putDouble("byteCount", outcome.byteCount.toDouble())
-                  putInt("skippedCount", outcome.skippedCount)
+    withRequestId(request, promise, ::guestFileError, echoRequestIdWhenInvalidated = true) { requestId ->
+      val parsed = guestFileRequest(request)
+      if (parsed == null) {
+        promise.resolve(guestFileError(requestId, "invalid_request"))
+        return
+      }
+      val (root, path) = parsed
+      val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+      val sink = DownloadsExportSink(appContext, GuestFileBrowser.exportFolderName(root, path, timestamp))
+      if (!sink.hasWriteAccess()) {
+        promise.resolve(guestFileError(requestId, "permission_denied"))
+        return
+      }
+      if (!guestExportInProgress.compareAndSet(false, true)) {
+        promise.resolve(guestFileError(requestId, "busy"))
+        return
+      }
+      try {
+        guestExportExecutor.execute {
+          val response = try {
+            if (isInvalidated()) {
+              guestFileError(requestId, "internal_error")
+            } else {
+              when (val outcome = guestFileBrowser().export(root, path, sink)) {
+                is GuestFileBrowser.ExportOutcome.Failure -> guestFileError(requestId, outcome.errorCode)
+                is GuestFileBrowser.ExportOutcome.Success -> {
+                  sink.finish()
+                  Arguments.createMap().apply {
+                    putString("requestId", requestId)
+                    putString("status", "success")
+                    putString("destination", sink.displayPath)
+                    putInt("fileCount", outcome.fileCount)
+                    putDouble("byteCount", outcome.byteCount.toDouble())
+                    putInt("skippedCount", outcome.skippedCount)
+                  }
                 }
               }
             }
+          } catch (_: Exception) {
+            guestFileError(requestId, "internal_error")
+          } finally {
+            guestExportInProgress.set(false)
           }
-        } catch (_: Exception) {
-          guestFileError(responseRequestId, "internal_error")
-        } finally {
-          guestExportInProgress.set(false)
+          deliver(promise, response)
         }
-        deliver(promise, response)
+      } catch (_: RejectedExecutionException) {
+        guestExportInProgress.set(false)
+        deliver(promise, guestFileError(requestId, "internal_error"))
       }
-    } catch (_: RejectedExecutionException) {
-      guestExportInProgress.set(false)
-      deliver(promise, guestFileError(responseRequestId, "internal_error"))
     }
   }
 
