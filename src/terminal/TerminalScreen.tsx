@@ -36,7 +36,7 @@ import {findGithubDeviceLoginUrl} from '../projects/githubDeviceLogin';
 import type {ActiveTerminalSession, TrustedSessionOperation} from './session/sessionContract';
 import {openTrustedTerminalLink} from './terminalLinks';
 import {BrandMark} from './BrandMark';
-import {sessionTitle, toolchainInstallLabel} from './toolchainLabels';
+import {formatSessionAge, sessionTitle, toolchainInstallLabel} from './toolchainLabels';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 
 export type TerminalScreenProps = Readonly<{
@@ -193,16 +193,6 @@ function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'codex') return 'toolchain_codex_install_failed';
   if (target === 'opencode') return 'toolchain_opencode_install_failed';
   return 'toolchain_install_failed';
-}
-
-function formatSessionAge(startedAtMs: number): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - startedAtMs) / 60_000));
-  if (minutes < 1) return 'just started';
-  if (minutes === 1) return '1 min';
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remaining = minutes % 60;
-  return remaining === 0 ? `${hours} hr` : `${hours} hr ${remaining} min`;
 }
 
 function hasToolchainReadyMarker(value: string): boolean {

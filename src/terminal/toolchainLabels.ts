@@ -18,3 +18,14 @@ export function toolchainInstallLabel(target: TerminalToolchainTarget): string {
 export function sessionTitle(session: ActiveTerminalSession): string {
   return toolchainName(session.toolchain, 'Bare terminal');
 }
+
+/** Coarse running time for a session, e.g. "just started", "5 min", "2 hr 3 min". */
+export function formatSessionAge(startedAtMs: number): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - startedAtMs) / 60_000));
+  if (minutes < 1) return 'just started';
+  if (minutes === 1) return '1 min';
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining === 0 ? `${hours} hr` : `${hours} hr ${remaining} min`;
+}

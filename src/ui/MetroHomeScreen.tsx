@@ -6,7 +6,7 @@ import type {GithubAccount} from '../projects/githubRepositories';
 import {buildZshCommand, buildZshScriptCommand} from '../terminal/commandFactory';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import type {ActiveTerminalSession} from '../terminal/session/sessionContract';
-import {sessionTitle} from '../terminal/toolchainLabels';
+import {formatSessionAge, sessionTitle} from '../terminal/toolchainLabels';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
@@ -77,16 +77,6 @@ function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.
       {detail === undefined ? null : <Text numberOfLines={1} style={styles.appDetail}>{detail}</Text>}
     </Pressable>
   );
-}
-
-function formatSessionAge(startedAtMs: number): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - startedAtMs) / 60_000));
-  if (minutes < 1) return 'just started';
-  if (minutes === 1) return '1 min';
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remaining = minutes % 60;
-  return remaining === 0 ? `${hours} hr` : `${hours} hr ${remaining} min`;
 }
 
 export function MetroHomeScreen({githubAccount, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
