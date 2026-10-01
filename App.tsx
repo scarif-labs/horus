@@ -35,6 +35,7 @@ type PendingGithubLogin = Readonly<{marker: string; returnTo: 'home' | 'projects
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
 const nextSessionRequestId = createRequestIdFactory('launcher');
+const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
 
 type PendingProjectClone = Readonly<{
   marker: string;
@@ -62,7 +63,7 @@ function App(): React.JSX.Element {
   const [terminalTarget, setTerminalTarget] = React.useState<MetroLaunchTarget>({
     title: 'Bare terminal',
     eyebrow: 'SHELL',
-    command: buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`),
+    command: BARE_SHELL_COMMAND,
     toolchain: 'shell',
   });
   const [terminalInstanceKey, setTerminalInstanceKey] = React.useState(0);
@@ -111,7 +112,7 @@ function App(): React.JSX.Element {
     // mounted while it is in flight so the terminal cannot launch a second
     // status/install request against the same native runtime.
     if (bootState === 'checking' || bootState === 'installing') return;
-    openTerminal({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`), toolchain: 'shell'});
+    openTerminal({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: BARE_SHELL_COMMAND, toolchain: 'shell'});
   }, [bootState, openTerminal]);
 
   React.useEffect(() => {
