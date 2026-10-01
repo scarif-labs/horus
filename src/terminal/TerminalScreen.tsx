@@ -39,6 +39,7 @@ import {BrandMark} from './BrandMark';
 import {formatSessionAge, sessionTitle, toolchainInstallLabel} from './toolchainLabels';
 import {createRequestIdFactory} from './requestIds';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
+import {uiColors} from './palette';
 
 export type TerminalScreenProps = Readonly<{
   client?: TerminalSessionClient;
@@ -69,15 +70,6 @@ type TerminalRuntimeBridge = Pick<
 >;
 
 const nextRequestId = createRequestIdFactory('terminal');
-
-const terminalChrome = {
-  panel: '#0D1112',
-  border: '#30383B',
-  borderSoft: '#232A2D',
-  muted: '#AAB7C6',
-  accent: '#80EB12',
-  danger: '#FF8795',
-} as const;
 
 const TERMINAL_LAYOUT_SETTLE_MS = 120;
 
@@ -1182,37 +1174,37 @@ const styles = StyleSheet.create({
   keyboardRoot: {flex: 1},
   floatingHeader: {alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end', left: 0, paddingHorizontal: 12, position: 'absolute', right: 0, top: 8, zIndex: 10},
   floatingGroup: {alignItems: 'center', borderColor: 'rgba(48, 56, 59, 0.65)', borderRadius: 22, borderWidth: 1, flexDirection: 'row', height: 44, justifyContent: 'center', paddingHorizontal: 5},
-  menuArrowText: {color: terminalChrome.accent, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', includeFontPadding: false, lineHeight: 22, textAlign: 'center', width: 34},
+  menuArrowText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', includeFontPadding: false, lineHeight: 22, textAlign: 'center', width: 34},
   output: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, overflow: 'hidden'},
   sessionLimitOverlay: {alignItems: 'center', backgroundColor: 'rgba(13, 17, 18, 0.82)', bottom: 0, justifyContent: 'center', left: 0, padding: 18, position: 'absolute', right: 0, top: 0, zIndex: 5},
-  sessionLimitCard: {backgroundColor: '#182022', borderColor: terminalChrome.danger, borderRadius: 12, borderWidth: 1, maxWidth: 520, paddingHorizontal: 20, paddingVertical: 18, width: '100%'},
-  sessionLimitTitle: {color: terminalChrome.danger, fontFamily: UI_FONT_FAMILY, fontSize: 17, fontWeight: '800', textAlign: 'center'},
+  sessionLimitCard: {backgroundColor: '#182022', borderColor: uiColors.danger, borderRadius: 12, borderWidth: 1, maxWidth: 520, paddingHorizontal: 20, paddingVertical: 18, width: '100%'},
+  sessionLimitTitle: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 17, fontWeight: '800', textAlign: 'center'},
   sessionLimitMessage: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 13, lineHeight: 19, marginTop: 10, textAlign: 'center'},
-  sessionLimitDetails: {color: terminalChrome.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 14, textAlign: 'center'},
+  sessionLimitDetails: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 14, textAlign: 'center'},
   sessionLimitSessions: {gap: 8, marginTop: 14},
-  sessionLimitSessionRow: {alignItems: 'center', backgroundColor: terminalChrome.panel, borderColor: terminalChrome.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row', minHeight: 58, paddingHorizontal: 9, paddingVertical: 7},
+  sessionLimitSessionRow: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row', minHeight: 58, paddingHorizontal: 9, paddingVertical: 7},
   sessionLimitSessionCopy: {flex: 1, minWidth: 0},
   sessionLimitSessionTitle: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '800'},
-  sessionLimitSessionMeta: {color: terminalChrome.muted, fontFamily: UI_FONT_FAMILY, fontSize: 8, letterSpacing: 0.2, marginTop: 4},
-  sessionLimitTerminate: {alignItems: 'center', borderColor: terminalChrome.danger, borderRadius: 6, borderWidth: 1, justifyContent: 'center', marginLeft: 8, minHeight: 32, minWidth: 78, paddingHorizontal: 7},
-  sessionLimitTerminateDisabled: {borderColor: terminalChrome.muted, opacity: 0.7},
-  sessionLimitTerminateText: {color: terminalChrome.danger, fontFamily: UI_FONT_FAMILY, fontSize: 8, fontWeight: '800', letterSpacing: 0.1},
-  sessionLimitActionError: {color: terminalChrome.danger, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 15, marginTop: 12, textAlign: 'center'},
-  error: {color: terminalChrome.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
-  historyNotice: {color: terminalChrome.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
+  sessionLimitSessionMeta: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 8, letterSpacing: 0.2, marginTop: 4},
+  sessionLimitTerminate: {alignItems: 'center', borderColor: uiColors.danger, borderRadius: 6, borderWidth: 1, justifyContent: 'center', marginLeft: 8, minHeight: 32, minWidth: 78, paddingHorizontal: 7},
+  sessionLimitTerminateDisabled: {borderColor: uiColors.muted, opacity: 0.7},
+  sessionLimitTerminateText: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 8, fontWeight: '800', letterSpacing: 0.1},
+  sessionLimitActionError: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 15, marginTop: 12, textAlign: 'center'},
+  error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
+  historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
   keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
   controls: {backgroundColor: TERMINAL_BACKGROUND, paddingVertical: 4},
   controlRows: {width: '100%'},
   controlRow: {flexDirection: 'row', height: 42, width: '100%'},
-  controlRowMain: {borderTopColor: terminalChrome.border, borderTopWidth: 1, flex: 1, flexDirection: 'row', minWidth: 0},
-  keyButton: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderRightColor: terminalChrome.borderSoft, borderRightWidth: 1, flex: 1, justifyContent: 'center', minWidth: 0, paddingHorizontal: 0},
+  controlRowMain: {borderTopColor: uiColors.border, borderTopWidth: 1, flex: 1, flexDirection: 'row', minWidth: 0},
+  keyButton: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderRightColor: uiColors.borderSoft, borderRightWidth: 1, flex: 1, justifyContent: 'center', minWidth: 0, paddingHorizontal: 0},
   keyButtonText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800'},
-  modifierButtonActive: {backgroundColor: terminalChrome.accent},
+  modifierButtonActive: {backgroundColor: uiColors.accent},
   modifierButtonTextActive: {color: TERMINAL_BACKGROUND},
-  returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: terminalChrome.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},
-  returnKeyLower: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderBottomColor: terminalChrome.border, borderBottomWidth: 1, borderColor: terminalChrome.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopColor: TERMINAL_BACKGROUND, borderTopWidth: 1, flexDirection: 'row', height: 42, justifyContent: 'center', position: 'relative', width: 96},
-  returnKeyNotch: {backgroundColor: terminalChrome.border, height: 1, left: 0, position: 'absolute', top: 0, width: 24},
-  returnKeyGlyph: {color: terminalChrome.accent, fontFamily: UI_FONT_FAMILY, fontSize: 25, fontWeight: '800', lineHeight: 28},
+  returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},
+  returnKeyLower: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderBottomColor: uiColors.border, borderBottomWidth: 1, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopColor: TERMINAL_BACKGROUND, borderTopWidth: 1, flexDirection: 'row', height: 42, justifyContent: 'center', position: 'relative', width: 96},
+  returnKeyNotch: {backgroundColor: uiColors.border, height: 1, left: 0, position: 'absolute', top: 0, width: 24},
+  returnKeyGlyph: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 25, fontWeight: '800', lineHeight: 28},
   returnKeyText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.3, marginLeft: 4},
 });
 

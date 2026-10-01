@@ -9,10 +9,11 @@ import {
 } from './terminalBuffer';
 import {findTrustedTerminalLinks, type TerminalLinkMatch} from './terminalLinks';
 import type {TerminalMouseWheel} from './terminalMouse';
+import {uiColors} from './palette';
 
 export const TERMINAL_FONT_SIZE = 12;
 export const TERMINAL_CELL_HEIGHT = 18;
-const TERMINAL_LINK_FOREGROUND = '#80EB12';
+const TERMINAL_LINK_FOREGROUND = uiColors.accent;
 const FONT_SAMPLE = 'MMMMMMMMMMMMMMMMMMMM';
 const TAP_SLOP = 12;
 const SWIPE_DISTANCE = 24;
