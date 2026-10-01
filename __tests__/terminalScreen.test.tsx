@@ -587,7 +587,7 @@ describe('TerminalScreen', () => {
     );
     expect(renderer.root.findByProps({testID: 'terminal-home'})).toBeDefined();
     const menuButton = renderer.root.findByProps({testID: 'terminal-home'});
-    expect(menuButton.props.accessibilityLabel).toBe('Return to Metro menu');
+    expect(menuButton.props.accessibilityLabel).toBe('Back to home');
     expect(menuButton.findByType(Text).props.children).toBe('←');
     await ReactTestRenderer.act(async () => { menuButton.props.onPress(); });
     expect(onHome).toHaveBeenCalledTimes(1);

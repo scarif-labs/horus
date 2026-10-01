@@ -84,6 +84,7 @@ class DistroStoreCore(
     expectedSha256: String = AlpineRootfsCatalog.ROOTFS_SHA256,
     expectedBytes: Long = AlpineRootfsCatalog.ROOTFS_SIZE_BYTES,
     downloadTimeoutMs: Long = 120_000,
+    source: ArchiveDownloader = downloader,
   ): InstallOutcome {
     if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) {
       return InstallOutcome.Failure(rootfsId, "validate", "invalid_rootfs_id", "id does not match the catalog pattern")
@@ -101,8 +102,8 @@ class DistroStoreCore(
       return InstallOutcome.Failure(rootfsId, "layout", "storage_unavailable", error.message ?: "layout failure")
     }
 
-    // A verified archive in the cache may be reused; downloads always land in
-    // downloads/incoming under a .part name first.
+    // A verified archive in the cache may be reused; downloads (and archives
+    // the user imports by hand) always land in downloads/incoming first.
     val cachedArchive = paths.archiveInCache(rootfsId)
     val incoming = paths.archiveInIncoming(rootfsId)
     val archiveToUse: File
@@ -115,7 +116,7 @@ class DistroStoreCore(
         reusedCache = false
         incoming.delete()
         val downloaded = try {
-          downloader.download(url, expectedBytes, incoming, downloadTimeoutMs)
+          source.download(url, expectedBytes, incoming, downloadTimeoutMs)
         } catch (error: IOException) {
           incoming.delete()
           return InstallOutcome.Failure(rootfsId, "download", "download_failed", error.message ?: "download failure")

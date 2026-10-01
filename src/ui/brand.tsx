@@ -13,6 +13,7 @@ export const uiColors = {
   subdued: '#707C84',
   accent: '#80EB12',
   danger: '#FF8795',
+  warning: '#FFC65C',
 } as const;
 
 type BrandHeaderProps = Readonly<{

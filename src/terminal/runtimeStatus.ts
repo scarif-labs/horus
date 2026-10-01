@@ -1,6 +1,7 @@
 import nativeTerminalRuntime from '../native/NativeTerminalRuntime';
 import type {
   TerminalDebugLogResponse,
+  InstallRootfsRequest,
   InstallRootfsResponse,
   ProvisionToolchainResponse,
   ResetRuntimeResponse,
@@ -232,13 +233,31 @@ export async function installRootfs(
   requestId: string,
   runtime: Pick<Spec, 'installRootfs'> | null = nativeTerminalRuntime,
 ): Promise<TrustedInstallOutcome> {
+  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.installRootfs(request));
+}
+
+/**
+ * Lets the user pick a rootfs archive they downloaded in a browser. Native
+ * verifies it against the same pinned size and digest as a download.
+ */
+export async function importRootfs(
+  requestId: string,
+  runtime: Pick<Spec, 'importRootfs'> | null = nativeTerminalRuntime,
+): Promise<TrustedInstallOutcome> {
+  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.importRootfs(request));
+}
+
+async function runRootfsInstall(
+  requestId: string,
+  call: ((request: InstallRootfsRequest) => Promise<unknown>) | null,
+): Promise<TrustedInstallOutcome> {
   const request = buildInstallRootfsRequest(requestId);
   if (request === null) return operationError(requestId, 'invalid_request');
-  if (runtime === null) return operationError(requestId, 'unavailable');
+  if (call === null) return operationError(requestId, 'unavailable');
 
   let response: unknown;
   try {
-    response = await runtime.installRootfs(request);
+    response = await call(request);
   } catch {
     return operationError(requestId, 'internal_error');
   }

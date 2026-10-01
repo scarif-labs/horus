@@ -629,7 +629,7 @@ class ProotSessionLauncherTest {
 
       assertTrue(
         launch.argv.last().contains(
-          "apk add --no-cache --no-progress ca-certificates curl gcompat git jq openssh-client-default python3 ripgrep zsh",
+          "apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh",
         ),
       )
       assertTrue(launch.argv.last().contains("command -v git"))

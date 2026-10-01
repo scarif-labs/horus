@@ -215,7 +215,7 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
           meta={null}
           action={(
             <Pressable
-              accessibilityLabel="Return to Metro menu"
+              accessibilityLabel="Back to home"
               accessibilityRole="button"
               onPress={onBack}
               style={styles.menuArrow}

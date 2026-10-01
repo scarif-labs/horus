@@ -1,10 +1,15 @@
 package com.scariflabs.horus.terminal
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Base64
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.BaseActivityEventListener
 import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.common.LifecycleState
 import com.facebook.react.bridge.Promise
@@ -457,9 +462,73 @@ class TerminalRuntimeModule(
       return
     }
     TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$responseRequestId")
+    runRootfsInstall(responseRequestId, promise, imported = null)
+  }
+
+  /**
+   * Manual fallback for networks that cannot reach the Alpine CDN: the user
+   * downloads the pinned archive in a browser and picks it here. The picked
+   * file goes through the same size, SHA-256, extraction, and probe checks
+   * as a download.
+   */
+  override fun importRootfs(request: ReadableMap, promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(installError(INVALID_REQUEST_ID, "internal_error"))
+      return
+    }
+    val requestId = request.takeIf { it.hasKey("requestId") && it.getType("requestId") == ReadableType.String }
+      ?.getString("requestId")
+    val responseRequestId: String = requestId ?: INVALID_REQUEST_ID
+    if (!TerminalRuntimeContract.isValidRequestId(requestId)) {
+      promise.resolve(installError(responseRequestId, "invalid_request"))
+      return
+    }
+    val activity = appContext.currentActivity
+    if (activity == null) {
+      promise.resolve(installError(responseRequestId, "runtime_unavailable"))
+      return
+    }
+    if (!installInProgress.compareAndSet(false, true)) {
+      promise.resolve(installError(responseRequestId, "install_in_progress"))
+      return
+    }
+    val listener = object : BaseActivityEventListener() {
+      override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != IMPORT_ROOTFS_REQUEST_CODE) return
+        appContext.removeActivityEventListener(this)
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+          installInProgress.set(false)
+          deliverInstallResponse(promise, installError(responseRequestId, "import_cancelled"))
+          return
+        }
+        TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$responseRequestId")
+        runRootfsInstall(responseRequestId, promise, imported = uri)
+      }
+    }
+    appContext.addActivityEventListener(listener)
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+      .addCategory(Intent.CATEGORY_OPENABLE)
+      .setType("*/*")
+    try {
+      activity.startActivityForResult(intent, IMPORT_ROOTFS_REQUEST_CODE)
+    } catch (_: ActivityNotFoundException) {
+      appContext.removeActivityEventListener(listener)
+      installInProgress.set(false)
+      promise.resolve(installError(responseRequestId, "runtime_unavailable"))
+    }
+  }
+
+  /** Runs one install on the install worker; the caller already holds installInProgress. */
+  private fun runRootfsInstall(responseRequestId: String, promise: Promise, imported: Uri?) {
     installExecutor.execute {
       val response = try {
-        when (val outcome = store.install()) {
+        val outcome = if (imported == null) {
+          store.install()
+        } else {
+          store.install(source = ContentUriArchiveReader(appContext.contentResolver, imported))
+        }
+        when (outcome) {
           is DistroStoreCore.InstallOutcome.Success -> {
             TerminalDebugLog.record(appContext, "module_rootfs_install_success request=$responseRequestId")
             Arguments.createMap().apply {
@@ -480,7 +549,8 @@ class TerminalRuntimeModule(
               appContext,
               "module_rootfs_install_failure request=$responseRequestId stage=${outcome.stage}",
             )
-            installError(responseRequestId, mapFailureCode(outcome))
+            val code = mapFailureCode(outcome)
+            installError(responseRequestId, if (imported != null && code == "download_failed") "import_failed" else code)
           }
         }
       } catch (error: Exception) {
@@ -1369,6 +1439,7 @@ class TerminalRuntimeModule(
   private companion object {
     const val NAME = TerminalRuntimeContract.MODULE_NAME
     const val INVALID_REQUEST_ID = "invalid-request"
+    const val IMPORT_ROOTFS_REQUEST_CODE = 0x4852
     const val SESSION_EVENT_NAME = "terminalSessionEvents"
     const val DEFAULT_SESSION_ROWS = 24
     const val REDRAW_NUDGE_MIN_INTERVAL_MS = 1_000L

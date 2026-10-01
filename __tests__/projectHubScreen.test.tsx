@@ -34,7 +34,7 @@ describe('ProjectHubScreen', () => {
     const menuButton = renderer.root.findByProps({testID: 'project-hub-back'});
     const headerAction = renderer.root.findByType(BrandHeader).props.action as React.ReactElement<{testID?: string}>;
     expect(headerAction.props.testID).toBe('project-hub-back');
-    expect(menuButton.props.accessibilityLabel).toBe('Return to Metro menu');
+    expect(menuButton.props.accessibilityLabel).toBe('Back to home');
     expect(menuButton.props.children.props.children).toBe('menu ^');
     expect(renderer.root.findByType(BrandHeader).props.title).toBe('Choose project');
     expect(renderer.root.findByType(BrandHeader).props.eyebrow).toBe('OPEN IN CLAUDE CODE');

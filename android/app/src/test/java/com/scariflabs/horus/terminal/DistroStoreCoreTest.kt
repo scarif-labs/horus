@@ -136,6 +136,24 @@ class DistroStoreCoreTest {
   }
 
   @Test
+  fun `an imported archive uses the given source and the same digest check`() {
+    val network = FakeDownloader(archiveBytes, failWith = IOException("network down"))
+    val store = newStore(downloader = network)
+
+    val wrongFile = FakeDownloader(ByteArray(4096) { (it % 249).toByte() })
+    val rejected = store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong(), source = wrongFile)
+    assertEquals("digest_mismatch", (rejected as DistroStoreCore.InstallOutcome.Failure).reasonCode)
+    assertNull(store.readActiveRecord())
+
+    val pickedFile = FakeDownloader(archiveBytes)
+    val outcome = store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong(), source = pickedFile)
+    assertTrue(outcome.toString(), outcome is DistroStoreCore.InstallOutcome.Success)
+    assertEquals(1, pickedFile.calls)
+    assertEquals(0, network.calls)
+    assertEquals(archiveSha256, store.readActiveRecord()!!.rootfsSha256)
+  }
+
+  @Test
   fun `an interrupted extraction leaves the previous active version intact`() {
     val store = newStore()
     val first = store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())

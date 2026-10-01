@@ -1,6 +1,6 @@
 import React from 'react';
 import {AppState, BackHandler} from 'react-native';
-import {installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
 import {CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from './src/terminal/commandFactory';
 import {TerminalSessionClient} from './src/terminal/session/sessionClient';
@@ -29,6 +29,7 @@ type BootState = 'checking' | 'installing' | 'error';
 type PendingGithubLogin = Readonly<{marker: string; returnTo: 'home' | 'projects'}>;
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
+const IMPORT_REQUEST_ID = 'horus-import-1';
 const WORKSPACE_PROJECTS_DIRECTORY = '/workspace/projects';
 let sessionRequestSequence = 0;
 
@@ -96,6 +97,14 @@ const NORMALIZE_GIT_REMOTE_FUNCTION = [
   '}',
 ].join('\n');
 
+/**
+ * Prints a completion marker as its own output line for the terminal's
+ * scanner, then moves up and erases it so the user never sees it.
+ */
+function printHiddenMarker(marker: string): string {
+  return `printf '\\n%s\\n\\033[1A\\033[2K' ${shellQuote(marker)}`;
+}
+
 function buildProjectCloneCommand(source: string, directory: string, marker: string, kind: 'github' | 'url'): string {
   const expectedOrigin = kind === 'github' ? `https://github.com/${source}.git` : source;
   const cloneCommand = kind === 'github'
@@ -112,14 +121,14 @@ function buildProjectCloneCommand(source: string, directory: string, marker: str
     `  existing_origin=$(git -C ${quotedDirectory} remote get-url origin 2>/dev/null || true)`,
     `  if [ ! -L ${quotedDirectory} ] && [ -n "$destination_root" ] && [ "$existing_root" = "$destination_root" ] && [ -n "$existing_origin" ] && [ "$(normalize_git_remote "$existing_origin" 2>/dev/null || true)" = "$(normalize_git_remote ${shellQuote(expectedOrigin)})" ]; then`,
     `    printf '%s\\n' 'Using the existing checkout of this repository.'`,
-    `    printf '\\n%s\\n' ${shellQuote(marker)}`,
+    `    ${printHiddenMarker(marker)}`,
     '    exit 0',
     '  fi',
     `  printf '%s\\n' 'That workspace folder already exists but is not a checkout of this repository. It was left unchanged.' >&2`,
     '  exit 17',
     'fi',
     cloneCommand,
-    `printf '\\n%s\\n' ${shellQuote(marker)}`,
+    `${printHiddenMarker(marker)}`,
   ].join('\n');
 }
 
@@ -423,7 +432,7 @@ function App(): React.JSX.Element {
     const marker = `HORUS_GITHUB_LOGOUT_COMPLETE_${nextSessionRequestId('github-logout')}`;
     pendingGithubLogoutMarkerRef.current = marker;
     setGithubAccountError(undefined);
-    const command = `gh auth logout --hostname github.com --user ${shellQuote(githubAccount.username)} && printf '\\n%s\\n' ${shellQuote(marker)}`;
+    const command = `gh auth logout --hostname github.com --user ${shellQuote(githubAccount.username)} && ${printHiddenMarker(marker)}`;
     openProjectTerminal({
       title: 'GitHub Logout',
       eyebrow: 'GITHUB / LOGOUT',
@@ -560,7 +569,7 @@ function App(): React.JSX.Element {
   const openGithubLogin = React.useCallback((returnTo: 'home' | 'projects') => {
     const marker = `HORUS_GITHUB_LOGIN_COMPLETE_${nextSessionRequestId('github-login')}`;
     pendingGithubLoginRef.current = {marker, returnTo};
-    const command = `mkdir -p ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && cd ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && ${GITHUB_AUTH_LOGIN_COMMAND} && printf '\\n%s\\n' ${shellQuote(marker)}`;
+    const command = `mkdir -p ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && cd ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && ${GITHUB_AUTH_LOGIN_COMMAND} && ${printHiddenMarker(marker)}`;
     openTarget({title: 'GitHub Login', eyebrow: 'GITHUB / LOGIN', command: buildZshCommand(command), toolchain: 'github', returnTo, completionMarker: marker});
   }, [openTarget]);
   const openProjectLogin = React.useCallback(() => openGithubLogin('projects'), [openGithubLogin]);
@@ -603,7 +612,9 @@ function App(): React.JSX.Element {
     if (pending === undefined || pending.marker !== marker) return;
     setPendingProjectClone(undefined);
     setProjectError('Clone did not complete. Review the terminal output before retrying.');
-  }, []);
+    // Part of the clone may have landed; show what is on disk now.
+    void refreshManualWorkspaces().catch(() => undefined);
+  }, [refreshManualWorkspaces]);
 
   const onTerminalCompletion = React.useCallback(() => {
     const marker = terminalTarget.completionMarker;
@@ -641,12 +652,28 @@ function App(): React.JSX.Element {
     completeProjectClone(marker);
   }, [completeProjectClone, refreshGithubRepositories, terminalTarget.completionMarker]);
 
+  const importDownloadedRootfs = React.useCallback(() => {
+    void (async () => {
+      const previousError = bootError;
+      setBootState('installing');
+      const imported = await importRootfs(IMPORT_REQUEST_ID);
+      if (!appMountedRef.current) return;
+      if (imported.kind === 'success') {
+        // Bootstrap re-checks the runtime and finds it ready.
+        setRetryCount(value => value + 1);
+        return;
+      }
+      setBootState('error');
+      setBootError(imported.errorCode === 'import_cancelled' ? previousError : imported.errorCode);
+    })();
+  }, [bootError]);
+
   const onTerminalCommandFailure = React.useCallback(() => {
     if (terminalTarget.completionMarker !== undefined) failProjectClone(terminalTarget.completionMarker);
   }, [failProjectClone, terminalTarget.completionMarker]);
 
   if (route === 'boot') {
-    return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
+    return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
   }
   if (!__DEV__ && route === 'login' && profile !== null) {
     return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} />;

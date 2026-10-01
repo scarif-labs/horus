@@ -16,6 +16,7 @@ import {
 } from '../src/terminal/capabilities';
 import {
   isTerminalRuntimeStatusResponse,
+  importRootfs,
   installRootfs,
   readTerminalDebugLog,
   resetRuntime,
@@ -287,6 +288,35 @@ describe('typed install/reset wrappers', () => {
       requestId: 'install-1',
       rootfsId: PINNED_ROOTFS_ID,
     });
+  });
+
+  it('imports a picked archive through the same validation', async () => {
+    const runtime = {
+      importRootfs: jest.fn().mockResolvedValue({
+        requestId: 'import-1',
+        status: 'success',
+        rootfsId: PINNED_ROOTFS_ID,
+        archiveSha256: PINNED_ROOTFS_SHA256,
+        archiveBytes: PINNED_ROOTFS_SIZE_BYTES,
+        extractionFiles: 356,
+        probeExitCode: 0,
+        probeMarkers: [...PINNED_PROBE_MARKERS],
+        reusedCache: false,
+        durationMs: 12,
+      }),
+    };
+    await expect(importRootfs('import-1', runtime)).resolves.toMatchObject({kind: 'success', requestId: 'import-1'});
+    expect(runtime.importRootfs).toHaveBeenCalledWith({requestId: 'import-1', rootfsId: PINNED_ROOTFS_ID});
+
+    runtime.importRootfs.mockResolvedValue({requestId: 'import-1', status: 'error', errorCode: 'import_cancelled'});
+    await expect(importRootfs('import-1', runtime)).resolves.toEqual({
+      kind: 'error',
+      requestId: 'import-1',
+      errorCode: 'import_cancelled',
+    });
+
+    runtime.importRootfs.mockResolvedValue({requestId: 'import-1', status: 'success', archiveBytes: 1});
+    await expect(importRootfs('import-1', runtime)).resolves.toMatchObject({kind: 'error', errorCode: 'invalid_response'});
   });
 
   it('rejects malformed install errors and invalid requests before the bridge', async () => {

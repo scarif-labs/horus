@@ -32,6 +32,9 @@ export const PINNED_ROOTFS_SHA256 =
   '4b8cd66a6688b2a87276c39843ed89c3a06d9534fc6a5823c586aff2696c1f2a';
 export const PINNED_ALPINE_RELEASE = '3.24.0';
 export const PINNED_ROOTFS_SIZE_BYTES = 4_043_766;
+/** Shown to the user when the in-app download fails, so they can fetch it in a browser. */
+export const PINNED_ROOTFS_URL =
+  'https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.0-aarch64.tar.gz';
 export const PINNED_PROBE_MARKERS = [
   'alpine_probe_begin',
   'aarch64',

@@ -44,7 +44,7 @@ describe('FileExplorerScreen', () => {
     const backButton = renderer?.root.findByProps({testID: 'file-explorer-back'});
     const headerAction = renderer?.root.findByType(BrandHeader).props.action as React.ReactElement<{testID?: string}>;
     expect(headerAction.props.testID).toBe('file-explorer-back');
-    expect(backButton?.props.accessibilityLabel).toBe('Return to Metro menu');
+    expect(backButton?.props.accessibilityLabel).toBe('Back to home');
     expect(backButton?.props.children.props.children).toBe('menu ^');
     await ReactTestRenderer.act(async () => {
       backButton?.props.onPress();

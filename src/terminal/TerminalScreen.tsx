@@ -243,7 +243,7 @@ const TerminalHeader = React.memo(function TerminalHeaderView({onBack, onHome}: 
   return (
     <View pointerEvents="box-none" style={styles.floatingHeader} testID="terminal-floating-header">
       {(onHome ?? onBack) !== undefined ? (
-        <Pressable accessibilityLabel="Return to Metro menu" accessibilityRole="button" onPress={onHome ?? onBack} style={styles.floatingGroup} testID="terminal-home">
+        <Pressable accessibilityLabel="Back to home" accessibilityRole="button" onPress={onHome ?? onBack} style={styles.floatingGroup} testID="terminal-home">
           <BrandMark accessible={false} size={28} />
           <Text style={styles.menuArrowText}>←</Text>
         </Pressable>
@@ -527,6 +527,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           attachmentRef.current = undefined;
           setState('stopped');
           setError(outcome.signal === undefined ? undefined : `exited:${outcome.signal}`);
+          // The exit happened while backgrounded, so onExit never ran.
+          deliverCompletion();
+          deliverCommandFailure();
           return;
         }
         setError(undefined);
@@ -539,7 +542,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       });
     });
     return () => subscription.remove();
-  }, [client, disposeAttachment]);
+  }, [client, deliverCommandFailure, deliverCompletion, disposeAttachment]);
 
   const readRuntimeStatus = React.useCallback(async (): Promise<TerminalRuntimeStatusView> => {
     if (runtime === undefined) return readTerminalRuntimeStatus();
@@ -568,9 +571,15 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         ...sizeRef.current,
         command: sessionCommand,
         toolchain,
+        // Clone, login, and logout terminals are short helper commands that
+        // end on their own; they must not take the slot of the app they open.
+        ...(completionMarker === undefined ? {} : {countsAgainstSessionLimit: false}),
       });
       if (!mountedRef.current) {
-        if (started.kind === 'success') {
+        // App and shell sessions outlive their screen, and the service hands
+        // the same running session to the next screen that starts this
+        // command. Stopping it here would kill the remounted screen's session.
+        if (started.kind === 'success' && stopSessionOnUnmount) {
           await client.stopSession(nextRequestId('late-stop'), started.sessionId, 'screen_unmount');
         }
         return;
@@ -746,7 +755,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       setError('subscription_failed');
       deliverCommandFailure();
     }
-  }, [client, completionMarker, deliverCommandFailure, deliverCompletion, disposeAttachment, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, toolchain]);
+  }, [client, completionMarker, deliverCommandFailure, deliverCompletion, disposeAttachment, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain]);
 
   const start = React.useCallback(async () => {
     if (activeSessionRef.current !== undefined || startingRef.current) return;
@@ -1144,9 +1153,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             <TextInput
               ref={terminalInputRef}
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect={false}
               autoFocus
               editable={running}
+              importantForAutofill="noExcludeDescendants"
               onChangeText={handleTerminalText}
               onKeyPress={handleTerminalKeyPress}
               onLayout={() => {

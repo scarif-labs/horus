@@ -49,6 +49,7 @@ export {
 } from './evidence/gateRecord';
 
 export {
+  importRootfs,
   installRootfs,
   readTerminalDebugLog,
   resetRuntime,

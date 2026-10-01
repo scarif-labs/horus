@@ -80,7 +80,7 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
           meta={null}
           action={(
             <Pressable
-              accessibilityLabel="Return to Metro menu"
+              accessibilityLabel="Back to home"
               accessibilityRole="button"
               onPress={onBack}
               style={styles.menuButton}

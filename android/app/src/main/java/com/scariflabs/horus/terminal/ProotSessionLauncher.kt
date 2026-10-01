@@ -349,6 +349,7 @@ class ProotSessionLauncher(
       // `/bin/busybox top` must reach the guest binary with their argv intact.
       add("PATH=$guestPath")
       add("LANG=$GUEST_LANG")
+      add("TZ=${GuestTimeZone.forGuest(rootfsDir)}")
     }
     return LaunchSpec(
       argv = argv,
@@ -1128,9 +1129,10 @@ class ProotSessionLauncher(
       if [ "${'$'}target" = shell ]; then
         if ! command -v zsh >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 ||
           [ ! -x /usr/bin/rg ] || [ ! -x /usr/bin/curl ] || [ ! -x /usr/bin/jq ] ||
-          [ ! -x /usr/bin/python3 ] || [ ! -e /lib/ld-linux-aarch64.so.1 ]; then
+          [ ! -x /usr/bin/python3 ] || [ ! -e /lib/ld-linux-aarch64.so.1 ] ||
+          [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ]; then
           mark_provision_stage apk
-          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress ca-certificates curl gcompat git jq openssh-client-default python3 ripgrep zsh; then
+          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh; then
             # PRoot cannot create zsh's versioned hardlink (bin/zsh-5.9) on
             # this Android filesystem. Continue only when both the shell and
             # base utilities extracted successfully for visible clone sessions.
@@ -1345,7 +1347,7 @@ EOF
         printf '%s\n' ready > "${'$'}target_marker"
       fi
       mark_provision_stage ready
-      printf '%s\n' HORUS_TOOLCHAIN_READY
+      printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
     """.trimIndent()
     private val TOOLCHAIN_SESSION_SCRIPT = """
       set -eu
@@ -1360,9 +1362,11 @@ EOF
       if [ "${'$'}{HORUS_SKIP_TOOLCHAIN_PROVISION:-0}" != 1 ]; then
         $TOOLCHAIN_PROVISION_SCRIPT
       else
-        printf '%s\n' HORUS_TOOLCHAIN_READY
+        printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
       fi
-      printf '%s\n' "HORUS_INSTALL_HANDOFF=${'$'}session_username"
+      # Markers stay exact output lines for the app's scanners; the trailing
+      # cursor-up + erase-line keeps them off the user's screen.
+      printf '%s\n\033[1A\033[2K' "HORUS_INSTALL_HANDOFF=${'$'}session_username"
       if [ "${'$'}session_username" = root ]; then
         exec /bin/sh -c "${'$'}session_command"
       fi

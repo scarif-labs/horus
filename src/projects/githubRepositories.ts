@@ -181,6 +181,8 @@ export async function listGithubRepositories(
   const started = await client.startSession(nextRequestId('list-start'), {
     command: buildGithubRepositoryListCommand(),
     toolchain: 'github',
+    // A background query, not an app the user opened.
+    countsAgainstSessionLimit: false,
   });
   if (started.kind === 'error') {
     client.dispose();

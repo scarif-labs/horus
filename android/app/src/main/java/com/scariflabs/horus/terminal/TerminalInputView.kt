@@ -6,6 +6,8 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import android.graphics.Rect
+import android.os.Build
+import android.view.View
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -92,10 +94,17 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context) {
     setSingleLine(true)
     maxLines = 1
     filters = arrayOf(InputFilter.LengthFilter(MAX_INPUT_CHARS))
-    inputType = InputType.TYPE_CLASS_TEXT or
-      InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-      InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-    imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+    // Raw input, like Termux: keyboards send plain key events, with no
+    // suggestions, autocorrect, or "Passwords" chip (which Gboard shows for
+    // the password variations). Autofill and keyboard learning are off too,
+    // so typed commands never reach a password manager or the dictionary.
+    inputType = InputType.TYPE_NULL
+    imeOptions = EditorInfo.IME_ACTION_SEND or
+      EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+      EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+    }
     showSoftInputOnFocus = true
     addTextChangedListener(watcher)
     setOnEditorActionListener { _, actionId, event ->

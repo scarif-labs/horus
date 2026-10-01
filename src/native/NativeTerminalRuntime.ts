@@ -52,6 +52,8 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'runtime_unavailable',
   'install_in_progress',
   'download_failed',
+  'import_failed',
+  'import_cancelled',
   'digest_mismatch',
   'extraction_failed',
   'probe_failed',
@@ -78,6 +80,8 @@ export type TerminalRuntimeErrorCode =
   | 'runtime_unavailable'
   | 'install_in_progress'
   | 'download_failed'
+  | 'import_failed'
+  | 'import_cancelled'
   | 'digest_mismatch'
   | 'extraction_failed'
   | 'probe_failed'
@@ -495,6 +499,8 @@ export interface Spec extends TurboModule {
   /** Returns the bounded, credential-free persisted native diagnostic tail. */
   getDebugLog(): Promise<TerminalDebugLogResponse>;
   installRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
+  /** Opens the system file picker and installs the archive the user picks. */
+  importRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
   provisionToolchain(request: ProvisionToolchainRequest): Promise<ProvisionToolchainResponse>;
   resetRuntime(request: ResetRuntimeRequest): Promise<ResetRuntimeResponse>;
   startSession(request: StartSessionRequest): Promise<StartSessionResponse>;
