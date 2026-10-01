@@ -301,6 +301,10 @@ android {
                 signingConfig signingConfigs.release
             }
             minifyEnabled enableProguardInReleaseBuilds
+            // Drops resources that R8-shrunk code no longer references.
+            // Bundled JS images are kept by res/raw/keep.xml, because React
+            // Native looks them up by name at runtime.
+            shrinkResources enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }

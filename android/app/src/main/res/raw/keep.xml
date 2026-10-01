@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- React Native resolves bundled JS images (require('./x.png')) by name at
+     runtime, so the resource shrinker cannot see them. Keep every drawable the
+     JS bundle emits; their names start with the source path. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/src_*,@drawable/assets_*,@drawable/node_modules_*" />
