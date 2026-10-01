@@ -37,6 +37,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * Converts a JS number to an Int only when it is exactly an integer in Int
+ * range. NaN, infinities, fractions, and out-of-range values return null
+ * rather than being truncated or saturated by Double.toInt().
+ */
+internal fun exactIntOrNull(value: Double): Int? =
+  value.takeIf {
+    it.isFinite() && it >= Int.MIN_VALUE.toDouble() && it <= Int.MAX_VALUE.toDouble() && it.toInt().toDouble() == it
+  }?.toInt()
+
+/**
  * Codegen-backed implementation of the Alpine terminal runtime module. The
  * generated superclass is produced from src/native/NativeTerminalRuntime.ts.
  *
@@ -398,11 +408,7 @@ class TerminalRuntimeModule(
       promise.resolve(sessionSettingsError("internal_error"))
       return
     }
-    val limit = request.takeIf {
-      it.hasKey("maxConcurrentSessions") && it.getType("maxConcurrentSessions") == ReadableType.Number
-    }?.getDouble("maxConcurrentSessions")?.takeIf {
-      it.isFinite() && it.toInt().toDouble() == it
-    }?.toInt()
+    val limit = intField(request, "maxConcurrentSessions")
     if (limit == null || !TerminalSessionContract.isValidActiveSessionLimit(limit)) {
       promise.resolve(sessionSettingsError("invalid_request"))
       return
@@ -613,8 +619,9 @@ class TerminalRuntimeModule(
 
   override fun startSession(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::sessionError) { requestId ->
-      val rows = intField(request, "rows") ?: DEFAULT_SESSION_ROWS
-      val columns = intField(request, "columns") ?: DEFAULT_SESSION_COLUMNS
+      // A present but non-integral size is rejected below, not replaced by the default.
+      val rows = if (request.hasKey("rows")) intField(request, "rows") else DEFAULT_SESSION_ROWS
+      val columns = if (request.hasKey("columns")) intField(request, "columns") else DEFAULT_SESSION_COLUMNS
       val sessionCommand = if (!request.hasKey("command")) {
         null
       } else {
@@ -641,7 +648,10 @@ class TerminalRuntimeModule(
         promise.resolve(sessionError(requestId, "invalid_request"))
         return
       }
-      if (!TerminalSessionContract.isValidRows(rows) || !TerminalSessionContract.isValidColumns(columns)) {
+      if (rows == null || columns == null ||
+        !TerminalSessionContract.isValidRows(rows) ||
+        !TerminalSessionContract.isValidColumns(columns)
+      ) {
         promise.resolve(sessionError(requestId, "invalid_request"))
         return
       }
@@ -903,8 +913,11 @@ class TerminalRuntimeModule(
   private fun sessionIdField(request: ReadableMap): String? =
     stringField(request, "sessionId")?.takeIf(TerminalSessionContract::isValidSessionId)
 
+  /** Rejects NaN, infinities, fractions, and out-of-range numbers instead of truncating them. */
   private fun intField(request: ReadableMap, key: String): Int? =
-    request.takeIf { it.hasKey(key) && it.getType(key) == ReadableType.Number }?.let { it.getDouble(key).toInt() }
+    request.takeIf { it.hasKey(key) && it.getType(key) == ReadableType.Number }
+      ?.getDouble(key)
+      ?.let(::exactIntOrNull)
 
   private fun longField(request: ReadableMap, key: String): Long? =
     request.takeIf { it.hasKey(key) && it.getType(key) == ReadableType.Number }
