@@ -30,19 +30,17 @@ import {createRequestIdFactory} from './src/terminal/requestIds';
 
 type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
-type PendingGithubLogin = Readonly<{marker: string; returnTo: 'home' | 'projects'}>;
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
 const nextSessionRequestId = createRequestIdFactory('launcher');
 const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
 
-type PendingProjectClone = Readonly<{
-  marker: string;
-  name: string;
-  directory: string;
-  harness: MetroLaunchTarget;
-}>;
+/** The one terminal whose hidden completion marker App is waiting for. */
+type PendingCompletion =
+  | Readonly<{kind: 'clone'; marker: string; name: string; directory: string; harness: MetroLaunchTarget}>
+  | Readonly<{kind: 'github-login'; marker: string; returnTo: 'home' | 'projects'}>
+  | Readonly<{kind: 'github-logout'; marker: string}>;
 
 function isHarnessTarget(target: MetroLaunchTarget): boolean {
   return target.sessionId === undefined && (
@@ -77,11 +75,14 @@ function App(): React.JSX.Element {
   const [projectLoading, setProjectLoading] = React.useState(false);
   const [projectError, setProjectError] = React.useState<string | undefined>();
   const [githubAutoRefreshRoute, setGithubAutoRefreshRoute] = React.useState<'home' | 'projects' | undefined>();
-  const [pendingProjectClone, setPendingProjectClone] = React.useState<PendingProjectClone | undefined>();
-  const pendingProjectCloneRef = React.useRef(pendingProjectClone);
-  pendingProjectCloneRef.current = pendingProjectClone;
-  const pendingGithubLogoutMarkerRef = React.useRef<string | undefined>(undefined);
-  const pendingGithubLoginRef = React.useRef<PendingGithubLogin | undefined>(undefined);
+  // Callbacks read the ref so they see a marker set earlier in the same
+  // event; the state copy drives the held terminal's render.
+  const [pendingCompletion, setPendingCompletionState] = React.useState<PendingCompletion | undefined>();
+  const pendingCompletionRef = React.useRef(pendingCompletion);
+  const setPendingCompletion = React.useCallback((next: PendingCompletion | undefined) => {
+    pendingCompletionRef.current = next;
+    setPendingCompletionState(next);
+  }, []);
   const projectLoadingRef = React.useRef(false);
   const queuedGithubRefreshRef = React.useRef(false);
   const refreshGithubRepositoriesRef = React.useRef<() => Promise<void>>(async () => undefined);
@@ -223,16 +224,14 @@ function App(): React.JSX.Element {
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
 
   const leaveTerminal = React.useCallback(() => {
-    if (
-      terminalTarget.completionMarker !== undefined &&
-      (pendingProjectClone?.marker === terminalTarget.completionMarker ||
-        pendingGithubLogoutMarkerRef.current === terminalTarget.completionMarker)
-    ) return;
-    if (pendingGithubLoginRef.current?.marker === terminalTarget.completionMarker) {
-      pendingGithubLoginRef.current = undefined;
+    const pending = pendingCompletionRef.current;
+    if (pending !== undefined && pending.marker === terminalTarget.completionMarker) {
+      // Clone and logout hold the terminal until their marker or a failure.
+      if (pending.kind !== 'github-login') return;
+      setPendingCompletion(undefined);
     }
     setRoute(terminalReturnRoute);
-  }, [pendingProjectClone, terminalReturnRoute, terminalTarget.completionMarker]);
+  }, [setPendingCompletion, terminalReturnRoute, terminalTarget.completionMarker]);
 
   const leaveProjects = React.useCallback(() => setRoute('home'), []);
 
@@ -319,7 +318,7 @@ function App(): React.JSX.Element {
       return;
     }
     const marker = `HORUS_GITHUB_LOGOUT_COMPLETE_${nextSessionRequestId('github-logout')}`;
-    pendingGithubLogoutMarkerRef.current = marker;
+    setPendingCompletion({kind: 'github-logout', marker});
     setGithubAccountError(undefined);
     const command = `gh auth logout --hostname github.com --user ${shellQuote(githubAccount.username)} && ${printHiddenMarker(marker)}`;
     openTerminal({
@@ -329,7 +328,7 @@ function App(): React.JSX.Element {
       toolchain: 'github',
       completionMarker: marker,
     });
-  }, [githubAccount, openTerminal]);
+  }, [githubAccount, openTerminal, setPendingCompletion]);
 
   const openGithubLoginBrowser = React.useCallback(async (url: string) => {
     await openGithubDeviceLoginUrl(url);
@@ -350,7 +349,7 @@ function App(): React.JSX.Element {
     manualWorkspaceRefreshRef.current += 1;
     const marker = `HORUS_PROJECT_CLONE_COMPLETE_${nextSessionRequestId('clone')}`;
     const command = buildProjectCloneCommand(source, directory, marker, kind);
-    setPendingProjectClone({marker, name, directory, harness: selectedHarness});
+    setPendingCompletion({kind: 'clone', marker, name, directory, harness: selectedHarness});
     openTerminal({
       title: `Clone or reuse ${name}`,
       eyebrow: 'BARE TERMINAL / CLONE',
@@ -359,7 +358,7 @@ function App(): React.JSX.Element {
       returnTo: 'projects',
       completionMarker: marker,
     }, 'projects');
-  }, [openTerminal, selectedHarness]);
+  }, [openTerminal, selectedHarness, setPendingCompletion]);
 
   const cloneProject = React.useCallback((url: string, name: string) => {
     beginProjectClone(url, name, 'url');
@@ -441,10 +440,10 @@ function App(): React.JSX.Element {
 
   const openGithubLogin = React.useCallback((returnTo: 'home' | 'projects') => {
     const marker = `HORUS_GITHUB_LOGIN_COMPLETE_${nextSessionRequestId('github-login')}`;
-    pendingGithubLoginRef.current = {marker, returnTo};
+    setPendingCompletion({kind: 'github-login', marker, returnTo});
     const command = `mkdir -p ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && cd ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && ${GITHUB_AUTH_LOGIN_COMMAND} && ${printHiddenMarker(marker)}`;
     openTarget({title: 'GitHub Login', eyebrow: 'GITHUB / LOGIN', command: buildZshCommand(command), toolchain: 'github', returnTo, completionMarker: marker});
-  }, [openTarget]);
+  }, [openTarget, setPendingCompletion]);
   const openProjectLogin = React.useCallback(() => openGithubLogin('projects'), [openGithubLogin]);
   const openHomeGithubLogin = React.useCallback(() => openGithubLogin('home'), [openGithubLogin]);
 
@@ -458,42 +457,28 @@ function App(): React.JSX.Element {
     openTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
   }, [beginProjectClone, openTerminal, selectedHarness]);
 
-  const completeProjectClone = React.useCallback((marker: string) => {
-    const pending = pendingProjectCloneRef.current;
-    if (pending === undefined || pending.marker !== marker) return;
-    manualWorkspaceRefreshRef.current += 1;
-    setProjects(current => [...current.filter(item => item.path !== pending.directory), {name: pending.name, path: pending.directory}]);
-    setPendingProjectClone(undefined);
-    openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
-  }, [openTerminal]);
-
   const failPendingCompletion = React.useCallback((marker: string) => {
-    if (pendingGithubLogoutMarkerRef.current === marker) {
-      pendingGithubLogoutMarkerRef.current = undefined;
+    const pending = pendingCompletionRef.current;
+    if (pending === undefined || pending.marker !== marker) return;
+    setPendingCompletion(undefined);
+    if (pending.kind === 'github-logout') {
       setGithubAccountError('GitHub logout failed. The account is still connected.');
       setRoute('github-account');
       return;
     }
-    if (pendingGithubLoginRef.current?.marker === marker) {
-      pendingGithubLoginRef.current = undefined;
-      return;
-    }
-    const pending = pendingProjectCloneRef.current;
-    if (pending === undefined || pending.marker !== marker) return;
-    setPendingProjectClone(undefined);
+    if (pending.kind === 'github-login') return;
     setProjectError('Clone did not complete. Review the terminal output before retrying.');
     // Part of the clone may have landed; show what is on disk now.
     void refreshManualWorkspaces().catch(() => undefined);
-  }, [refreshManualWorkspaces]);
+  }, [refreshManualWorkspaces, setPendingCompletion]);
 
   const onTerminalCompletion = React.useCallback(() => {
     const marker = terminalTarget.completionMarker;
-    if (marker === undefined) return;
-    const pendingGithubLogin = pendingGithubLoginRef.current;
-    if (pendingGithubLogin?.marker === marker) {
-      pendingGithubLoginRef.current = undefined;
-      const returnRoute = pendingGithubLogin.returnTo;
-      if (returnRoute === 'projects') {
+    const pending = pendingCompletionRef.current;
+    if (marker === undefined || pending === undefined || pending.marker !== marker) return;
+    if (pending.kind === 'github-login') {
+      setPendingCompletion(undefined);
+      if (pending.returnTo === 'projects') {
         setGithubAutoRefreshRoute('projects');
         setRoute('projects');
         return;
@@ -502,9 +487,13 @@ function App(): React.JSX.Element {
       void refreshGithubRepositories().catch(() => undefined);
       return;
     }
-    if (pendingGithubLogoutMarkerRef.current === marker) {
-      pendingGithubLogoutMarkerRef.current = undefined;
+    if (pending.kind === 'github-logout') {
+      // Keep the terminal held until the saved account is cleared; the
+      // rendered state is released together with the route change below.
+      pendingCompletionRef.current = undefined;
+      const release = () => setPendingCompletionState(current => (current?.marker === marker ? undefined : current));
       clearStoredGithubAccount().then(cleared => {
+        release();
         if (!cleared) {
           setGithubAccountError('GitHub logged out, but Horus could not clear its saved account details.');
           setRoute('github-account');
@@ -519,8 +508,11 @@ function App(): React.JSX.Element {
       });
       return;
     }
-    completeProjectClone(marker);
-  }, [completeProjectClone, refreshGithubRepositories, terminalTarget.completionMarker]);
+    manualWorkspaceRefreshRef.current += 1;
+    setProjects(current => [...current.filter(item => item.path !== pending.directory), {name: pending.name, path: pending.directory}]);
+    setPendingCompletion(undefined);
+    openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
+  }, [openTerminal, refreshGithubRepositories, setPendingCompletion, terminalTarget.completionMarker]);
 
   const importDownloadedRootfs = React.useCallback(() => {
     void (async () => {
@@ -593,8 +585,9 @@ function App(): React.JSX.Element {
   if (route === 'files') {
     return <FileExplorerScreen onBack={() => setRoute('home')} />;
   }
-  const clonePending = terminalTarget.completionMarker !== undefined && pendingProjectClone?.marker === terminalTarget.completionMarker;
-  const logoutPending = terminalTarget.completionMarker !== undefined && pendingGithubLogoutMarkerRef.current === terminalTarget.completionMarker;
+  const heldCompletion = terminalTarget.completionMarker !== undefined && pendingCompletion?.marker === terminalTarget.completionMarker ? pendingCompletion.kind : undefined;
+  const clonePending = heldCompletion === 'clone';
+  const logoutPending = heldCompletion === 'github-logout';
   const completionPending = clonePending || logoutPending;
   return (
     <TerminalScreen
