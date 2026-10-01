@@ -690,29 +690,6 @@ function App(): React.JSX.Element {
   if (route === 'files') {
     return <FileExplorerScreen onBack={() => setRoute('home')} />;
   }
-  if (route === 'terminal' && __DEV__) {
-    const clonePending = terminalTarget.completionMarker !== undefined && pendingProjectClone?.marker === terminalTarget.completionMarker;
-    const logoutPending = terminalTarget.completionMarker !== undefined && pendingGithubLogoutMarkerRef.current === terminalTarget.completionMarker;
-    const completionPending = clonePending || logoutPending;
-    return (
-      <TerminalScreen
-        key={terminalInstanceKey}
-        onBack={completionPending ? undefined : leaveTerminal}
-        onGithubDeviceLogin={openGithubLoginBrowser}
-        onHome={completionPending ? undefined : leaveTerminal}
-        onCompletion={onTerminalCompletion}
-        onCommandFailure={onTerminalCommandFailure}
-        screenEyebrow={clonePending ? 'CLONING / WAIT' : logoutPending ? 'GITHUB / LOGOUT / WAIT' : terminalTarget.eyebrow}
-        screenTitle={terminalTarget.title}
-        sessionCommand={terminalTarget.command}
-        existingSessionId={terminalTarget.sessionId}
-        runtimeReady={runtimeReady}
-        stopSessionOnUnmount={terminalTarget.completionMarker !== undefined}
-        toolchain={terminalTarget.toolchain ?? 'shell'}
-        completionMarker={terminalTarget.completionMarker}
-      />
-    );
-  }
   const clonePending = terminalTarget.completionMarker !== undefined && pendingProjectClone?.marker === terminalTarget.completionMarker;
   const logoutPending = terminalTarget.completionMarker !== undefined && pendingGithubLogoutMarkerRef.current === terminalTarget.completionMarker;
   const completionPending = clonePending || logoutPending;
