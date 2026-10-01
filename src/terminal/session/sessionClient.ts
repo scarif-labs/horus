@@ -98,6 +98,20 @@ const ACK_BATCH_DELAY_MS = 24;
 
 export type SessionEventSubscription = (handler: (event: unknown) => void) => () => void;
 
+/** Per-session delivery and acknowledgement state for one attachment. */
+type AttachmentEntry = {
+  handler: TerminalSessionAttachment;
+  lastSeq: number;
+  lastAcknowledgedSeq: number;
+  exited: boolean;
+  subscribing: boolean;
+  pendingEvents: unknown[];
+  pendingAckSeq: number;
+  ackInFlight: boolean;
+  ackTimer: ReturnType<typeof setTimeout> | null;
+  ackFlushScheduled: boolean;
+};
+
 function defaultSubscription(runtime: Spec | null): SessionEventSubscription {
   if (runtime === null) {
     return () => () => undefined;
@@ -115,21 +129,7 @@ function defaultSubscription(runtime: Spec | null): SessionEventSubscription {
 export class TerminalSessionClient {
   private readonly runtime: Spec | null;
   private readonly subscribe: SessionEventSubscription;
-  private readonly attachments = new Map<
-    string,
-    {
-      handler: TerminalSessionAttachment;
-      lastSeq: number;
-      lastAcknowledgedSeq: number;
-      exited: boolean;
-      subscribing: boolean;
-      pendingEvents: unknown[];
-      pendingAckSeq: number;
-      ackInFlight: boolean;
-      ackTimer: ReturnType<typeof setTimeout> | null;
-      ackFlushScheduled: boolean;
-    }
-  >();
+  private readonly attachments = new Map<string, AttachmentEntry>();
   private readonly ackDisabled = new Set<string>();
   private ackRequestCounter = 0;
   private emitterDetach: (() => void) | null = null;
@@ -388,31 +388,22 @@ export class TerminalSessionClient {
     if (this.attachments.has(sessionId)) {
       throw new Error(`session ${sessionId} already has an attachment`);
     }
-    const entry = {
+    const entry: AttachmentEntry = {
       handler: attachment,
       lastSeq: 0,
       lastAcknowledgedSeq: 0,
       exited: false,
       subscribing: false,
-      pendingEvents: [] as unknown[],
+      pendingEvents: [],
       pendingAckSeq: 0,
       ackInFlight: false,
-      ackTimer: null as ReturnType<typeof setTimeout> | null,
+      ackTimer: null,
       ackFlushScheduled: false,
     };
     this.attachments.set(sessionId, entry);
     if (this.emitterDetach === null) {
       try {
-        const detach = this.subscribe(event => this.handleEvent(event));
-        if (typeof detach !== 'function') {
-          throw new Error('session event subscription did not return a disposer');
-        }
-        let detached = false;
-        this.emitterDetach = () => {
-          if (detached) return;
-          detached = true;
-          detach();
-        };
+        this.bindEmitter();
       } catch (error) {
         this.attachments.delete(sessionId);
         throw error;
@@ -424,7 +415,7 @@ export class TerminalSessionClient {
       this.attachments.delete(sessionId);
       this.clearAckTimer(entry);
       this.ackDisabled.delete(sessionId);
-      void this.detachTerminalSession(this.nextControlRequestId('detach'), sessionId);
+      void this.detachTerminalSession(this.nextRequestId('detach'), sessionId);
       if (this.attachments.size === 0) {
         this.detachEmitter();
       }
@@ -436,16 +427,7 @@ export class TerminalSessionClient {
     if (this.attachments.size === 0) return false;
     this.detachEmitter();
     try {
-      const detach = this.subscribe(event => this.handleEvent(event));
-      if (typeof detach !== 'function') {
-        throw new Error('session event subscription did not return a disposer');
-      }
-      let detached = false;
-      this.emitterDetach = () => {
-        if (detached) return;
-        detached = true;
-        detach();
-      };
+      this.bindEmitter();
       return true;
     } catch {
       return false;
@@ -461,8 +443,22 @@ export class TerminalSessionClient {
     this.ackDisabled.clear();
     this.detachEmitter();
     sessionIds.forEach(sessionId => {
-      void this.detachTerminalSession(this.nextControlRequestId('detach'), sessionId);
+      void this.detachTerminalSession(this.nextRequestId('detach'), sessionId);
     });
+  }
+
+  /** Subscribes the single native listener; throws if no disposer comes back. */
+  private bindEmitter(): void {
+    const detach = this.subscribe(event => this.handleEvent(event));
+    if (typeof detach !== 'function') {
+      throw new Error('session event subscription did not return a disposer');
+    }
+    let detached = false;
+    this.emitterDetach = () => {
+      if (detached) return;
+      detached = true;
+      detach();
+    };
   }
 
   private detachEmitter(): void {
@@ -589,7 +585,8 @@ export class TerminalSessionClient {
     otherEvents.forEach(event => this.handleEvent(event));
   }
 
-  private nextControlRequestId(prefix: string): string {
+  /** Detach and ack requests share one counter so their ids never collide. */
+  private nextRequestId(prefix: 'detach' | 'ack'): string {
     this.ackRequestCounter =
       this.ackRequestCounter >= Number.MAX_SAFE_INTEGER
         ? 1
@@ -598,7 +595,7 @@ export class TerminalSessionClient {
   }
 
   private reportProtocolError(
-    attached: {handler: TerminalSessionAttachment; lastSeq: number; exited: boolean},
+    attached: AttachmentEntry,
     error: TerminalSessionProtocolError,
   ): void {
     try {
@@ -609,16 +606,7 @@ export class TerminalSessionClient {
   }
 
   private scheduleOutputAck(
-    attached: {
-      handler: TerminalSessionAttachment;
-      lastSeq: number;
-      lastAcknowledgedSeq: number;
-      exited: boolean;
-      pendingAckSeq: number;
-      ackInFlight: boolean;
-      ackTimer: ReturnType<typeof setTimeout> | null;
-      ackFlushScheduled: boolean;
-    },
+    attached: AttachmentEntry,
     sessionId: string,
     seq: number,
   ): void {
@@ -644,16 +632,7 @@ export class TerminalSessionClient {
   }
 
   private async flushOutputAck(
-    attached: {
-      handler: TerminalSessionAttachment;
-      lastSeq: number;
-      lastAcknowledgedSeq: number;
-      exited: boolean;
-      pendingAckSeq: number;
-      ackInFlight: boolean;
-      ackTimer: ReturnType<typeof setTimeout> | null;
-      ackFlushScheduled: boolean;
-    },
+    attached: AttachmentEntry,
     sessionId: string,
   ): Promise<void> {
     if (
@@ -665,7 +644,7 @@ export class TerminalSessionClient {
     const seq = attached.pendingAckSeq;
     attached.ackInFlight = true;
     const outcome = await this.acknowledgeSessionOutput(
-      this.nextAckRequestId(),
+      this.nextRequestId('ack'),
       sessionId,
       seq,
     );
@@ -697,18 +676,10 @@ export class TerminalSessionClient {
     }
   }
 
-  private clearAckTimer(attached: {ackTimer: ReturnType<typeof setTimeout> | null}): void {
+  private clearAckTimer(attached: AttachmentEntry): void {
     if (attached.ackTimer === null) return;
     clearTimeout(attached.ackTimer);
     attached.ackTimer = null;
-  }
-
-  private nextAckRequestId(): string {
-    this.ackRequestCounter =
-      this.ackRequestCounter >= Number.MAX_SAFE_INTEGER
-        ? 1
-        : this.ackRequestCounter + 1;
-    return `ack-${this.ackRequestCounter.toString(36)}`;
   }
 }
 
