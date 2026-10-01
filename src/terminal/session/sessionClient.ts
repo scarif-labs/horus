@@ -146,103 +146,51 @@ export class TerminalSessionClient {
     requestId: string,
     options?: {rows?: number; columns?: number; command?: string; toolchain?: TerminalToolchainTarget; countsAgainstSessionLimit?: boolean},
   ): Promise<TrustedSessionStart> {
-    const request = buildStartSessionRequest(requestId, options);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.startSession(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isStartSessionResponse(response, requestId)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {
-      kind: 'success',
-      sessionId: response.sessionId!,
-      pid: response.pid!,
-      rows: response.rows!,
-      columns: response.columns!,
-    };
+    return this.invoke(
+      () => buildStartSessionRequest(requestId, options),
+      (runtime, request) => runtime.startSession(request),
+      response => isStartSessionResponse(response, requestId),
+      response => ({
+        kind: 'success',
+        sessionId: response.sessionId!,
+        pid: response.pid!,
+        rows: response.rows!,
+        columns: response.columns!,
+      }),
+    );
   }
 
   async listTerminalSessions(requestId: string): Promise<TrustedSessionList> {
-    const request = buildListTerminalSessionsRequest(requestId);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.listTerminalSessions(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isListTerminalSessionsResponse(response, requestId)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'success', sessions: response.sessions! as readonly ActiveTerminalSession[]};
+    return this.invoke(
+      () => buildListTerminalSessionsRequest(requestId),
+      (runtime, request) => runtime.listTerminalSessions(request),
+      response => isListTerminalSessionsResponse(response, requestId),
+      response => ({kind: 'success', sessions: response.sessions! as readonly ActiveTerminalSession[]}),
+    );
   }
 
   async detachTerminalSession(
     requestId: string,
     sessionId: string,
   ): Promise<TrustedSessionOperation> {
-    const request = buildDetachTerminalSessionRequest(requestId, sessionId);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.detachTerminalSession(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isDetachTerminalSessionResponse(response, requestId)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'applied'};
+    return this.invoke(
+      () => buildDetachTerminalSessionRequest(requestId, sessionId),
+      (runtime, request) => runtime.detachTerminalSession(request),
+      response => isDetachTerminalSessionResponse(response, requestId),
+      appliedView,
+    );
   }
 
   async stopAllTerminalSessions(
     requestId: string,
     reason: TerminalSessionStopReason,
   ): Promise<TrustedSessionOperation> {
-    const request = buildStopAllTerminalSessionsRequest(requestId, reason);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.stopAllTerminalSessions(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isStopAllTerminalSessionsResponse(response, requestId)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'applied'};
+    return this.invoke(
+      () => buildStopAllTerminalSessionsRequest(requestId, reason),
+      (runtime, request) => runtime.stopAllTerminalSessions(request),
+      response => isStopAllTerminalSessionsResponse(response, requestId),
+      appliedView,
+    );
   }
 
   async writeSessionInput(
@@ -250,25 +198,12 @@ export class TerminalSessionClient {
     sessionId: string,
     bytes: Uint8Array,
   ): Promise<TrustedSessionWrite> {
-    const request = buildWriteSessionInputRequest(requestId, sessionId, bytes);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.writeSessionInput(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isWriteSessionInputResponse(response, requestId, bytes.length)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'success', bytesWritten: response.bytesWritten!};
+    return this.invoke(
+      () => buildWriteSessionInputRequest(requestId, sessionId, bytes),
+      (runtime, request) => runtime.writeSessionInput(request),
+      response => isWriteSessionInputResponse(response, requestId, bytes.length),
+      response => ({kind: 'success', bytesWritten: response.bytesWritten!}),
+    );
   }
 
   async resizeSession(
@@ -277,25 +212,12 @@ export class TerminalSessionClient {
     rows: number,
     columns: number,
   ): Promise<TrustedSessionOperation> {
-    const request = buildResizeSessionRequest(requestId, sessionId, rows, columns);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.resizeSession(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isResizeSessionResponse(response, requestId, rows, columns)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'applied'};
+    return this.invoke(
+      () => buildResizeSessionRequest(requestId, sessionId, rows, columns),
+      (runtime, request) => runtime.resizeSession(request),
+      response => isResizeSessionResponse(response, requestId, rows, columns),
+      appliedView,
+    );
   }
 
   async signalSession(
@@ -303,25 +225,12 @@ export class TerminalSessionClient {
     sessionId: string,
     signal: TerminalSessionSignal,
   ): Promise<TrustedSessionOperation> {
-    const request = buildSignalSessionRequest(requestId, sessionId, signal);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.signalSession(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isSignalSessionResponse(response, requestId, signal)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {kind: 'applied'};
+    return this.invoke(
+      () => buildSignalSessionRequest(requestId, sessionId, signal),
+      (runtime, request) => runtime.signalSession(request),
+      response => isSignalSessionResponse(response, requestId, signal),
+      appliedView,
+    );
   }
 
   async stopSession(
@@ -329,35 +238,24 @@ export class TerminalSessionClient {
     sessionId: string,
     reason: string,
   ): Promise<TrustedSessionStop> {
-    const request = buildStopSessionRequest(requestId, sessionId, reason);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.stopSession(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isStopSessionResponse(response, requestId, sessionId)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    const clean =
-      response.remainingProcessCount === 0 && response.stoppedWithinDeadline === true;
-    return {
-      kind: clean ? ('success' as const) : ('incomplete' as const),
-      sessionId: response.sessionId!,
-      ...(response.exitCode !== undefined ? {exitCode: response.exitCode} : {}),
-      ...(response.signal !== undefined ? {signal: response.signal} : {}),
-      exitReason: response.exitReason!,
-      remainingProcessCount: response.remainingProcessCount!,
-      stoppedWithinDeadline: response.stoppedWithinDeadline!,
-    };
+    return this.invoke(
+      () => buildStopSessionRequest(requestId, sessionId, reason),
+      (runtime, request) => runtime.stopSession(request),
+      response => isStopSessionResponse(response, requestId, sessionId),
+      response => {
+        const clean =
+          response.remainingProcessCount === 0 && response.stoppedWithinDeadline === true;
+        return {
+          kind: clean ? ('success' as const) : ('incomplete' as const),
+          sessionId: response.sessionId!,
+          ...(response.exitCode !== undefined ? {exitCode: response.exitCode} : {}),
+          ...(response.signal !== undefined ? {signal: response.signal} : {}),
+          exitReason: response.exitReason!,
+          remainingProcessCount: response.remainingProcessCount!,
+          stoppedWithinDeadline: response.stoppedWithinDeadline!,
+        };
+      },
+    );
   }
 
   async subscribeSessionStatus(
@@ -365,35 +263,22 @@ export class TerminalSessionClient {
     sessionId: string,
     afterSeq = 0,
   ): Promise<TrustedSessionSnapshot> {
-    const request = buildSubscribeSessionEventsRequest(requestId, sessionId, afterSeq);
-    if (request === null) return errorView('invalid_request');
-    const runtime = this.runtime;
-    if (runtime === null) return errorView('unavailable');
-    let response: unknown;
-    try {
-      response = await runtime.subscribeSessionEvents(request);
-    } catch {
-      return errorView('internal_error');
-    }
-    if (!isSubscribeSessionEventsResponse(response, requestId, sessionId, afterSeq)) {
-      return errorView('invalid_response');
-    }
-    if (response.status === 'error') {
-      return isValidTerminalRuntimeErrorCode(response.errorCode)
-        ? errorView(response.errorCode)
-        : errorView('invalid_response');
-    }
-    return {
-      kind: 'success',
-      sessionId: response.sessionId!,
-      sessionState: response.sessionState!,
-      firstAvailableSeq: response.firstAvailableSeq!,
-      lastEmittedSeq: response.lastEmittedSeq!,
-      replayAvailable: response.replayAvailable!,
-      ...(response.exitCode !== undefined ? {exitCode: response.exitCode} : {}),
-      ...(response.signal !== undefined ? {signal: response.signal} : {}),
-      ...(response.exitReason !== undefined ? {exitReason: response.exitReason} : {}),
-    };
+    return this.invoke(
+      () => buildSubscribeSessionEventsRequest(requestId, sessionId, afterSeq),
+      (runtime, request) => runtime.subscribeSessionEvents(request),
+      response => isSubscribeSessionEventsResponse(response, requestId, sessionId, afterSeq),
+      response => ({
+        kind: 'success',
+        sessionId: response.sessionId!,
+        sessionState: response.sessionState!,
+        firstAvailableSeq: response.firstAvailableSeq!,
+        lastEmittedSeq: response.lastEmittedSeq!,
+        replayAvailable: response.replayAvailable!,
+        ...(response.exitCode !== undefined ? {exitCode: response.exitCode} : {}),
+        ...(response.signal !== undefined ? {signal: response.signal} : {}),
+        ...(response.exitReason !== undefined ? {exitReason: response.exitReason} : {}),
+      }),
+    );
   }
 
   async acknowledgeSessionOutput(
@@ -401,17 +286,41 @@ export class TerminalSessionClient {
     sessionId: string,
     seq: number,
   ): Promise<TrustedSessionAck> {
-    const request = buildAcknowledgeSessionOutputRequest(requestId, sessionId, seq);
+    return this.invoke(
+      () => buildAcknowledgeSessionOutputRequest(requestId, sessionId, seq),
+      (runtime, request) => runtime.acknowledgeSessionOutput(request),
+      response => isAcknowledgeSessionOutputResponse(response, requestId, sessionId, seq),
+      response => ({
+        kind: 'success',
+        sessionId: response.sessionId!,
+        acknowledgedSeq: response.acknowledgedSeq!,
+        outstandingChunks: response.outstandingChunks!,
+      }),
+    );
+  }
+
+  /**
+   * Shared RPC path, in a fixed order: build the request, require the runtime,
+   * call native, validate the wire response, then map a native error code or
+   * the success body. Anything unexpected becomes a typed error view.
+   */
+  private async invoke<Request, Response extends RuntimeResponse, Result>(
+    buildRequest: () => Request | null,
+    call: (runtime: Spec, request: Request) => Promise<unknown>,
+    isValid: (response: unknown) => response is Response,
+    toResult: (response: Response) => Result,
+  ): Promise<Result | SessionErrorView> {
+    const request = buildRequest();
     if (request === null) return errorView('invalid_request');
     const runtime = this.runtime;
     if (runtime === null) return errorView('unavailable');
     let response: unknown;
     try {
-      response = await runtime.acknowledgeSessionOutput(request);
+      response = await call(runtime, request);
     } catch {
       return errorView('internal_error');
     }
-    if (!isAcknowledgeSessionOutputResponse(response, requestId, sessionId, seq)) {
+    if (!isValid(response)) {
       return errorView('invalid_response');
     }
     if (response.status === 'error') {
@@ -419,12 +328,7 @@ export class TerminalSessionClient {
         ? errorView(response.errorCode)
         : errorView('invalid_response');
     }
-    return {
-      kind: 'success',
-      sessionId: response.sessionId!,
-      acknowledgedSeq: response.acknowledgedSeq!,
-      outstandingChunks: response.outstandingChunks!,
-    };
+    return toResult(response);
   }
 
   /** Attaches before opening native delivery, preventing the initial prompt from racing the listener. */
@@ -808,8 +712,15 @@ export class TerminalSessionClient {
   }
 }
 
-function errorView(errorCode: TerminalSessionOperationErrorCode) {
-  return {kind: 'error' as const, errorCode};
+type RuntimeResponse = {status: 'success' | 'error'; errorCode?: unknown};
+type SessionErrorView = {kind: 'error'; errorCode: TerminalSessionOperationErrorCode};
+
+function errorView(errorCode: TerminalSessionOperationErrorCode): SessionErrorView {
+  return {kind: 'error', errorCode};
+}
+
+function appliedView(): {kind: 'applied'} {
+  return {kind: 'applied'};
 }
 
 export {isValidRequestId as isValidTerminalSessionRequestId};
