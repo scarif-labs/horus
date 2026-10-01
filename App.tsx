@@ -171,17 +171,21 @@ function App(): React.JSX.Element {
     };
   }, [sessionClient]);
 
+  const openTerminal = React.useCallback((target: MetroLaunchTarget, returnRoute: 'home' | 'projects' = 'home') => {
+    setTerminalTarget(target);
+    setTerminalInstanceKey(value => value + 1);
+    setTerminalReturnRoute(returnRoute);
+    setRoute('terminal');
+  }, []);
+
   const openDebugTerminal = React.useCallback(() => {
     if (!__DEV__) return;
     // Bootstrap owns installation and PRoot readiness. Keep the loading route
     // mounted while it is in flight so the terminal cannot launch a second
     // status/install request against the same native runtime.
     if (bootState === 'checking' || bootState === 'installing') return;
-    setTerminalTarget({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`), toolchain: 'shell'});
-    setTerminalInstanceKey(value => value + 1);
-    setTerminalReturnRoute('home');
-    setRoute('terminal');
-  }, [bootState]);
+    openTerminal({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`), toolchain: 'shell'});
+  }, [bootState, openTerminal]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -322,11 +326,8 @@ function App(): React.JSX.Element {
       setRoute('projects');
       return;
     }
-    setTerminalTarget(target);
-    setTerminalInstanceKey(value => value + 1);
-    setTerminalReturnRoute(target.returnTo ?? 'home');
-    setRoute('terminal');
-  }, []);
+    openTerminal(target, target.returnTo ?? 'home');
+  }, [openTerminal]);
 
   const loadRecentSessions = React.useCallback(async (): Promise<readonly ActiveTerminalSession[] | undefined> => {
     const result = await sessionClient.listTerminalSessions(nextSessionRequestId('recents'));
@@ -377,13 +378,6 @@ function App(): React.JSX.Element {
     };
   }, [authenticated, loadRecentSessions, resumeRecentSession]);
 
-  const openProjectTerminal = React.useCallback((target: MetroLaunchTarget, returnRoute: 'home' | 'projects' = 'home') => {
-    setTerminalTarget(target);
-    setTerminalInstanceKey(value => value + 1);
-    setTerminalReturnRoute(returnRoute);
-    setRoute('terminal');
-  }, []);
-
   const openGithubAccount = React.useCallback(() => {
     setGithubAccountError(undefined);
     setRoute('github-account');
@@ -400,14 +394,14 @@ function App(): React.JSX.Element {
     pendingGithubLogoutMarkerRef.current = marker;
     setGithubAccountError(undefined);
     const command = `gh auth logout --hostname github.com --user ${shellQuote(githubAccount.username)} && ${printHiddenMarker(marker)}`;
-    openProjectTerminal({
+    openTerminal({
       title: 'GitHub Logout',
       eyebrow: 'GITHUB / LOGOUT',
       command: buildZshCommand(command),
       toolchain: 'github',
       completionMarker: marker,
     });
-  }, [githubAccount, openProjectTerminal]);
+  }, [githubAccount, openTerminal]);
 
   const openGithubLoginBrowser = React.useCallback(async (url: string) => {
     await openGithubDeviceLoginUrl(url);
@@ -419,8 +413,8 @@ function App(): React.JSX.Element {
     manualWorkspaceRefreshRef.current += 1;
     const project = {name, path: directory};
     setProjects(current => [...current.filter(item => item.path !== directory), project]);
-    openProjectTerminal(harnessSessionTarget(selectedHarness, name, directory));
-  }, [openProjectTerminal, selectedHarness]);
+    openTerminal(harnessSessionTarget(selectedHarness, name, directory));
+  }, [openTerminal, selectedHarness]);
 
   const beginProjectClone = React.useCallback((source: string, name: string, kind: 'github' | 'url') => {
     const directory = workspaceProjectDirectory(name);
@@ -429,7 +423,7 @@ function App(): React.JSX.Element {
     const marker = `HORUS_PROJECT_CLONE_COMPLETE_${nextSessionRequestId('clone')}`;
     const command = buildProjectCloneCommand(source, directory, marker, kind);
     setPendingProjectClone({marker, name, directory, harness: selectedHarness});
-    openProjectTerminal({
+    openTerminal({
       title: `Clone or reuse ${name}`,
       eyebrow: 'BARE TERMINAL / CLONE',
       command: buildZshCommand(command),
@@ -437,7 +431,7 @@ function App(): React.JSX.Element {
       returnTo: 'projects',
       completionMarker: marker,
     }, 'projects');
-  }, [openProjectTerminal, selectedHarness]);
+  }, [openTerminal, selectedHarness]);
 
   const cloneProject = React.useCallback((url: string, name: string) => {
     beginProjectClone(url, name, 'url');
@@ -549,8 +543,8 @@ function App(): React.JSX.Element {
     }
     const directory = workspaceProjectDirectory(project.name);
     if (directory === undefined || selectedHarness === undefined) return;
-    openProjectTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
-  }, [beginProjectClone, openProjectTerminal, selectedHarness]);
+    openTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
+  }, [beginProjectClone, openTerminal, selectedHarness]);
 
   const completeProjectClone = React.useCallback((marker: string) => {
     const pending = pendingProjectCloneRef.current;
@@ -558,11 +552,8 @@ function App(): React.JSX.Element {
     manualWorkspaceRefreshRef.current += 1;
     setProjects(current => [...current.filter(item => item.path !== pending.directory), {name: pending.name, path: pending.directory}]);
     setPendingProjectClone(undefined);
-    setTerminalTarget(harnessSessionTarget(pending.harness, pending.name, pending.directory));
-    setTerminalInstanceKey(value => value + 1);
-    setTerminalReturnRoute('home');
-    setRoute('terminal');
-  }, []);
+    openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
+  }, [openTerminal]);
 
   const failProjectClone = React.useCallback((marker: string) => {
     if (pendingGithubLogoutMarkerRef.current === marker) {
