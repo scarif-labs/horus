@@ -1,4 +1,5 @@
 import {buildZshScriptCommand} from '../terminal/commandFactory';
+import {createRequestIdFactory} from '../terminal/requestIds';
 import {
   TerminalSessionClient,
   type TerminalSessionAttachment,
@@ -47,12 +48,7 @@ export type GithubRepositoryListResult =
   | Readonly<{kind: 'success'; account: GithubAccount; repositories: readonly ProjectSummary[]}>
   | Readonly<{kind: 'error'; account?: GithubAccount; errorCode: GithubRepositoryListErrorCode; exitCode?: number; outputIssue?: GithubRepositoryOutputIssue}>;
 
-let requestSequence = 0;
-
-function nextRequestId(prefix: string): string {
-  requestSequence = requestSequence >= Number.MAX_SAFE_INTEGER ? 1 : requestSequence + 1;
-  return `github-${prefix}-${requestSequence.toString(36)}`;
-}
+const nextRequestId = createRequestIdFactory('github');
 
 /** Runs a non-interactive, authenticated gh query inside the persistent guest. */
 export function buildGithubRepositoryListCommand(): string {

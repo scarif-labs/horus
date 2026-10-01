@@ -1,6 +1,7 @@
 import React from 'react';
 import {AppState} from 'react-native';
 import NativeTerminalRuntime, {type Spec} from '../native/NativeTerminalRuntime';
+import {createRequestIdFactory} from '../terminal/requestIds';
 
 export type UnlockGrantOp = 'grant' | 'revoke' | 'background' | 'resume';
 
@@ -9,7 +10,7 @@ type UnlockGrantRuntime = Pick<Spec, 'updateUnlockGrant'>;
 /** Bounds the cold-start check so a slow service bind never stalls boot. */
 export const UNLOCK_GRANT_TIMEOUT_MS = 2500;
 
-let requestCounter = 0;
+const nextRequestId = createRequestIdFactory('unlock');
 
 /**
  * Updates the terminal service's in-memory unlock grant and resolves whether
@@ -24,8 +25,7 @@ export async function updateUnlockGrant(
   timeoutMs = UNLOCK_GRANT_TIMEOUT_MS,
 ): Promise<boolean> {
   if (runtime === null) return false;
-  requestCounter = requestCounter >= Number.MAX_SAFE_INTEGER ? 1 : requestCounter + 1;
-  const requestId = `unlock-${op}-${requestCounter.toString(36)}`;
+  const requestId = nextRequestId(op);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<false>(resolve => {
     timer = setTimeout(() => resolve(false), timeoutMs);

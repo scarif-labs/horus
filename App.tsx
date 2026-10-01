@@ -24,6 +24,7 @@ import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
 import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
+import {createRequestIdFactory} from './src/terminal/requestIds';
 
 type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
@@ -32,7 +33,7 @@ type PendingGithubLogin = Readonly<{marker: string; returnTo: 'home' | 'projects
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
 const WORKSPACE_PROJECTS_DIRECTORY = '/workspace/projects';
-let sessionRequestSequence = 0;
+const nextSessionRequestId = createRequestIdFactory('launcher');
 
 type PendingProjectClone = Readonly<{
   marker: string;
@@ -40,11 +41,6 @@ type PendingProjectClone = Readonly<{
   directory: string;
   harness: MetroLaunchTarget;
 }>;
-
-function nextSessionRequestId(prefix: string): string {
-  sessionRequestSequence = sessionRequestSequence >= Number.MAX_SAFE_INTEGER ? 1 : sessionRequestSequence + 1;
-  return `launcher-${prefix}-${sessionRequestSequence.toString(36)}`;
-}
 
 function workspaceProjectDirectory(name: string): string | undefined {
   return /^[A-Za-z0-9._-]{1,48}$/.test(name) && name !== '.' && name !== '..'

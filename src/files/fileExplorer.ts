@@ -1,6 +1,7 @@
 import {PermissionsAndroid, Platform} from 'react-native';
 import nativeTerminalRuntime, {type Spec as TerminalRuntimeSpec} from '../native/NativeTerminalRuntime';
 import {buildZshScriptCommand, shellQuote} from '../terminal/commandFactory';
+import {createRequestIdFactory} from '../terminal/requestIds';
 import {decodeBase64} from '../terminal/session/sessionContract';
 import {
   TerminalSessionClient,
@@ -64,12 +65,7 @@ const FILE_KINDS: readonly GuestFileEntry['kind'][] = [
 const DIRECTORY_STATUSES = ['ok', 'invalid_path', 'not_found', 'command_failed'] as const;
 const CONTENT_STATUSES = ['ok', 'invalid_path', 'not_found', 'too_large', 'command_failed'] as const;
 
-let requestSequence = 0;
-
-function nextRequestId(action: string): string {
-  requestSequence = requestSequence >= Number.MAX_SAFE_INTEGER ? 1 : requestSequence + 1;
-  return `files-${action}-${requestSequence.toString(36)}`;
-}
+const nextRequestId = createRequestIdFactory('files');
 
 function isGuestFileRoot(value: unknown): value is GuestFileRoot {
   return value === 'home' || value === 'workspace';
@@ -774,7 +770,7 @@ export function listGuestDirectory(
     return listGuestDirectoryNatively(native, root, path);
   }
   const queryClient = client ?? new TerminalSessionClient();
-  const markerId = `q${(requestSequence + 1).toString(36)}`;
+  const markerId = `q${(nextRequestId.currentSequence() + 1).toString(36)}`;
   let command: string;
   try {
     command = buildListGuestDirectoryCommand(root, path, markerId);
@@ -805,7 +801,7 @@ export function readGuestTextFile(
     return readGuestTextFileNatively(native, root, path);
   }
   const queryClient = client ?? new TerminalSessionClient();
-  const markerId = `q${(requestSequence + 1).toString(36)}`;
+  const markerId = `q${(nextRequestId.currentSequence() + 1).toString(36)}`;
   let command: string;
   try {
     command = buildReadGuestTextFileCommand(root, path, markerId);

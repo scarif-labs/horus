@@ -37,6 +37,7 @@ import type {ActiveTerminalSession, TrustedSessionOperation} from './session/ses
 import {openTrustedTerminalLink} from './terminalLinks';
 import {BrandMark} from './BrandMark';
 import {formatSessionAge, sessionTitle, toolchainInstallLabel} from './toolchainLabels';
+import {createRequestIdFactory} from './requestIds';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 
 export type TerminalScreenProps = Readonly<{
@@ -67,7 +68,7 @@ type TerminalRuntimeBridge = Pick<
   'getRuntimeStatus' | 'installRootfs' | 'resetRuntime'
 >;
 
-let requestSequence = 0;
+const nextRequestId = createRequestIdFactory('terminal');
 
 const terminalChrome = {
   panel: '#0D1112',
@@ -169,11 +170,6 @@ function TerminalReturnLowerButton({disabled, onPress}: TerminalReturnButtonProp
       <Text style={styles.returnKeyText}>RETURN</Text>
     </Pressable>
   );
-}
-
-function nextRequestId(prefix: string): string {
-  requestSequence = requestSequence >= Number.MAX_SAFE_INTEGER ? 1 : requestSequence + 1;
-  return `terminal-${prefix}-${requestSequence.toString(36)}`;
 }
 
 function errorLabel(operation: TrustedSessionOperation | {kind: 'error'; errorCode: string} | {kind: 'incomplete'}): string {
