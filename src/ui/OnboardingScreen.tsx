@@ -173,7 +173,7 @@ function PasswordStep({runtimeReady, onComplete, error}: PasswordStepProps): Rea
             </View>
           </View>
         ) : null}
-        <Pressable accessibilityRole="button" disabled={!runtimeReady || isWorking} onPress={() => void submit()} style={[authStyles.button, (!runtimeReady || isWorking) && authStyles.disabled]} testID="profile-continue">
+        <Pressable accessibilityRole="button" disabled={!runtimeReady || isWorking} onPress={() => { void submit(); }} style={[authStyles.button, (!runtimeReady || isWorking) && authStyles.disabled]} testID="profile-continue">
           <Text style={authStyles.buttonText}>{isWorking ? 'PLEASE WAIT…' : runtimeReady ? 'CONTINUE  →' : 'PREPARING…'}</Text>
         </Pressable>
       </View>

@@ -203,7 +203,7 @@ export function decodeBase64(text: string): Uint8Array | null {
   if (typeof text !== 'string' || text.length === 0 || text.length % 4 !== 0) {
     return null;
   }
-  const unpaddedLength = text.replace(/=+$/, '').length;
+  const unpaddedLength = text.replace(/[=]+$/, '').length;
   const padding = text.length - unpaddedLength;
   if (padding > 2) return null;
   let carry = 0;

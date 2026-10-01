@@ -110,7 +110,7 @@ export function MetroHomeScreen({githubAccount, onOpen, onOpenGithubLogin, onOpe
     const startPolling = () => {
       if (timer !== undefined) return;
       void refresh();
-      timer = setInterval(() => void refresh(), 8_000);
+      timer = setInterval(() => { void refresh(); }, 8_000);
     };
     const stopPolling = () => {
       if (timer !== undefined) clearInterval(timer);

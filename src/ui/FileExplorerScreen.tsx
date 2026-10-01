@@ -242,7 +242,7 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
                 <Text style={styles.sectionLabel}>CURRENT FOLDER</Text>
                 <Text numberOfLines={2} style={styles.pathText} testID="file-current-path">{pathLabel(root, path)}</Text>
               </View>
-              <Pressable accessibilityLabel="Refresh folder" accessibilityRole="button" disabled={loading} onPress={() => void refresh(root, path)} style={styles.refreshButton} testID="file-refresh">
+              <Pressable accessibilityLabel="Refresh folder" accessibilityRole="button" disabled={loading} onPress={() => { void refresh(root, path); }} style={styles.refreshButton} testID="file-refresh">
                 <Text style={styles.refreshText}>{loading ? '…' : '↻'}</Text>
               </Pressable>
             </View>

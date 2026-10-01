@@ -39,7 +39,7 @@ function stripTerminalControlSequences(value: string): string {
 }
 
 function isBoundary(character: string | undefined): boolean {
-  return character === undefined || /[\s"'`<>(){}\[\],.!?:;]/.test(character);
+  return character === undefined || /[\s"'`<>(){}[\],.!?:;]/.test(character);
 }
 
 export function isGithubDeviceLoginUrl(value: string): boolean {

@@ -155,7 +155,7 @@ function importSpecifiers(source) {
     const word = match[0];
     const previous = index > 0 ? source[index - 1] : '';
     index += word.length;
-    if (!isWord(word) || /[\w$\.]/.test(previous)) continue;
+    if (!isWord(word) || /[\w$.]/.test(previous)) continue;
 
     if (word === 'import') {
       const next = skipWhitespace(index);
@@ -184,25 +184,25 @@ function importSpecifiers(source) {
 }
 
 function stripKotlinCommentsAndStrings(source) {
-  let output = '';
+  let stripped = '';
   let index = 0;
   while (index < source.length) {
     if (source.startsWith('//', index)) {
       const newline = source.indexOf('\n', index + 2);
       index = newline < 0 ? source.length : newline;
-      output += newline < 0 ? '' : '\n';
+      stripped += newline < 0 ? '' : '\n';
       continue;
     }
     if (source.startsWith('/*', index)) {
       const end = source.indexOf('*/', index + 2);
       index = end < 0 ? source.length : end + 2;
-      output += ' ';
+      stripped += ' ';
       continue;
     }
     if (source.startsWith('"""', index)) {
       const end = source.indexOf('"""', index + 3);
       index = end < 0 ? source.length : end + 3;
-      output += ' ';
+      stripped += ' ';
       continue;
     }
     if (source[index] === '"' || source[index] === "'") {
@@ -217,12 +217,12 @@ function stripKotlinCommentsAndStrings(source) {
           index++;
         }
       }
-      output += ' ';
+      stripped += ' ';
       continue;
     }
-    output += source[index++];
+    stripped += source[index++];
   }
-  return output;
+  return stripped;
 }
 
 function checkJsBoundary() {

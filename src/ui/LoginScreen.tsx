@@ -37,7 +37,7 @@ export function LoginScreen({onLogin, error, notice}: LoginScreenProps): React.J
         {notice !== undefined ? <Text style={authStyles.notice} testID="login-notice">{notice}</Text> : null}
         {validationError !== undefined ? <Text style={authStyles.error} testID="login-validation-error">{validationError}</Text> : null}
         {error !== undefined ? <Text style={authStyles.error} testID="login-error">{error}</Text> : null}
-        <Pressable accessibilityRole="button" disabled={saving} onPress={() => void submit()} style={[authStyles.button, saving && authStyles.disabled]} testID="login-submit">
+        <Pressable accessibilityRole="button" disabled={saving} onPress={() => { void submit(); }} style={[authStyles.button, saving && authStyles.disabled]} testID="login-submit">
           <Text style={authStyles.buttonText}>{saving ? 'SIGNING IN…' : 'SIGN IN  →'}</Text>
         </Pressable>
       </View>
