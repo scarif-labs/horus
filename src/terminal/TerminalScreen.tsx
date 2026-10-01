@@ -72,6 +72,11 @@ type TerminalRuntimeBridge = Pick<
 
 const TERMINAL_LAYOUT_SETTLE_MS = 120;
 
+// Shared across input and output. Output decoding does not use stream mode,
+// so the decoder keeps no state between chunks.
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 type TerminalViewport = Readonly<{width: number; height: number}>;
 
 type TerminalArrow = 'A' | 'B' | 'C' | 'D';
@@ -205,8 +210,6 @@ function hasVisibleTerminalContent(frame: TerminalFrame): boolean {
 }
 
 type TerminalHeaderProps = Readonly<{
-  screenEyebrow: string;
-  screenTitle: string;
   onBack?: () => void;
   onHome?: () => void;
 }>;
@@ -282,7 +285,7 @@ const TerminalControls = React.memo(function TerminalControlsView({altActive, ct
   );
 });
 
-export function TerminalScreen({client: providedClient, runtime = undefined, onBack, onGithubDeviceLogin, onHome, screenEyebrow = 'ALPINE TERMINAL', screenTitle = 'Linux shell', sessionCommand, completionMarker, onCompletion, onCommandFailure, existingSessionId, runtimeReady = false, stopSessionOnUnmount = true, toolchain = 'shell'}: TerminalScreenProps): React.JSX.Element {
+export function TerminalScreen({client: providedClient, runtime = undefined, onBack, onGithubDeviceLogin, onHome, sessionCommand, completionMarker, onCompletion, onCommandFailure, existingSessionId, runtimeReady = false, stopSessionOnUnmount = true, toolchain = 'shell'}: TerminalScreenProps): React.JSX.Element {
   const [viewport, setViewport] = React.useState({width: 0, height: 0});
   const viewportRef = React.useRef(viewport);
   const pendingViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
@@ -522,12 +525,6 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     return readTerminalRuntimeStatus(runtime as Spec);
   }, [runtime]);
 
-  const refreshRuntimeStatus = React.useCallback(async (): Promise<TerminalRuntimeStatusView | undefined> => {
-    const view = await readRuntimeStatus();
-    if (!mountedRef.current) return undefined;
-    return view;
-  }, [readRuntimeStatus]);
-
   const setRuntimeFailure = React.useCallback((errorCode: string) => {
     if (!mountedRef.current) return;
     setError(errorCode);
@@ -583,7 +580,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       onReply: async data => {
         if (!mountedRef.current || activeSessionRef.current !== sessionId) return;
         const outcome = await client.writeSessionInput(
-          nextRequestId('terminal-reply'), sessionId, new TextEncoder().encode(data),
+          nextRequestId('terminal-reply'), sessionId, textEncoder.encode(data),
         );
         if (outcome.kind === 'error') throw new Error('terminal_reply_failed');
       },
@@ -608,7 +605,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         const scanGithubLogin = toolchain === 'github' && onGithubDeviceLogin !== undefined;
         const scanCompletionMarker = completionMarker !== undefined && !completionMarkerSeenRef.current;
         if (scanInstallMarker || scanGithubLogin || scanCompletionMarker) {
-          const outputText = new TextDecoder().decode(chunk.bytes);
+          const outputText = textDecoder.decode(chunk.bytes);
           if (scanInstallMarker) {
             if (hasToolchainReadyMarker(appendToOutputTail(installOutputTailRef, outputText, 512))) {
               installReadyRef.current = true;
@@ -628,7 +625,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
                 const confirmed = await client.writeSessionInput(
                   nextRequestId('github-browser-confirm'),
                   sessionId,
-                  new TextEncoder().encode('\r'),
+                  textEncoder.encode('\r'),
                 );
                 if (confirmed.kind === 'error') throw new Error('github_browser_confirm_failed');
               })().catch(() => {
@@ -746,8 +743,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         await startPtySession();
         return;
       }
-      const status = await refreshRuntimeStatus();
-      if (status === undefined || !mountedRef.current) return;
+      const status = await readRuntimeStatus();
+      if (!mountedRef.current) return;
       if (status.kind === 'error') {
         setRuntimeFailure(status.errorCode);
         return;
@@ -761,8 +758,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           setRuntimeFailure(installed.errorCode);
           return;
         }
-        const verified = await refreshRuntimeStatus();
-        if (verified === undefined || !mountedRef.current) return;
+        const verified = await readRuntimeStatus();
+        if (!mountedRef.current) return;
         if (verified.kind === 'error') {
           setRuntimeFailure(verified.errorCode);
           return;
@@ -783,7 +780,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     } finally {
       startingRef.current = false;
     }
-  }, [existingSessionId, refreshRuntimeStatus, runtime, runtimeReady, setRuntimeFailure, startPtySession]);
+  }, [existingSessionId, readRuntimeStatus, runtime, runtimeReady, setRuntimeFailure, startPtySession]);
 
   React.useEffect(() => {
     void start();
@@ -798,7 +795,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const write = React.useCallback(async (text: string) => {
     const activeSession = activeSessionRef.current;
     if (activeSession === undefined || text.length === 0) return;
-    const bytes = new TextEncoder().encode(text);
+    const bytes = textEncoder.encode(text);
     const outcome = await client.writeSessionInput(nextRequestId('input'), activeSession, bytes);
     if (outcome.kind === 'error' && mountedRef.current) {
       setState('error');
@@ -958,12 +955,15 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     const nextSize = {rows: size.rows, columns: size.columns};
     requestedSizeRef.current = nextSize;
     if (nativeHarness) {
-      client.resizeSession(nextRequestId('resize'), activeSession, nextSize.rows, nextSize.columns).then(result => {
-        if (result.kind === 'error' && mountedRef.current && activeSessionRef.current === activeSession) {
+      const failResize = (errorCode: string) => {
+        if (mountedRef.current && activeSessionRef.current === activeSession) {
           setState('error');
-          setError(result.errorCode);
+          setError(errorCode);
         }
-      });
+      };
+      client.resizeSession(nextRequestId('resize'), activeSession, nextSize.rows, nextSize.columns).then(result => {
+        if (result.kind === 'error') failResize(result.errorCode);
+      }).catch(() => failResize('terminal_resize_failed'));
       return;
     }
     displayBufferRef.current?.resize(nextSize, async () => {
@@ -978,13 +978,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       <StatusBar barStyle="light-content" />
       <View style={styles.safeArea} testID="terminal-screen">
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
-          <TerminalHeader onBack={onBack} onHome={onHome} screenEyebrow={screenEyebrow} screenTitle={screenTitle} />
+          <TerminalHeader onBack={onBack} onHome={onHome} />
 
           <View onLayout={handleOutputLayout} style={styles.output}>
             <TerminalGrid
               frame={frame}
               nativeSessionId={nativeSessionId}
-              nativeRows={nativeSessionId !== undefined ? requestedSizeRef.current?.rows ?? size.rows : requestedSizeRef.current?.rows ?? size.rows}
+              nativeRows={requestedSizeRef.current?.rows ?? size.rows}
               nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
               cellWidth={cellWidth}
               running={running}
