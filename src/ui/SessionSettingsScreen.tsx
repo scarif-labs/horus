@@ -1,10 +1,11 @@
 import React from 'react';
-import {BackHandler, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
 import {UI_FONT_FAMILY} from './typography';
+import {useHardwareBack} from './useHardwareBack';
 import {
   readSessionSettings,
   TERMINAL_SESSION_LIMIT_MAX,
@@ -58,13 +59,7 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
     };
   }, [refresh]);
 
-  React.useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [onBack]);
+  useHardwareBack(true, onBack);
 
   const chooseLimit = React.useCallback(async (limit: number) => {
     if (settings === undefined || saving || limit === settings.maxConcurrentSessions) return;

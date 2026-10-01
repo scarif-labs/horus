@@ -1,5 +1,5 @@
 import React from 'react';
-import {AppState, BackHandler} from 'react-native';
+import {AppState} from 'react-native';
 import {importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
 import {CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from './src/terminal/commandFactory';
@@ -20,6 +20,7 @@ import {LoginScreen} from './src/ui/LoginScreen';
 import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
 import {GithubAccountScreen} from './src/ui/GithubAccountScreen';
 import {SessionSettingsScreen} from './src/ui/SessionSettingsScreen';
+import {useHardwareBack} from './src/ui/useHardwareBack';
 import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
 import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
@@ -305,32 +306,9 @@ function App(): React.JSX.Element {
 
   const leaveGithubAccount = React.useCallback(() => setRoute('home'), []);
 
-  React.useEffect(() => {
-    if (route !== 'terminal') return undefined;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      leaveTerminal();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [leaveTerminal, route]);
-
-  React.useEffect(() => {
-    if (route !== 'projects') return undefined;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      leaveProjects();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [leaveProjects, route]);
-
-  React.useEffect(() => {
-    if (route !== 'github-account') return undefined;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      leaveGithubAccount();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [leaveGithubAccount, route]);
+  useHardwareBack(route === 'terminal', leaveTerminal);
+  useHardwareBack(route === 'projects', leaveProjects);
+  useHardwareBack(route === 'github-account', leaveGithubAccount);
 
   const openTarget = React.useCallback((target: MetroLaunchTarget) => {
     if (target.kind === 'files') {

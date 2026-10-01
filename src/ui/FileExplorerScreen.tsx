@@ -1,6 +1,7 @@
 import React from 'react';
-import {BackHandler, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
+import {useHardwareBack} from './useHardwareBack';
 import {
   exportGuestDirectory,
   GUEST_FILE_EXPORT_MAX_FILES,
@@ -190,21 +191,19 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
     setPath(current => current.slice(0, -1));
   }, [closePreview, path.length]);
 
-  React.useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (previewName !== undefined) {
-        closePreview();
-        return true;
-      }
-      if (path.length > 0) {
-        goUp();
-        return true;
-      }
-      onBack();
+  const handleHardwareBack = React.useCallback(() => {
+    if (previewName !== undefined) {
+      closePreview();
       return true;
-    });
-    return () => subscription.remove();
+    }
+    if (path.length > 0) {
+      goUp();
+      return true;
+    }
+    onBack();
+    return true;
   }, [closePreview, goUp, onBack, path.length, previewName]);
+  useHardwareBack(true, handleHardwareBack);
 
   return (
     <ScreenShell testID="file-explorer-screen">
