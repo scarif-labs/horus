@@ -48,6 +48,23 @@ export type GithubRepositoryListResult =
   | Readonly<{kind: 'success'; account: GithubAccount; repositories: readonly ProjectSummary[]}>
   | Readonly<{kind: 'error'; account?: GithubAccount; errorCode: GithubRepositoryListErrorCode; exitCode?: number; outputIssue?: GithubRepositoryOutputIssue}>;
 
+/** User-facing copy for a failed repository listing. */
+export function githubRepositoryError(errorCode: GithubRepositoryListErrorCode, outputIssue?: GithubRepositoryOutputIssue): string {
+  if (errorCode === 'command_failed') return 'GitHub could not list repositories. Open the login terminal and authenticate again.';
+  if (errorCode === 'timeout') return 'GitHub took too long to respond. Check the connection and refresh.';
+  if (errorCode === 'toolchain_install_failed' || errorCode === 'toolchain_incomplete' || errorCode === 'toolchain_github_install_failed') return 'GitHub CLI is not ready yet. Reopen the GitHub tile to retry its install.';
+  if (errorCode === 'invalid_output') {
+    if (outputIssue === 'account_marker_missing_or_incomplete') return 'GitHub did not return account data. Reconnect GitHub, then refresh repositories.';
+    if (outputIssue === 'account_record_invalid') return 'GitHub returned account data the app could not read. Refresh and try again.';
+    if (outputIssue === 'repositories_marker_missing_or_incomplete') return 'GitHub account was verified, but the repository response was incomplete. Refresh and try again.';
+    if (outputIssue === 'repository_row_invalid') return 'GitHub returned a repository row the app could not read. Refresh and try again.';
+    return 'GitHub returned an unexpected repository response. Refresh and try again.';
+  }
+  if (errorCode === 'protocol_error' || errorCode === 'invalid_response' || errorCode === 'output_too_large') return 'The GitHub query session could not be read. Refresh and try again.';
+  if (errorCode === 'teardown_failed') return 'The GitHub query did not close cleanly. Reopen the GitHub tile and retry.';
+  return 'Could not load GitHub repositories. Refresh and try again.';
+}
+
 const nextRequestId = createRequestIdFactory('github');
 
 /** Runs a non-interactive, authenticated gh query inside the persistent guest. */

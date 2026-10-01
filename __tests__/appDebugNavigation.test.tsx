@@ -32,6 +32,7 @@ jest.mock('../src/terminal/session/sessionClient', () => ({
 }));
 
 jest.mock('../src/projects/githubRepositories', () => ({
+  ...jest.requireActual('../src/projects/githubRepositories'),
   listGithubRepositories: jest.fn(async (_client: unknown, onAccount?: (account: {username: string; avatarUrl?: string}) => void) => {
     const account = {username: 'debug', avatarUrl: 'https://avatars.githubusercontent.com/u/1'};
     onAccount?.(account);

@@ -6,7 +6,7 @@ import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
 import {TerminalSessionClient} from './src/terminal/session/sessionClient';
 import type {ActiveTerminalSession} from './src/terminal/session/sessionContract';
 import {listGuestDirectory} from './src/files/fileExplorer';
-import {listGithubRepositories, type GithubAccount, type GithubRepositoryListErrorCode, type GithubRepositoryOutputIssue} from './src/projects/githubRepositories';
+import {githubRepositoryError, listGithubRepositories, type GithubAccount} from './src/projects/githubRepositories';
 import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} from './src/projects/githubAccountStore';
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
@@ -364,22 +364,6 @@ function App(): React.JSX.Element {
     beginProjectClone(url, name, 'url');
   }, [beginProjectClone]);
 
-  const githubRepositoryError = React.useCallback((errorCode: GithubRepositoryListErrorCode, outputIssue?: GithubRepositoryOutputIssue): string => {
-    if (errorCode === 'command_failed') return 'GitHub could not list repositories. Open the login terminal and authenticate again.';
-    if (errorCode === 'timeout') return 'GitHub took too long to respond. Check the connection and refresh.';
-    if (errorCode === 'toolchain_install_failed' || errorCode === 'toolchain_incomplete' || errorCode === 'toolchain_github_install_failed') return 'GitHub CLI is not ready yet. Reopen the GitHub tile to retry its install.';
-    if (errorCode === 'invalid_output') {
-      if (outputIssue === 'account_marker_missing_or_incomplete') return 'GitHub did not return account data. Reconnect GitHub, then refresh repositories.';
-      if (outputIssue === 'account_record_invalid') return 'GitHub returned account data the app could not read. Refresh and try again.';
-      if (outputIssue === 'repositories_marker_missing_or_incomplete') return 'GitHub account was verified, but the repository response was incomplete. Refresh and try again.';
-      if (outputIssue === 'repository_row_invalid') return 'GitHub returned a repository row the app could not read. Refresh and try again.';
-      return 'GitHub returned an unexpected repository response. Refresh and try again.';
-    }
-    if (errorCode === 'protocol_error' || errorCode === 'invalid_response' || errorCode === 'output_too_large') return 'The GitHub query session could not be read. Refresh and try again.';
-    if (errorCode === 'teardown_failed') return 'The GitHub query did not close cleanly. Reopen the GitHub tile and retry.';
-    return 'Could not load GitHub repositories. Refresh and try again.';
-  }, []);
-
   const refreshGithubRepositories = React.useCallback(async () => {
     if (projectLoadingRef.current) {
       queuedGithubRefreshRef.current = true;
@@ -420,7 +404,7 @@ function App(): React.JSX.Element {
         if (appMountedRef.current) void refreshGithubRepositoriesRef.current().catch(() => undefined);
       }
     }
-  }, [githubRepositoryError]);
+  }, []);
   refreshGithubRepositoriesRef.current = refreshGithubRepositories;
 
   const refreshManualWorkspaces = React.useCallback(async () => {
