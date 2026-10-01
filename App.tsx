@@ -467,7 +467,7 @@ function App(): React.JSX.Element {
     openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
   }, [openTerminal]);
 
-  const failProjectClone = React.useCallback((marker: string) => {
+  const failPendingCompletion = React.useCallback((marker: string) => {
     if (pendingGithubLogoutMarkerRef.current === marker) {
       pendingGithubLogoutMarkerRef.current = undefined;
       setGithubAccountError('GitHub logout failed. The account is still connected.');
@@ -539,8 +539,8 @@ function App(): React.JSX.Element {
   }, [bootError]);
 
   const onTerminalCommandFailure = React.useCallback(() => {
-    if (terminalTarget.completionMarker !== undefined) failProjectClone(terminalTarget.completionMarker);
-  }, [failProjectClone, terminalTarget.completionMarker]);
+    if (terminalTarget.completionMarker !== undefined) failPendingCompletion(terminalTarget.completionMarker);
+  }, [failPendingCompletion, terminalTarget.completionMarker]);
 
   if (route === 'boot') {
     return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
