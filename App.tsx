@@ -2,7 +2,7 @@ import React from 'react';
 import {AppState} from 'react-native';
 import {importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
-import {CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from './src/terminal/commandFactory';
+import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
 import {TerminalSessionClient} from './src/terminal/session/sessionClient';
 import type {ActiveTerminalSession} from './src/terminal/session/sessionContract';
 import {listGuestDirectory} from './src/files/fileExplorer';
@@ -10,6 +10,7 @@ import {listGithubRepositories, type GithubAccount, type GithubRepositoryListErr
 import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} from './src/projects/githubAccountStore';
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
+import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
 import {lockedOutMessage, readUserProfile, verifyUserPassword, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {LoadingScreen} from './src/ui/LoadingScreen';
@@ -33,7 +34,6 @@ type PendingGithubLogin = Readonly<{marker: string; returnTo: 'home' | 'projects
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
-const WORKSPACE_PROJECTS_DIRECTORY = '/workspace/projects';
 const nextSessionRequestId = createRequestIdFactory('launcher');
 
 type PendingProjectClone = Readonly<{
@@ -43,83 +43,10 @@ type PendingProjectClone = Readonly<{
   harness: MetroLaunchTarget;
 }>;
 
-function workspaceProjectDirectory(name: string): string | undefined {
-  return /^[A-Za-z0-9._-]{1,48}$/.test(name) && name !== '.' && name !== '..'
-    ? `${WORKSPACE_PROJECTS_DIRECTORY}/${name}`
-    : undefined;
-}
-
 function isHarnessTarget(target: MetroLaunchTarget): boolean {
   return target.sessionId === undefined && (
     target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode'
   );
-}
-
-function harnessSessionTarget(harness: MetroLaunchTarget, name: string, directory: string): MetroLaunchTarget {
-  const toolchain = harness.toolchain ?? 'shell';
-  const command = toolchain === 'opencode' ? 'opencode' : toolchain === 'claude' ? CLAUDE_COMMAND : 'codex';
-  const script = `mkdir -p ${shellQuote(directory)} && cd ${shellQuote(directory)} && exec ${command}`;
-  return {
-    title: harness.title,
-    eyebrow: name,
-    command: toolchain === 'opencode' ? buildZshScriptCommand(script) : buildZshCommand(script),
-    toolchain,
-    returnTo: 'home',
-  };
-}
-
-const NORMALIZE_GIT_REMOTE_FUNCTION = [
-  'normalize_git_remote() {',
-  '  remote="$1"',
-  '  case "$remote" in',
-  '    https://*) remote="${remote#https://}" ;;',
-  '    ssh://*) remote="${remote#ssh://}"; remote="${remote#git@}" ;;',
-  '    git@*) remote="${remote#git@}"; host="${remote%%:*}"; path="${remote#*:}"; remote="$host/$path" ;;',
-  '    *) return 1 ;;',
-  '  esac',
-  '  host="${remote%%/*}"',
-  '  path="${remote#*/}"',
-  '  host=$(printf \'%s\' "$host" | tr \'[:upper:]\' \'[:lower:]\')',
-  '  path="${path%/}"',
-  '  path="${path%.git}"',
-  '  if [ "$host" = github.com ]; then path=$(printf \'%s\' "$path" | tr \'[:upper:]\' \'[:lower:]\'); fi',
-  '  printf \'%s/%s\\n\' "$host" "$path"',
-  '}',
-].join('\n');
-
-/**
- * Prints a completion marker as its own output line for the terminal's
- * scanner, then moves up and erases it so the user never sees it.
- */
-function printHiddenMarker(marker: string): string {
-  return `printf '\\n%s\\n\\033[1A\\033[2K' ${shellQuote(marker)}`;
-}
-
-function buildProjectCloneCommand(source: string, directory: string, marker: string, kind: 'github' | 'url'): string {
-  const expectedOrigin = kind === 'github' ? `https://github.com/${source}.git` : source;
-  const cloneCommand = kind === 'github'
-    ? `gh repo clone ${shellQuote(source)} ${shellQuote(directory)}`
-    : `git clone -- ${shellQuote(source)} ${shellQuote(directory)}`;
-  const quotedDirectory = shellQuote(directory);
-  return [
-    'set -e',
-    NORMALIZE_GIT_REMOTE_FUNCTION,
-    `mkdir -p ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)}`,
-    `if [ -e ${quotedDirectory} ] || [ -L ${quotedDirectory} ]; then`,
-    `  destination_root=$(cd ${quotedDirectory} 2>/dev/null && pwd -P || true)`,
-    `  existing_root=$(git -C ${quotedDirectory} rev-parse --show-toplevel 2>/dev/null || true)`,
-    `  existing_origin=$(git -C ${quotedDirectory} remote get-url origin 2>/dev/null || true)`,
-    `  if [ ! -L ${quotedDirectory} ] && [ -n "$destination_root" ] && [ "$existing_root" = "$destination_root" ] && [ -n "$existing_origin" ] && [ "$(normalize_git_remote "$existing_origin" 2>/dev/null || true)" = "$(normalize_git_remote ${shellQuote(expectedOrigin)})" ]; then`,
-    `    printf '%s\\n' 'Using the existing checkout of this repository.'`,
-    `    ${printHiddenMarker(marker)}`,
-    '    exit 0',
-    '  fi',
-    `  printf '%s\\n' 'That workspace folder already exists but is not a checkout of this repository. It was left unchanged.' >&2`,
-    '  exit 17',
-    'fi',
-    cloneCommand,
-    `${printHiddenMarker(marker)}`,
-  ].join('\n');
 }
 
 function App(): React.JSX.Element {
