@@ -463,6 +463,118 @@ class NativeTerminalEngineTest {
     }
   }
 
+  @Test
+  fun defaultsEmptyMissingAndOverflowingCsiParameters() {
+    val engine = SettlingEngine(4, 12)
+    try {
+      // Overflowing numbers read as missing (the default), not as clamped values.
+      val frame = engine.settle(
+        "\u001b[;5HA\u001b[3;HB\u001b[99999999999;2HC\u001b[2;1H\u001b[0CD\u001b[99999CE",
+      )
+      assertEquals(listOf(" C  A", " D         E", "B", ""), rowTexts(frame))
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun readsMissingOverflowingAndSignedSgrParameters() {
+    val engine = SettlingEngine(2, 8)
+    try {
+      val row = engine.settle(
+        "\u001b[31;99999999999mA" +
+          "\u001b[31m\u001b[-2147483648mB" +
+          "\u001b[;1mC" +
+          "\u001b[0m\u001b[38;2;-5;300;+7mD" +
+          "\u001b[0m\u001b[38;5;mE",
+      ).lines[0]
+      assertEquals("A", row.text[0])
+      // An overflow is a missing parameter, which is 0 (reset).
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[0])
+      // Int.MIN_VALUE is a real (unknown) attribute, not a missing one.
+      assertEquals(0xFFCD0000.toInt(), row.foreground[1])
+      assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[2])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[2])
+      assertEquals(0xFF00FF07.toInt(), row.foreground[3])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[4])
+      assertEquals(0, row.flags[4])
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun parsesColonAndTruncatedLegacyExtendedColours() {
+    val engine = SettlingEngine(2, 8)
+    try {
+      val row = engine.settle(
+        "\u001b[48:2:1:10:20:30mA" +
+          "\u001b[0m\u001b[58:2::1:2:3;1mB" +
+          "\u001b[0m\u001b[58;5;9;3mC" +
+          "\u001b[0m\u001b[48;2;1;2mD" +
+          "\u001b[0m\u001b[38:2:1:2:3mE",
+      ).lines[0]
+      assertEquals(0xFF0A141E.toInt(), row.background[0])
+      assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[1])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[1])
+      assertEquals(NativeTerminalEngine.FLAG_ITALIC, row.flags[2])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[2])
+      // A truncated legacy colour sets nothing and swallows its arguments.
+      assertEquals(NativeTerminalEngine.DEFAULT_BACKGROUND, row.background[3])
+      assertEquals(0, row.flags[3])
+      // Colon form without the colour-space slot: 38:2:r:g:b.
+      assertEquals(0xFF010203.toInt(), row.foreground[4])
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun routesIntermediatesAndPrivateMarkers() {
+    val replies = mutableListOf<String>()
+    val replying = NativeTerminalEngine("s-native-csi-routing", 2, 8) { _, bytes ->
+      synchronized(replies) { replies += String(bytes, StandardCharsets.UTF_8) }
+    }
+    try {
+      // DECRQM needs `?`, `$` and a body that is exactly one number.
+      val input = "\u001b[?2026;1\$p\u001b[?2026:1\$p\u001b[2026\$p\u001b[?+2026\$p\u001b[5n"
+      assertTrue(replying.enqueue(1L, input.toByteArray(StandardCharsets.UTF_8)))
+      awaitFrame(replying) { synchronized(replies) { replies.lastOrNull() == "\u001b[0n" } }
+      assertEquals(listOf("\u001b[?2026;2\$y", "\u001b[0n"), synchronized(replies) { replies.toList() })
+    } finally {
+      replying.close()
+    }
+
+    val engine = SettlingEngine(2, 8)
+    try {
+      // DECSTR (`!p`) only without a marker; private, `>`, `=` and
+      // intermediate CSI C must not move the cursor.
+      val row = engine.settle(
+        "\u001b[1;31m\u001b[!pA\u001b[1m\u001b[?!pB\u001b[0m\u001b[?2CC\u001b[>2CD\u001b[=2CE\u001b[2 CF",
+      ).lines[0]
+      assertEquals("ABCDEF", row.text.joinToString("").trimEnd())
+      assertEquals(0, row.flags[0])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[0])
+      assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[1])
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun ignoresCsiParametersPastTheThirtySecond() {
+    val engine = SettlingEngine(2, 8)
+    try {
+      val row = engine.settle("\u001b[${"0;".repeat(32)}1mA\u001b[0m\u001b[${"0;".repeat(31)}1mB").lines[0]
+      assertEquals(0, row.flags[0])
+      assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[1])
+      assertTrue(engine.settle("\u001b[?${"0;".repeat(32)}25l").cursorVisible)
+      assertFalse(engine.settle("\u001b[?${"0;".repeat(31)}25l").cursorVisible)
+    } finally {
+      engine.close()
+    }
+  }
+
   /** Feeds output and waits for the publish that follows a DSR 5 sentinel. */
   private class SettlingEngine(rows: Int, columns: Int) {
     private val publishes = java.util.concurrent.atomic.AtomicInteger(0)

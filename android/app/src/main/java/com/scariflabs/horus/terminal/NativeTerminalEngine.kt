@@ -421,6 +421,12 @@ internal class NativeTerminalEngine(
   private var parserState = ParserState.NORMAL
   private var escIntermediate = 0
   private val csi = StringBuilder()
+  // CSI parameters parsed from [csi] without allocating: group g (one `;`
+  // parameter) holds csiValues[csiGroupStarts[g] until csiGroupStarts[g + 1]],
+  // its `:` sub-parameters after the first. Missing values are CSI_MISSING.
+  private val csiValues = LongArray(MAX_CSI_CHARS + 1)
+  private val csiGroupStarts = IntArray(MAX_CSI_PARAMS + 1)
+  private var csiParamCount = 0
   private val osc = StringBuilder()
   private var utf8Tail = ByteArray(0)
   private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -861,34 +867,46 @@ internal class NativeTerminalEngine(
   }
 
   private fun handleCsi(final: Char) {
-    val raw = csi.toString()
     // CSI [private marker <=>?] params [intermediates 0x20-0x2f] final.
+    val length = csi.length
     var start = 0
-    while (start < raw.length && raw[start] in "<=>?") start += 1
-    var end = raw.length
-    while (end > start && raw[end - 1].code in 0x20..0x2f) end -= 1
-    val prefix = raw.substring(0, start)
-    val intermediates = raw.substring(end)
-    val body = raw.substring(start, end)
+    while (start < length && csi[start] in '<'..'?') start += 1
+    var end = length
+    while (end > start && csi[end - 1].code in 0x20..0x2f) end -= 1
+    // The marker or intermediate character when there is exactly one, 0 for
+    // none, MULTIPLE for more.
+    val marker = when (start) {
+      0 -> 0
+      1 -> csi[0].code
+      else -> MULTIPLE
+    }
+    val intermediate = when (length - end) {
+      0 -> 0
+      1 -> csi[end].code
+      else -> MULTIPLE
+    }
+    parseCsiParameters(start, end)
     // Sequences with intermediates or a non-DEC private marker (kitty
     // keyboard `CSI > 1 u`, modifyOtherKeys `CSI > 4;2 m`, cursor style
     // `CSI 2 SP q`, ...) must never reach the plain handlers below, where
     // they would restore the cursor or change attributes.
-    if (intermediates.isNotEmpty()) {
-      if (final == 'p' && intermediates == "$" && prefix == "?") reportPrivateMode(body.toIntOrNull())
-      if (final == 'p' && intermediates == "!" && prefix.isEmpty()) softReset()
+    if (intermediate != 0) {
+      if (final == 'p' && intermediate == '$'.code && marker == '?'.code) {
+        // The whole body must be one number: `2026:1` or `2026;1` is no mode.
+        val mode = csiValue(0)
+        reportPrivateMode(if (csiParamCount == 1 && csiGroupSize(0) == 1 && mode != CSI_MISSING) mode.toInt() else null)
+      }
+      if (final == 'p' && intermediate == '!'.code && marker == 0) softReset()
       return
     }
-    if (prefix == ">" || prefix == "<" || prefix == "=") {
-      if (final == 'c' && prefix == ">") reply("\u001b[>0;276;0c")
+    if (marker == '>'.code || marker == '<'.code || marker == '='.code) {
+      if (final == 'c' && marker == '>'.code) reply("\u001b[>0;276;0c")
       return
     }
-    val privateMode = prefix == "?"
+    val privateMode = marker == '?'.code
     if (privateMode && final !in "hlJKn") return
-    val tokens = if (body.isEmpty()) emptyList() else body.split(';')
-    val params = tokens.map { it.substringBefore(':').toIntOrNull() }
-    fun parameter(index: Int = 0, default: Int = 1): Int = (params.getOrNull(index) ?: default).coerceAtLeast(1)
-    fun parameterZero(index: Int): Int = (params.getOrNull(index) ?: 0).coerceAtLeast(0)
+    fun parameter(index: Int = 0): Int = csiInt(index, 1).coerceAtLeast(1)
+    fun parameterZero(index: Int): Int = csiInt(index, 0).coerceAtLeast(0)
 
     when (final) {
       'A' -> cursorUp(parameter())
@@ -940,9 +958,9 @@ internal class NativeTerminalEngine(
       }
       'S' -> active.scrollUp(parameter(), currentForeground, currentBackground)
       'T' -> active.scrollDown(parameter(), currentForeground, currentBackground)
-      'm' -> setGraphicsRendition(tokens.map { token -> token.split(':').map(String::toIntOrNull) })
-      'h', 'l' -> setMode(privateMode, final == 'h', params)
-      'r' -> setScrollRegion(params)
+      'm' -> setGraphicsRendition()
+      'h', 'l' -> setMode(privateMode, final == 'h')
+      'r' -> setScrollRegion()
       's' -> saveCursor()
       'u' -> restoreCursor()
       'n' -> handleDeviceStatus(parameterZero(0))
@@ -963,17 +981,81 @@ internal class NativeTerminalEngine(
   }
 
   /**
-   * [groups] holds one entry per `;` parameter, split on `:` sub-parameters
-   * (`4:3`, `38:2::r:g:b`). Extended colours accept both the colon form and
-   * the legacy `38;2;r;g;b` form; underline colour (58) is parsed and ignored
-   * so its numbers are not read as attributes.
+   * Splits csi[start, end) into `;` groups of `:` sub-parameters. Each value
+   * parses as String.toIntOrNull would (optional sign, digits only, within
+   * Int range); anything else is CSI_MISSING. Groups past MAX_CSI_PARAMS are
+   * ignored, as in xterm.
    */
-  private fun setGraphicsRendition(groups: List<List<Int?>>) {
-    val values = if (groups.isEmpty()) listOf(listOf<Int?>(0)) else groups
+  private fun parseCsiParameters(start: Int, end: Int) {
+    csiParamCount = 0
+    csiGroupStarts[0] = 0
+    if (start >= end) return
+    var valueCount = 0
+    var segmentStart = start
+    var index = start
+    while (true) {
+      val separator = if (index == end) ';' else csi[index]
+      if (separator == ';' || separator == ':') {
+        csiValues[valueCount++] = parseCsiNumber(segmentStart, index)
+        if (separator == ';') {
+          csiParamCount += 1
+          csiGroupStarts[csiParamCount] = valueCount
+          if (csiParamCount == MAX_CSI_PARAMS) return
+        }
+        if (index == end) return
+        segmentStart = index + 1
+      }
+      index += 1
+    }
+  }
+
+  private fun parseCsiNumber(from: Int, to: Int): Long {
+    if (from >= to) return CSI_MISSING
+    var index = from
+    val sign = csi[from]
+    if (sign == '-' || sign == '+') {
+      if (to - from == 1) return CSI_MISSING
+      index += 1
+    }
+    var value = 0L
+    while (index < to) {
+      val digit = csi[index] - '0'
+      if (digit !in 0..9) return CSI_MISSING
+      value = value * 10 + digit
+      if (value > -Int.MIN_VALUE.toLong()) return CSI_MISSING
+      index += 1
+    }
+    if (sign == '-') value = -value
+    return if (value in Int.MIN_VALUE..Int.MAX_VALUE) value else CSI_MISSING
+  }
+
+  private fun csiGroupSize(group: Int): Int = csiGroupStarts[group + 1] - csiGroupStarts[group]
+
+  /** Sub-parameter [sub] of [group], or CSI_MISSING when empty, invalid or absent. */
+  private fun csiValue(group: Int, sub: Int = 0): Long =
+    if (group < csiParamCount && sub < csiGroupSize(group)) csiValues[csiGroupStarts[group] + sub] else CSI_MISSING
+
+  private fun csiInt(group: Int, default: Int): Int {
+    val value = csiValue(group)
+    return if (value == CSI_MISSING) default else value.toInt()
+  }
+
+  /**
+   * Reads the parsed groups (`4:3`, `38:2::r:g:b`). Extended colours accept
+   * both the colon form and the legacy `38;2;r;g;b` form; underline colour
+   * (58) is parsed and ignored so its numbers are not read as attributes.
+   */
+  private fun setGraphicsRendition() {
+    if (csiParamCount == 0) {
+      currentForeground = DEFAULT_FOREGROUND
+      currentBackground = DEFAULT_BACKGROUND
+      currentFlags = 0
+      return
+    }
     var index = 0
-    while (index < values.size) {
-      val group = values[index]
-      when (val value = group[0] ?: 0) {
+    while (index < csiParamCount) {
+      val groupSize = csiGroupSize(index)
+      when (val value = csiInt(index, 0)) {
         0 -> {
           currentForeground = DEFAULT_FOREGROUND
           currentBackground = DEFAULT_BACKGROUND
@@ -982,7 +1064,7 @@ internal class NativeTerminalEngine(
         1 -> currentFlags = currentFlags or FLAG_BOLD
         2 -> currentFlags = currentFlags or FLAG_DIM
         3 -> currentFlags = currentFlags or FLAG_ITALIC
-        4 -> currentFlags = if (group.size > 1 && group[1] == 0) {
+        4 -> currentFlags = if (groupSize > 1 && csiValue(index, 1) == 0L) {
           currentFlags and FLAG_UNDERLINE.inv()
         } else {
           currentFlags or FLAG_UNDERLINE
@@ -1007,37 +1089,38 @@ internal class NativeTerminalEngine(
         38, 48, 58 -> {
           // Colon form carries its arguments in this group; the legacy form
           // takes them from the following groups.
-          val arguments = if (group.size > 1) {
-            group.drop(1)
-          } else {
-            values.drop(index + 1).map { it[0] }
-          }
+          val colon = groupSize > 1
+          val argumentCount = if (colon) groupSize - 1 else csiParamCount - index - 1
           val consumed: Int
-          val color: Int? = when (arguments.getOrNull(0)) {
-            5 -> {
+          var color = 0
+          var hasColor = false
+          when (sgrColorArgument(index, colon, 0)) {
+            5L -> {
               consumed = 2
-              arguments.getOrNull(1)?.let(::palette)
+              val entry = sgrColorArgument(index, colon, 1)
+              if (entry != CSI_MISSING) {
+                color = palette(entry.toInt())
+                hasColor = true
+              }
             }
-            2 -> {
+            2L -> {
               // Colon form may include a colour-space id: 38:2:id:r:g:b.
-              val rgb = if (group.size > 1 && arguments.size >= 5) arguments.subList(2, 5) else arguments.drop(1).take(3)
+              val first = if (colon && argumentCount >= 5) 2 else 1
               consumed = 4
-              val red = rgb.getOrNull(0)
-              val green = rgb.getOrNull(1)
-              val blue = rgb.getOrNull(2)
-              if (red != null && green != null && blue != null) {
-                rgb(red.coerceIn(0, 255), green.coerceIn(0, 255), blue.coerceIn(0, 255))
-              } else null
+              val red = sgrColorArgument(index, colon, first)
+              val green = sgrColorArgument(index, colon, first + 1)
+              val blue = sgrColorArgument(index, colon, first + 2)
+              if (red != CSI_MISSING && green != CSI_MISSING && blue != CSI_MISSING) {
+                color = rgb(red.coerceIn(0, 255).toInt(), green.coerceIn(0, 255).toInt(), blue.coerceIn(0, 255).toInt())
+                hasColor = true
+              }
             }
-            else -> {
-              consumed = 0
-              null
-            }
+            else -> consumed = 0
           }
-          if (color != null) {
+          if (hasColor) {
             if (value == 38) currentForeground = color else if (value == 48) currentBackground = color
           }
-          if (group.size == 1) index += consumed.coerceAtMost(values.size - index - 1)
+          if (!colon) index += consumed.coerceAtMost(csiParamCount - index - 1)
         }
         else -> Unit
       }
@@ -1045,9 +1128,15 @@ internal class NativeTerminalEngine(
     }
   }
 
-  private fun setMode(privateMode: Boolean, enabled: Boolean, params: List<Int?>) {
-    params.forEach { rawMode ->
-      val mode = rawMode ?: return@forEach
+  /** Argument [argument] after the 38/48/58 in [group]: a sub-parameter, or a later group's value. */
+  private fun sgrColorArgument(group: Int, colon: Boolean, argument: Int): Long =
+    if (colon) csiValue(group, 1 + argument) else csiValue(group + 1 + argument)
+
+  private fun setMode(privateMode: Boolean, enabled: Boolean) {
+    for (group in 0 until csiParamCount) {
+      val rawMode = csiValue(group)
+      if (rawMode == CSI_MISSING) continue
+      val mode = rawMode.toInt()
       if (privateMode) {
         when (mode) {
           // DECOM homes the cursor (to the region top when set).
@@ -1104,10 +1193,10 @@ internal class NativeTerminalEngine(
     if (mode == 1049) restoreCursor()
   }
 
-  private fun setScrollRegion(params: List<Int?>) {
-    val top = (params.getOrNull(0) ?: 0).let { if (it <= 0) 1 else it }
-    var bottom = params.getOrNull(1) ?: 0
-    if (params.size < 2 || bottom <= 0 || bottom > active.rows) bottom = active.rows
+  private fun setScrollRegion() {
+    val top = csiInt(0, 0).let { if (it <= 0) 1 else it }
+    var bottom = csiInt(1, 0)
+    if (csiParamCount < 2 || bottom <= 0 || bottom > active.rows) bottom = active.rows
     if (bottom <= top) return
     active.scrollTop = top - 1
     active.scrollBottom = bottom - 1
@@ -1463,6 +1552,10 @@ internal class NativeTerminalEngine(
     const val DEFAULT_FOREGROUND = 0xFFF2F4F5.toInt()
     const val DEFAULT_BACKGROUND = 0xFF090C0D.toInt()
     private const val MAX_CSI_CHARS = 128
+    /** CSI parameter groups kept per sequence; xterm likewise drops the rest. */
+    private const val MAX_CSI_PARAMS = 32
+    private const val CSI_MISSING = Long.MIN_VALUE
+    private const val MULTIPLE = -1
     private const val MAX_OSC_CHARS = 65_536
     private const val MAX_CELL_CODE_UNITS = 64
     private const val ZERO_WIDTH: Byte = 0
