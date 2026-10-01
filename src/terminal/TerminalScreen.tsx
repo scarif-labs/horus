@@ -190,6 +190,16 @@ function hasExactOutputLine(value: string, expected: string): boolean {
   return value.split(/[\r\n]/).some(line => line === expected);
 }
 
+/**
+ * Returns the kept tail plus `chunk` for scanning, and keeps the last
+ * `tailLength` characters of it so a marker split across chunks still matches.
+ */
+function appendToOutputTail(tailRef: {current: string}, chunk: string, tailLength: number): string {
+  const scanText = `${tailRef.current}${chunk}`;
+  tailRef.current = scanText.slice(-tailLength);
+  return scanText;
+}
+
 function hasVisibleTerminalContent(frame: TerminalFrame): boolean {
   return frame.lines.some(line => line.text.trim().length > 0);
 }
@@ -600,17 +610,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         if (scanInstallMarker || scanGithubLogin || scanCompletionMarker) {
           const outputText = new TextDecoder().decode(chunk.bytes);
           if (scanInstallMarker) {
-            const installScanText = `${installOutputTailRef.current}${outputText}`;
-            installOutputTailRef.current = installScanText.slice(-512);
-            if (hasToolchainReadyMarker(installScanText)) {
+            if (hasToolchainReadyMarker(appendToOutputTail(installOutputTailRef, outputText, 512))) {
               installReadyRef.current = true;
               if (nativeHarness) setNativeHarnessReady(true);
             }
           }
           if (scanGithubLogin) {
-            const scanText = `${githubLoginOutputTailRef.current}${outputText}`;
-            githubLoginOutputTailRef.current = scanText.slice(-512);
-            const githubLoginUrl = findGithubDeviceLoginUrl(scanText);
+            const githubLoginUrl = findGithubDeviceLoginUrl(appendToOutputTail(githubLoginOutputTailRef, outputText, 512));
             if (
               githubLoginUrl !== undefined &&
               !openedGithubLoginUrlsRef.current.has(githubLoginUrl)
@@ -631,8 +637,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             }
           }
           if (scanCompletionMarker) {
-            const scanText = `${completionOutputTailRef.current}${outputText}`;
-            completionOutputTailRef.current = scanText.slice(-(completionMarker.length + 2));
+            const scanText = appendToOutputTail(completionOutputTailRef, outputText, completionMarker.length + 2);
             if (hasExactOutputLine(scanText, completionMarker)) completionMarkerSeenRef.current = true;
           }
         }
