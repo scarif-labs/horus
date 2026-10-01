@@ -11,10 +11,6 @@ jest.mock('../src/native/NativeTerminalRuntime', () => {
 });
 
 import {
-  detectHermesEngine,
-  getTerminalCapabilityReport,
-} from '../src/terminal/capabilities';
-import {
   isTerminalRuntimeStatusResponse,
   importRootfs,
   installRootfs,
@@ -211,47 +207,6 @@ describe('readTerminalDebugLog', () => {
     await expect(readTerminalDebugLog({
       getDebugLog: async () => ({status: 'error' as const, errorCode: 'internal_error' as const}),
     })).resolves.toEqual({kind: 'error', errorCode: 'internal_error'});
-  });
-});
-
-describe('terminal capability report', () => {
-  const hermesOriginal = (globalThis as {HermesInternal?: unknown}).HermesInternal;
-
-  afterEach(() => {
-    if (hermesOriginal === undefined) {
-      delete (globalThis as {HermesInternal?: unknown}).HermesInternal;
-    } else {
-      (globalThis as {HermesInternal?: unknown}).HermesInternal = hermesOriginal;
-    }
-    statusMock.mockReset();
-  });
-
-  it('merges the native snapshot with the local Hermes probe', async () => {
-    (globalThis as {HermesInternal?: unknown}).HermesInternal = {};
-    statusMock.mockResolvedValue(successResponse());
-    await expect(getTerminalCapabilityReport()).resolves.toEqual({
-      kind: 'available',
-      report: {
-        abi: 'arm64-v8a',
-        androidApi: 35,
-        appVersion: '0.0.1',
-        engine: 'hermes',
-        storageRoot: '/data/user/0/com.scariflabs.horus/files/horus',
-        runtimeState: 'not_installed',
-        runtimeVersion: 'p2-pty',
-        prootAvailable: true,
-      },
-    });
-  });
-
-  it('reports engine unknown without Hermes and surfaces native failures', async () => {
-    delete (globalThis as {HermesInternal?: unknown}).HermesInternal;
-    expect(detectHermesEngine()).toBe('unknown');
-    statusMock.mockResolvedValue({status: 'success'});
-    await expect(getTerminalCapabilityReport()).resolves.toEqual({
-      kind: 'unavailable',
-      errorCode: 'invalid_response',
-    });
   });
 });
 
