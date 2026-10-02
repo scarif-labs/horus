@@ -1035,9 +1035,11 @@ class ProotSessionLauncher(
     private const val OPENCODE_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
     private val CODEX_PROFILE_BLOCK = """
       $CODEX_PROFILE_BEGIN
-      # Codex Linux sandboxing is unavailable under Android PRoot.
+      # Codex Linux sandboxing is unavailable under Android PRoot, and so is
+      # its background app-server: PRoot maps its control socket to a host
+      # path longer than a Unix socket allows, so the server never listens.
       codex() {
-        command codex --sandbox danger-full-access "${'$'}@"
+        command codex --sandbox danger-full-access --no-daemon "${'$'}@"
       }
       export HORUS_CODEX_MODE=unsandboxed
       $CODEX_PROFILE_END
@@ -1057,9 +1059,10 @@ class ProotSessionLauncher(
       setopt transient_rprompt
       umask 0002
       export PATH="${'$'}HOME/.local/bin:/usr/local/bin:${'$'}{PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
-      # Codex's Linux sandboxing is unavailable under Android PRoot.
+      # Codex's Linux sandboxing and background app-server are unavailable
+      # under Android PRoot (see the profile block).
       codex() {
-        command codex --sandbox danger-full-access "${'$'}@"
+        command codex --sandbox danger-full-access --no-daemon "${'$'}@"
       }
       export HORUS_CODEX_MODE=unsandboxed
       if [[ "${'$'}{HORUS_BOOTSTRAP:-}" == 1 ]]; then

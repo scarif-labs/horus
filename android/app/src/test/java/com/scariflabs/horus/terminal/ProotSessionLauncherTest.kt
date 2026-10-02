@@ -82,7 +82,7 @@ class ProotSessionLauncherTest {
       val profile = File(home, ".profile")
       assertTrue(profile.isFile)
       assertTrue(profile.readText().contains(ProotSessionLauncher.CODEX_PROFILE_BEGIN))
-      assertTrue(profile.readText().contains("command codex --sandbox danger-full-access \"\$@\""))
+      assertTrue(profile.readText().contains("command codex --sandbox danger-full-access --no-daemon \"\$@\""))
       assertTrue(profile.readText().contains(ProotSessionLauncher.ZSH_PROFILE_BEGIN))
       val zshrc = File(home, ".zshrc")
       assertTrue(zshrc.isFile)
@@ -120,7 +120,7 @@ class ProotSessionLauncherTest {
 
       assertEquals(first, second)
       assertTrue(first.startsWith("export HORUS_TEST=keep\n"))
-      assertTrue(first.contains("command codex --sandbox danger-full-access \"\$@\""))
+      assertTrue(first.contains("command codex --sandbox danger-full-access --no-daemon \"\$@\""))
       assertEquals(1, first.split(ProotSessionLauncher.CODEX_PROFILE_BEGIN).size - 1)
       assertEquals(1, first.split(ProotSessionLauncher.ZSH_PROFILE_BEGIN).size - 1)
       val zshrc = File(home, ".zshrc")
@@ -1050,7 +1050,7 @@ class ProotSessionLauncherTest {
         .start()
       val output = process.inputStream.bufferedReader().readLines()
       assertEquals(0, process.waitFor())
-      assertEquals(listOf("--sandbox", "danger-full-access", "exec", "inspect"), output)
+      assertEquals(listOf("--sandbox", "danger-full-access", "--no-daemon", "exec", "inspect"), output)
     } finally {
       base.deleteRecursively()
     }
