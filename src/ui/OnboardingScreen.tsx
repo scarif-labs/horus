@@ -115,31 +115,40 @@ function PasswordStep({runtimeReady, onComplete, error}: PasswordStepProps): Rea
   }, [onComplete, password]);
 
   const isWorking = progressStage !== null;
-  const progressTitle = progressStage === 'saving-profile'
-    ? 'SAVING YOUR PROFILE'
-    : 'PROVISIONING ALPINE WORKSPACE';
-  const progressDetail = progressStage === 'saving-profile'
-    ? 'Finishing your local sign-in setup…'
-    : 'Installing CLI tools…';
+  // While setup runs, the field locks with a check and the button itself
+  // carries the spinner and the current step.
+  const progressLabel = progressStage === 'saving-profile' ? 'SAVING YOUR PROFILE…' : 'INSTALLING LINUX TOOLS…';
 
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-screen">
       <View style={authStyles.card}>
-        <TextInput accessibilityLabel="Create password" autoCapitalize="none" autoCorrect={false} editable={!isWorking} onChangeText={setPassword} placeholder="Create password" placeholderTextColor={uiColors.subdued} secureTextEntry style={authStyles.input} testID="profile-password" value={password} />
+        <View>
+          <TextInput accessibilityLabel="Create password" autoCapitalize="none" autoCorrect={false} editable={!isWorking} onChangeText={setPassword} placeholder="Create password" placeholderTextColor={uiColors.subdued} secureTextEntry style={[authStyles.input, isWorking && styles.inputLocked]} testID="profile-password" value={password} />
+          {isWorking ? (
+            <View style={styles.inputCheck} testID="profile-password-locked">
+              <EntryIcon kind="check" size={12} style={styles.checkIcon} />
+            </View>
+          ) : null}
+        </View>
 
         {validationError !== undefined ? <Text style={authStyles.error} testID="profile-error">{validationError}</Text> : null}
         {error !== undefined ? <Text style={authStyles.error} testID="profile-save-error">{error}</Text> : null}
-        {isWorking ? (
-          <View accessibilityLiveRegion="polite" style={styles.progress} testID="onboarding-progress">
-            <ActivityIndicator color={uiColors.accent} size="small" />
-            <View style={styles.progressCopy}>
-              <Text style={styles.progressTitle} testID="onboarding-progress-title">{progressTitle}</Text>
-              <Text style={styles.progressDetail} testID="onboarding-progress-detail">{progressDetail}</Text>
+        <Pressable
+          accessibilityLabel={isWorking ? progressLabel : undefined}
+          accessibilityRole="button"
+          accessibilityState={{busy: isWorking, disabled: !runtimeReady || isWorking}}
+          disabled={!runtimeReady || isWorking}
+          onPress={() => { void submit(); }}
+          style={[authStyles.button, !runtimeReady && !isWorking && authStyles.disabled]}
+          testID="profile-continue">
+          {isWorking ? (
+            <View accessibilityLiveRegion="polite" style={styles.buttonProgress} testID="onboarding-progress">
+              <ActivityIndicator color={uiColors.background} size="small" />
+              <Text style={authStyles.buttonText} testID="onboarding-progress-title">{progressLabel}</Text>
             </View>
-          </View>
-        ) : null}
-        <Pressable accessibilityRole="button" disabled={!runtimeReady || isWorking} onPress={() => { void submit(); }} style={[authStyles.button, (!runtimeReady || isWorking) && authStyles.disabled]} testID="profile-continue">
-          <Text style={authStyles.buttonText}>{isWorking ? 'PLEASE WAIT…' : runtimeReady ? 'CONTINUE  →' : 'PREPARING…'}</Text>
+          ) : (
+            <Text style={authStyles.buttonText}>{runtimeReady ? 'CONTINUE  →' : 'PREPARING…'}</Text>
+          )}
         </Pressable>
       </View>
     </AuthScreenLayout>
@@ -147,21 +156,9 @@ function PasswordStep({runtimeReady, onComplete, error}: PasswordStepProps): Rea
 }
 
 const styles = StyleSheet.create({
-  progress: {
-    alignItems: 'center',
-    backgroundColor: uiColors.background,
-    borderColor: uiColors.borderSoft,
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  progressCopy: {flex: 1},
-  progressTitle: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '700', letterSpacing: 0.4},
-  progressDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 4},
+  inputLocked: {color: uiColors.muted, paddingRight: 44},
+  inputCheck: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 10, height: 20, justifyContent: 'center', position: 'absolute', right: 14, top: 16, width: 20},
+  buttonProgress: {alignItems: 'center', flexDirection: 'row', gap: 10},
   permissionsStep: {alignSelf: 'center', maxWidth: 360, width: '100%'},
   permissionsTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
   permissionsDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},

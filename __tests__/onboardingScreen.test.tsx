@@ -101,4 +101,36 @@ describe('OnboardingScreen', () => {
 
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
+
+  test('locks the password and shows setup progress on the button while it runs', async () => {
+    const {permissions} = fakePermissions({notifications: true, batteryUnrestricted: true});
+    let toolsReady: () => void = () => undefined;
+    let finish: () => void = () => undefined;
+    const onComplete = jest.fn((_password: string, onToolsReady: () => void) => new Promise<void>(resolve => {
+      toolsReady = onToolsReady;
+      finish = resolve;
+    }));
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<OnboardingScreen onComplete={onComplete} permissions={permissions} runtimeReady />);
+    });
+    await ReactTestRenderer.act(async () => { renderer?.root.findByProps({testID: 'permissions-continue'}).props.onPress(); });
+    await ReactTestRenderer.act(async () => { renderer?.root.findByProps({testID: 'profile-password'}).props.onChangeText('1234'); });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'profile-continue'}).props.onPress();
+      await Promise.resolve();
+    });
+    const status = () => renderer?.root.findByProps({testID: 'onboarding-progress-title'}).props.children;
+    expect(renderer?.root.findByProps({testID: 'profile-password'}).props.editable).toBe(false);
+    expect(renderer?.root.findAllByProps({testID: 'profile-password-locked'}).length).toBeGreaterThan(0);
+    expect(status()).toBe('INSTALLING LINUX TOOLS…');
+
+    await ReactTestRenderer.act(async () => { toolsReady(); });
+    expect(status()).toBe('SAVING YOUR PROFILE…');
+
+    await ReactTestRenderer.act(async () => { finish(); await Promise.resolve(); });
+    expect(renderer?.root.findAllByProps({testID: 'onboarding-progress'})).toHaveLength(0);
+    expect(renderer?.root.findByProps({testID: 'profile-password'}).props.editable).toBe(true);
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+  });
 });
