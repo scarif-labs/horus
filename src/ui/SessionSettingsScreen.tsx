@@ -1,11 +1,11 @@
 import React from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Linking, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BackgroundPermissionsPanel} from './BackgroundPermissions';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
-import {SettingsAction, SettingsRow, SettingsSection} from './SettingsList';
+import {SettingsAction, SettingsExternalMark, SettingsRow, SettingsSection} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
 import {
@@ -17,8 +17,11 @@ import {
   type SessionSettingsResult,
 } from '../terminal/session/sessionSettings';
 
+export const HORUS_DOCS_URL = 'https://www.scariflabs.com/horus/docs';
+
 type SessionSettingsScreenProps = Readonly<{
   onBack: () => void;
+  openUrl?: (url: string) => Promise<unknown>;
   readSettings?: () => Promise<SessionSettingsResult>;
   saveLimit?: (limit: number) => Promise<SessionSettingsResult>;
 }>;
@@ -33,7 +36,7 @@ function limitLabel(limit: number): string {
   return limit === 1 ? '1 app' : `${limit} apps`;
 }
 
-export function SessionSettingsScreen({onBack, readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
+export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
   const [settings, setSettings] = React.useState<SessionSettings | undefined>();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -136,6 +139,18 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
 
         <BackgroundPermissionsPanel />
         <RemoteAccessPanel />
+
+        <SettingsSection title="HELP">
+          <SettingsRow
+            accessibilityLabel="Open the Horus documentation in your browser"
+            detail="scariflabs.com/horus/docs"
+            icon="book"
+            label="Documentation"
+            onPress={() => { openUrl(HORUS_DOCS_URL).catch(() => undefined); }}
+            right={<SettingsExternalMark />}
+            testID="settings-docs"
+          />
+        </SettingsSection>
       </ScrollView>
     </ScreenShell>
   );

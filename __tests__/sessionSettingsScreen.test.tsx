@@ -46,4 +46,18 @@ describe('SessionSettingsScreen', () => {
       renderer?.unmount();
     });
   });
+
+  test('opens the documentation from the Help section', async () => {
+    const openUrl = jest.fn(async () => undefined);
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<SessionSettingsScreen onBack={() => undefined} openUrl={openUrl} readSettings={async () => settings(1)} />);
+      await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'settings-docs'}).props.onPress();
+    });
+    expect(openUrl).toHaveBeenCalledWith('https://www.scariflabs.com/horus/docs');
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+  });
 });

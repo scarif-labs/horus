@@ -41,12 +41,15 @@ type SettingsRowProps = Readonly<{
   detail?: string;
   right?: React.ReactNode;
   below?: React.ReactNode;
+  /** Makes the whole row a button, e.g. a link. */
+  onPress?: () => void;
+  accessibilityLabel?: string;
   testID?: string;
 }>;
 
-export function SettingsRow({icon, label, detail, right, below, testID}: SettingsRowProps): React.JSX.Element {
-  return (
-    <View style={styles.row} testID={testID}>
+export function SettingsRow({icon, label, detail, right, below, onPress, accessibilityLabel, testID}: SettingsRowProps): React.JSX.Element {
+  const content = (
+    <>
       <View style={styles.rowLine}>
         {icon === undefined ? null : <EntryIcon kind={icon} size={20} />}
         <View style={styles.rowCopy}>
@@ -56,8 +59,19 @@ export function SettingsRow({icon, label, detail, right, below, testID}: Setting
         {right}
       </View>
       {below}
-    </View>
+    </>
   );
+  if (onPress === undefined) return <View style={styles.row} testID={testID}>{content}</View>;
+  return (
+    <Pressable accessibilityLabel={accessibilityLabel ?? label} accessibilityRole="link" onPress={onPress} style={styles.row} testID={testID}>
+      {content}
+    </Pressable>
+  );
+}
+
+/** The trailing arrow for a row that leaves the app. */
+export function SettingsExternalMark(): React.JSX.Element {
+  return <Text style={styles.external}>↗</Text>;
 }
 
 type SettingsSwitchProps = Readonly<{
@@ -133,5 +147,6 @@ const styles = StyleSheet.create({
   actionTextDanger: {color: uiColors.danger},
   check: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 11, height: 22, justifyContent: 'center', marginLeft: 10, width: 22},
   checkIcon: {marginRight: 0},
+  external: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 16, fontWeight: '800', marginLeft: 10},
   disabled: {opacity: 0.45},
 });

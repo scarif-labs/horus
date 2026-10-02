@@ -13,9 +13,9 @@ import {uiColors} from './brand';
  * - refresh: the reload action on a list
  * - bell, battery: the background permissions
  * - check: a completed item
- * - layers, laptop: the Sessions and Remote access settings
+ * - layers, laptop, book: the Sessions, Remote access and Help settings
  */
-export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh' | 'bell' | 'battery' | 'check' | 'layers' | 'laptop';
+export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh' | 'bell' | 'battery' | 'check' | 'layers' | 'laptop' | 'book';
 
 const SOURCES = {
   folder: require('../../assets/ui/folder.png'),
@@ -27,6 +27,7 @@ const SOURCES = {
   check: require('../../assets/ui/check.png'),
   layers: require('../../assets/ui/layers.png'),
   laptop: require('../../assets/ui/laptop.png'),
+  book: require('../../assets/ui/book.png'),
 } as const;
 
 const DEFAULT_TINT: Record<EntryIconKind, string> = {
@@ -39,6 +40,7 @@ const DEFAULT_TINT: Record<EntryIconKind, string> = {
   check: uiColors.background,
   layers: uiColors.ink,
   laptop: uiColors.ink,
+  book: uiColors.ink,
 };
 
 type EntryIconProps = Readonly<{kind: EntryIconKind; size?: number; tint?: string; style?: StyleProp<ImageStyle>}>;
