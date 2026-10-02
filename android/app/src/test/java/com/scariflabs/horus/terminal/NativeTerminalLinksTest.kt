@@ -106,6 +106,31 @@ class NativeTerminalLinksTest {
   }
 
   @Test
+  fun followsUrlsAnAppWrappedWithAnIndent() {
+    // Claude Code wraps its own text and indents continuation rows by two
+    // spaces, so the URL is split by real line breaks.
+    val engine = NativeTerminalEngine("s-links-indented", 6, 20) { _, _ -> }
+    try {
+      val output = "x (https://claude.ai\r\n  /code/artifact/7f1\r\n  07076). Done\r\n"
+      assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines.any { line -> line.text[2] == "0" } }
+      val url = "https://claude.ai/code/artifact/7f107076"
+      assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 0, 5))
+      assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 1, 2))
+      assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 2, 6))
+      // The indent and the text after the link are not part of it.
+      assertNull(NativeTerminalLinks.urlAt(frame.lines, 1, 0))
+      assertNull(NativeTerminalLinks.urlAt(frame.lines, 2, 8))
+      val cache = NativeTerminalLinks.WrappedLinkCache()
+      assertArrayEquals(intArrayOf(3, 20), NativeTerminalLinks.rowLinks(frame.lines, 0, cache))
+      assertArrayEquals(intArrayOf(2, 20), NativeTerminalLinks.rowLinks(frame.lines, 1, cache))
+      assertArrayEquals(intArrayOf(2, 7), NativeTerminalLinks.rowLinks(frame.lines, 2, cache))
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
   fun trustsClaudeDotCom() {
     assertTrue(NativeTerminalLinks.isTrustedUrl("https://claude.com/cai/oauth/authorize?code=true"))
   }

@@ -17,7 +17,8 @@ import java.util.regex.Pattern
  * [detect] handles one row; a match that runs into the row's last cell is
  * assumed to continue and is skipped there. [rowLinks] and [urlAt] join rows
  * that run edge to edge into one logical line (a long URL wrapped either by
- * the terminal or by the app), so wrapped URLs are underlined and tappable.
+ * the terminal or by the app, which may indent the next row), so wrapped
+ * URLs are underlined and tappable.
  */
 internal object NativeTerminalLinks {
   /** Shared empty ranges for rows without links. Never mutate. */
@@ -115,9 +116,8 @@ internal object NativeTerminalLinks {
     val last = logicalEnd(lines, first)
     if (first == last) return urlAt(lines[row], column)
     val joined = join(lines, first, last)
-    var offset = 0
-    for (index in first until row) offset += lines[index].columns
-    val target = offset + column
+    val target = joined.indexOf(row - first, column)
+    if (target < 0) return null
     val ranges = detect(joined.text, joined.width)
     var index = 0
     while (index < ranges.size) {
@@ -144,7 +144,7 @@ internal object NativeTerminalLinks {
       if (entries.size >= MAX_CACHED_LINES) entries.clear()
       val rows = Array(last - first + 1) { lines[first + it] }
       val joined = join(lines, first, last)
-      val ranges = splitRanges(rows, detect(joined.text, joined.width))
+      val ranges = splitRanges(rows, joined, detect(joined.text, joined.width))
       entries[lines[first]] = Entry(rows, ranges)
       return ranges
     }
@@ -154,46 +154,65 @@ internal object NativeTerminalLinks {
     }
   }
 
-  private class Joined(val text: Array<String>, val width: ByteArray)
-
-  private fun join(lines: Array<NativeTerminalEngine.FrameRow>, first: Int, last: Int): Joined {
-    var total = 0
-    for (index in first..last) total += lines[index].columns
-    val text = arrayOfNulls<String>(total)
-    val width = ByteArray(total)
-    var offset = 0
-    for (index in first..last) {
-      val line = lines[index]
-      for (column in 0 until line.columns) {
-        text[offset + column] = line.text[column]
-        width[offset + column] = line.width[column]
-      }
-      offset += line.columns
+  /**
+   * One logical line built from wrapped rows. A continuation row's leading
+   * indent is left out, since apps that wrap their own text (Claude Code)
+   * indent the next row. [row] and [column] map each joined cell back.
+   */
+  private class Joined(val text: Array<String>, val width: ByteArray, val row: IntArray, val column: IntArray) {
+    fun indexOf(row: Int, column: Int): Int {
+      for (index in text.indices) if (this.row[index] == row && this.column[index] == column) return index
+      return -1
     }
-    @Suppress("UNCHECKED_CAST")
-    return Joined(text as Array<String>, width)
   }
 
-  /** Splits joined-line column ranges back into per-row [start, end) pairs. */
-  private fun splitRanges(rows: Array<NativeTerminalEngine.FrameRow>, joined: IntArray): Array<IntArray> {
+  private fun join(lines: Array<NativeTerminalEngine.FrameRow>, first: Int, last: Int): Joined {
+    val text = ArrayList<String>()
+    val width = ArrayList<Byte>()
+    val rows = ArrayList<Int>()
+    val columns = ArrayList<Int>()
+    for (index in first..last) {
+      val line = lines[index]
+      val start = if (index == first) 0 else indentOf(line)
+      for (column in start until line.columns) {
+        text.add(line.text[column])
+        width.add(line.width[column])
+        rows.add(index - first)
+        columns.add(column)
+      }
+    }
+    return Joined(text.toTypedArray(), width.toByteArray(), rows.toIntArray(), columns.toIntArray())
+  }
+
+  /** Splits joined-line ranges back into per-row [start, end) column pairs. */
+  private fun splitRanges(rows: Array<NativeTerminalEngine.FrameRow>, joined: Joined, ranges: IntArray): Array<IntArray> {
     val perRow = Array(rows.size) { ArrayList<Int>() }
     var index = 0
-    while (index < joined.size) {
-      var rowStart = 0
-      for (rowIndex in rows.indices) {
-        val rowEnd = rowStart + rows[rowIndex].columns
-        val start = maxOf(joined[index], rowStart)
-        val end = minOf(joined[index + 1], rowEnd)
-        if (start < end) {
-          perRow[rowIndex].add(start - rowStart)
-          perRow[rowIndex].add(end - rowStart)
-        }
-        rowStart = rowEnd
+    while (index < ranges.size) {
+      var cell = ranges[index]
+      while (cell < ranges[index + 1]) {
+        // One run of joined cells that sit on the same row.
+        val row = joined.row[cell]
+        val start = joined.column[cell]
+        while (cell + 1 < ranges[index + 1] && joined.row[cell + 1] == row) cell += 1
+        val end = joined.column[cell] + maxOf(1, joined.width[cell].toInt())
+        perRow[row].add(start)
+        perRow[row].add(minOf(end, rows[row].columns))
+        cell += 1
       }
       index += 2
     }
     return Array(rows.size) { if (perRow[it].isEmpty()) NONE else perRow[it].toIntArray() }
   }
+
+  /** Leading blank cells of [line], or [Int.MAX_VALUE] when it is blank. */
+  private fun indentOf(line: NativeTerminalEngine.FrameRow): Int {
+    for (column in 0 until line.columns) if (line.text[column].isNotBlank()) return column
+    return Int.MAX_VALUE
+  }
+
+  /** Deepest indent a continuation row may have, e.g. Claude Code's two-space margin. */
+  private const val MAX_CONTINUATION_INDENT = 8
 
   /** True when [row] runs to its last cell and the next row starts with text. */
   private fun continuesToNext(lines: Array<NativeTerminalEngine.FrameRow>, row: Int): Boolean {
@@ -203,7 +222,7 @@ internal object NativeTerminalLinks {
     if (current.columns == 0 || next.columns == 0) return false
     val lastCell = current.text[current.columns - 1]
     val lastFilled = (lastCell.isEmpty() && current.width[current.columns - 1].toInt() == 0) || lastCell.isNotBlank()
-    return lastFilled && next.text[0].isNotBlank()
+    return lastFilled && indentOf(next) <= MAX_CONTINUATION_INDENT
   }
 
   private fun logicalStart(lines: Array<NativeTerminalEngine.FrameRow>, row: Int): Int {
