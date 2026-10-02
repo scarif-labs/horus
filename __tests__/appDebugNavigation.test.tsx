@@ -150,10 +150,14 @@ jest.mock('../src/ui/LoginScreen', () => ({
 }));
 
 jest.mock('../src/ui/ProjectHubScreen', () => ({
-  ProjectHubScreen: ({toolName, projectError, projects, onCreateProject, onCloneRepo, onOpenProject}: {toolName: string; projectError?: string; projects: readonly {name: string; path: string; remote?: string}[]; onCreateProject: (name: string) => void; onCloneRepo: (url: string, name: string) => void; onOpenProject: (project: {name: string; path: string; remote?: string}) => void}) => require('react').createElement(
+  ProjectHubScreen: ({toolName, projectError, projects, onConfirmConnected, onCreateProject, onCloneRepo, onOpenProject}: {toolName: string; projectError?: string; onConfirmConnected: () => void; projects: readonly {name: string; path: string; remote?: string}[]; onCreateProject: (name: string) => void; onCloneRepo: (url: string, name: string) => void; onOpenProject: (project: {name: string; path: string; remote?: string}) => void}) => require('react').createElement(
     require('react-native').View,
     {testID: 'project-hub-screen', projectError},
     require('react').createElement(require('react-native').Text, {testID: 'project-hub-harness'}, toolName),
+    require('react').createElement(
+      require('react-native').Pressable,
+      {testID: 'project-hub-confirm-connected', onPress: onConfirmConnected},
+    ),
     require('react').createElement(
       require('react-native').Pressable,
       {testID: 'project-hub-create-sample', onPress: () => onCreateProject('sample')},
@@ -343,6 +347,12 @@ describe('debug navigation', () => {
       renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
+    // Signed out, opening the chooser does not query GitHub on its own.
+    expect(listGithubRepositories).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'project-hub-confirm-connected'}).props.onPress();
+      for (let index = 0; index < 4; index += 1) await Promise.resolve();
+    });
     expect(listGithubRepositories).toHaveBeenCalledTimes(1);
     await ReactTestRenderer.act(async () => {
       backHandler?.({} as never);
@@ -425,6 +435,12 @@ describe('debug navigation', () => {
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    // Signed out, opening the chooser does not query GitHub on its own.
+    expect(listGithubRepositories).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'project-hub-confirm-connected'}).props.onPress();
+      for (let index = 0; index < 4; index += 1) await Promise.resolve();
     });
     expect(listGithubRepositories).toHaveBeenCalledTimes(1);
     await ReactTestRenderer.act(async () => {

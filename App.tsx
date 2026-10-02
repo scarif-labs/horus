@@ -68,13 +68,16 @@ function App(): React.JSX.Element {
   const [terminalReturnRoute, setTerminalReturnRoute] = React.useState<'home' | 'projects'>('home');
   const [selectedHarness, setSelectedHarness] = React.useState<MetroLaunchTarget | undefined>();
   const [projectConnected, setProjectConnected] = React.useState(false);
+  const projectConnectedRef = React.useRef(projectConnected);
+  projectConnectedRef.current = projectConnected;
   const [projects, setProjects] = React.useState<readonly ProjectSummary[]>([]);
   const [githubAccount, setGithubAccount] = React.useState<GithubAccount | undefined>();
   const [githubAccountError, setGithubAccountError] = React.useState<string | undefined>();
   const [githubRepositoriesLoaded, setGithubRepositoriesLoaded] = React.useState(false);
   const [projectLoading, setProjectLoading] = React.useState(false);
   const [projectError, setProjectError] = React.useState<string | undefined>();
-  const [githubAutoRefreshRoute, setGithubAutoRefreshRoute] = React.useState<'home' | 'projects' | undefined>();
+  // Which route refreshes on arrival, and whether it also queries GitHub.
+  const [autoRefresh, setAutoRefresh] = React.useState<Readonly<{route: 'home' | 'projects'; github: boolean}> | undefined>();
   // Callbacks read the ref so they see a marker set earlier in the same
   // event; the state copy drives the held terminal's render.
   const [pendingCompletion, setPendingCompletionState] = React.useState<PendingCompletion | undefined>();
@@ -249,7 +252,9 @@ function App(): React.JSX.Element {
     if (isHarnessTarget(target)) {
       setSelectedHarness(target);
       setProjectError(undefined);
-      setGithubAutoRefreshRoute('projects');
+      // Without a saved account the query can only fail, so the chooser
+      // waits for the user to connect instead of showing that error.
+      setAutoRefresh({route: 'projects', github: projectConnectedRef.current});
       setRoute('projects');
       return;
     }
@@ -427,16 +432,16 @@ function App(): React.JSX.Element {
   }, []);
 
   React.useEffect(() => {
-    if (githubAutoRefreshRoute === undefined || route !== githubAutoRefreshRoute) return;
-    setGithubAutoRefreshRoute(undefined);
+    if (autoRefresh === undefined || route !== autoRefresh.route) return;
+    setAutoRefresh(undefined);
     if (route === 'projects') {
       void refreshManualWorkspaces().catch(() => undefined).finally(() => {
-        if (routeRef.current === 'projects') refreshGithubRepositories().catch(() => undefined);
+        if (autoRefresh.github && routeRef.current === 'projects') refreshGithubRepositories().catch(() => undefined);
       });
       return;
     }
     void refreshGithubRepositories().catch(() => undefined);
-  }, [githubAutoRefreshRoute, refreshGithubRepositories, refreshManualWorkspaces, route]);
+  }, [autoRefresh, refreshGithubRepositories, refreshManualWorkspaces, route]);
 
   const openGithubLogin = React.useCallback((returnTo: 'home' | 'projects') => {
     const marker = `HORUS_GITHUB_LOGIN_COMPLETE_${nextSessionRequestId('github-login')}`;
@@ -479,7 +484,7 @@ function App(): React.JSX.Element {
     if (pending.kind === 'github-login') {
       setPendingCompletion(undefined);
       if (pending.returnTo === 'projects') {
-        setGithubAutoRefreshRoute('projects');
+        setAutoRefresh({route: 'projects', github: true});
         setRoute('projects');
         return;
       }
