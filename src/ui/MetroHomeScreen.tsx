@@ -1,4 +1,5 @@
 import React from 'react';
+import {HARNESS_LOGO_SOURCES, type HarnessLogo} from '../terminal/harnessLogos';
 import {AppState, Image, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
 import {readDeviceSnapshot, type DeviceSnapshot} from '../device/deviceSnapshot';
@@ -40,13 +41,7 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-const harnessLogoSources = {
-  claude: require('../../assets/harness-logos/claude-code.png'),
-  codex: require('../../assets/harness-logos/openai-blossom.png'),
-  opencode: require('../../assets/harness-logos/opencode.png'),
-};
-
-type HarnessLogo = keyof typeof harnessLogoSources;
+const harnessLogoSources = HARNESS_LOGO_SOURCES;
 
 function StatTile({label, value, detail, divided}: {label: string; value: string; detail: string; divided: boolean}): React.JSX.Element {
   return (

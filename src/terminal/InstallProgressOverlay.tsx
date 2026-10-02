@@ -1,9 +1,8 @@
 import React from 'react';
 import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
-import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
-import {BrandMark} from './BrandMark';
+import {HarnessMark} from './harnessLogos';
 import {uiColors} from './palette';
 import {toolchainInstallLabel} from './toolchainLabels';
 
@@ -30,18 +29,34 @@ export function lastInstallStage(text: string): string | undefined {
 }
 
 type InstallProgressOverlayProps = Readonly<{
-  step: number;
+  /** Undefined for an app that is already installed and only starting. */
+  step?: number;
   toolchain: TerminalToolchainTarget;
-  onShowLog: () => void;
 }>;
 
-export function InstallProgressOverlay({step, toolchain, onShowLog}: InstallProgressOverlayProps): React.JSX.Element {
+/**
+ * Covers the terminal while an app installs (four steps) or starts (one
+ * line). The screen draws the SHOW LOG / SHOW PROGRESS toggle above it, so
+ * both labels sit in the same spot.
+ */
+export function InstallProgressOverlay({step, toolchain}: InstallProgressOverlayProps): React.JSX.Element {
   const label = toolchainInstallLabel(toolchain);
   const steps = ['Preparing workspace', 'Installing system packages', `Installing ${label}`, `Starting ${label}`];
+  if (step === undefined) {
+    return (
+      <View style={styles.overlay} testID="terminal-startup-progress">
+        <View style={styles.content}>
+          <HarnessMark size={56} toolchain={toolchain} />
+          <Text style={styles.title}>Starting {label}</Text>
+          <ActivityIndicator color={uiColors.accent} style={styles.spinner} />
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.overlay} testID="terminal-install-progress">
       <View style={styles.content}>
-        <BrandMark accessible={false} size={56} />
+        <HarnessMark size={56} toolchain={toolchain} />
         <Text style={styles.title}>Setting up {label}</Text>
         <Text style={styles.subtitle}>First launch only. This can take a few minutes on a slow connection.</Text>
         <View accessibilityLiveRegion="polite" style={styles.steps}>
@@ -59,9 +74,6 @@ export function InstallProgressOverlay({step, toolchain, onShowLog}: InstallProg
           })}
         </View>
       </View>
-      <Pressable accessibilityLabel="Show install log" accessibilityRole="button" onPress={onShowLog} style={styles.logButton} testID="terminal-install-show-log">
-        <Text style={styles.logButtonText}>SHOW LOG</Text>
-      </Pressable>
     </View>
   );
 }
@@ -81,6 +93,5 @@ const styles = StyleSheet.create({
   stepText: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 12},
   stepTextDone: {color: uiColors.muted},
   stepTextActive: {color: uiColors.ink, fontWeight: '800'},
-  logButton: {alignItems: 'center', alignSelf: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, bottom: 24, justifyContent: 'center', minHeight: 36, paddingHorizontal: 16, position: 'absolute'},
-  logButtonText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
+  spinner: {marginTop: 18},
 });

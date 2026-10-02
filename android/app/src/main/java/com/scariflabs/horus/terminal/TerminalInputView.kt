@@ -9,6 +9,8 @@ import android.graphics.Rect
 import android.os.Build
 import android.view.View
 import android.view.KeyEvent
+import com.facebook.react.uimanager.PointerEvents
+import com.facebook.react.uimanager.ReactPointerEventsView
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.content.Context
@@ -62,7 +64,7 @@ internal fun clearTerminalEditable(editable: Editable): Boolean {
  * Keyboard-only terminal input. Text is committed straight to the native PTY
  * writer so a busy React Native output path cannot delay individual keys.
  */
-class TerminalInputView(context: ThemedReactContext) : EditText(context) {
+class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactPointerEventsView {
   private var sessionId: String? = null
   private var terminalEnabled = false
   private var wantsAutoFocus = false
@@ -167,6 +169,13 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context) {
     super.onAttachedToWindow()
     requestAutoFocusIfReady()
   }
+
+  // The editor is invisible and only ever focused from code (a tap on the
+  // terminal calls focus()). React Native picks touch targets itself and
+  // ignores the JS pointerEvents prop on a custom native view, so declare it
+  // here; otherwise this strip near the bottom of the screen swallows taps
+  // meant for buttons drawn over it.
+  override val pointerEvents: PointerEvents = PointerEvents.NONE
 
   override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
     super.onFocusChanged(focused, direction, previouslyFocusedRect)

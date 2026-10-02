@@ -1,5 +1,5 @@
 import React from 'react';
-import {ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent, type NativeTouchEvent} from 'react-native';
+import {FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent, type NativeTouchEvent} from 'react-native';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {NativeTerminalCanvas, type NativeTerminalFrameMeta, type NativeTerminalLinkRange} from '../native/NativeTerminalCanvas';
 import nativeTerminalRuntime from '../native/NativeTerminalRuntime';
@@ -94,7 +94,8 @@ type Props = Readonly<{
   cellWidth: number;
   running: boolean;
   placeholder?: string;
-  startupOverlay?: string;
+  /** Native sessions only: whether the screen shows any visible text yet. */
+  onNativeContentChange?: (hasContent: boolean) => void;
   onCellWidth: (width: number) => void;
   onLayout: (event: LayoutChangeEvent) => void;
   onLinkPress: (url: string) => void;
@@ -296,7 +297,7 @@ const TerminalRowView = React.memo(({row, rowKey, columns, cellWidth, links, onL
 });
 
 /** Each glyph occupies the parser's columns, never Android's wrapped prose. */
-export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', startupOverlay, onCellWidth, onLayout, onLinkPress, onTap, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
+export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', onNativeContentChange, onCellWidth, onLayout, onLinkPress, onTap, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
   const list = React.useRef<FlatList<TerminalRow>>(null);
   const nativeScroll = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const rowKeyState = React.useRef<TerminalRowKeyState>({keys: new WeakMap(), next: 0});
@@ -306,6 +307,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const [displayFrame, setDisplayFrame] = React.useState(frame);
   const [nativeFrameMeta, setNativeFrameMeta] = React.useState<NativeTerminalFrameMeta>({alternate: false, contentRows: nativeRows, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
   const nativeFrameMetaRef = React.useRef(nativeFrameMeta);
+  const nativeHasContent = React.useRef(false);
   nativeFrameMetaRef.current = nativeFrameMeta;
   const touchStart = React.useRef<TerminalTouch | null>(null);
   const nativeScrollOffset = React.useRef(0);
@@ -451,12 +453,17 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (!Number.isInteger(cursorRow)) return;
     const lastContentRow = Number.isInteger(event.nativeEvent.lastContentRow) ? event.nativeEvent.lastContentRow : contentRows - 1;
     nativeCursorRow.current = cursorRow;
+    const hasContent = lastContentRow >= 0;
+    if (hasContent !== nativeHasContent.current) {
+      nativeHasContent.current = hasContent;
+      onNativeContentChange?.(hasContent);
+    }
     setNativeFrameMeta(current => current.alternate === nextAlternate && current.contentRows === contentRows &&
       current.lastContentRow === lastContentRow &&
       current.mouseTracking === mouseTracking && current.mouseSgr === mouseSgr
       ? current
       : {alternate: nextAlternate, contentRows, cursorRow, lastContentRow, mouseTracking, mouseSgr});
-  }, []);
+  }, [onNativeContentChange]);
 
   const handleTouchStart = React.useCallback((event: GestureResponderEvent) => {
     if (event.nativeEvent.touches.length > 1) {
@@ -626,7 +633,6 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
                 sessionId={nativeSessionId}
                 nativeRows={nativeRows}
                 nativeColumns={nativeColumns}
-                loadingText={nativeSession ? startupOverlay : undefined}
                 cellWidth={cellWidth}
                 cellHeight={TERMINAL_CELL_HEIGHT}
                 fontSize={TERMINAL_FONT_SIZE}
@@ -677,12 +683,6 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
             }}
           />
         )}
-        {startupOverlay === undefined || nativeSession ? null : (
-          <View pointerEvents="none" style={styles.startupOverlay} testID="terminal-startup-overlay">
-            <ActivityIndicator color={TERMINAL_FOREGROUND} size="small" />
-            <Text style={styles.startupOverlayText}>{startupOverlay}</Text>
-          </View>
-        )}
         </>
       )}
     </View>
@@ -696,8 +696,6 @@ const styles = StyleSheet.create({
   linkTarget: {position: 'absolute', top: 0, height: TERMINAL_CELL_HEIGHT, backgroundColor: 'transparent'},
   linkText: {textDecorationLine: 'underline'},
   connecting: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: TERMINAL_FONT_SIZE},
-  startupOverlay: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0},
-  startupOverlayText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: TERMINAL_FONT_SIZE, marginTop: 8},
   cursor: {position: 'absolute', top: 0, height: TERMINAL_CELL_HEIGHT, backgroundColor: TERMINAL_FOREGROUND, opacity: 0.45},
   bold: {fontWeight: 'bold'},
   italic: {fontStyle: 'italic'},

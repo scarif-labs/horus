@@ -320,6 +320,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
   const installStageRef = React.useRef<string | undefined>(undefined);
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
+  const [nativeHasContent, setNativeHasContent] = React.useState(false);
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
   const [error, setError] = React.useState<string | undefined>(undefined);
   const sessionLimitReached = error === 'session_limit_reached';
@@ -747,6 +748,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     installStageRef.current = undefined;
     setInstallStage(undefined);
     setInstallLogVisible(false);
+    setNativeHasContent(false);
     displayBufferRef.current?.dispose();
     displayBufferRef.current = undefined;
     setNativeSessionId(undefined);
@@ -1001,9 +1003,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // show the step-by-step screen instead of the apk transcript until the app
   // paints. A failed stage hands the screen back to the log and its error.
   const installFailed = installStage?.endsWith('_failed') === true;
-  const showInstallProgress = installStage !== undefined && !installFailed && !installLogVisible &&
+  const installActive = installStage !== undefined && !installFailed &&
     toolchain !== 'shell' && (state === 'starting' || state === 'running') &&
     (!readyMarkerSeenRef.current || startupOverlay !== undefined);
+  const showInstallProgress = installActive && !installLogVisible;
+  // An app that is already installed gets the short "Starting …" screen. A
+  // native session paints its own frame, so the cover lifts at first text.
+  const showStartup = !installActive && startupOverlay !== undefined && (nativeSessionId === undefined || !nativeHasContent);
 
   return (
     <>
@@ -1020,7 +1026,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
               cellWidth={cellWidth}
               running={running}
-              startupOverlay={startupOverlay !== undefined && !showInstallProgress ? startupOverlay : undefined}
+              onNativeContentChange={setNativeHasContent}
               onCellWidth={setCellWidth}
               onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
@@ -1032,15 +1038,23 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             />
             {showInstallProgress && installStage !== undefined ? (
               <InstallProgressOverlay
-                onShowLog={() => setInstallLogVisible(true)}
                 step={Math.max(installStepForStage(installStage, toolchain), readyMarkerSeenRef.current ? 3 : 0)}
                 toolchain={toolchain}
               />
-            ) : null}
-            {installLogVisible && installStage !== undefined && !installFailed && (state === 'starting' || state === 'running') && !readyMarkerSeenRef.current ? (
-              <Pressable accessibilityLabel="Show install progress" accessibilityRole="button" onPress={() => setInstallLogVisible(false)} style={styles.progressPill} testID="terminal-install-show-progress">
-                <Text style={styles.progressPillText}>SHOW PROGRESS</Text>
-              </Pressable>
+            ) : showStartup ? <InstallProgressOverlay toolchain={toolchain} /> : null}
+            {installActive ? (
+              // One toggle in one spot, drawn above both the progress screen
+              // and the log; elevation keeps it over the native canvas.
+              <View pointerEvents="box-none" style={styles.logToggleRow}>
+                <Pressable
+                  accessibilityLabel={installLogVisible ? 'Show install progress' : 'Show install log'}
+                  accessibilityRole="button"
+                  onPress={() => setInstallLogVisible(visible => !visible)}
+                  style={styles.logToggle}
+                  testID="terminal-install-log-toggle">
+                  <Text style={styles.logToggleText}>{installLogVisible ? 'SHOW PROGRESS' : 'SHOW LOG'}</Text>
+                </Pressable>
+              </View>
             ) : null}
             <SessionLimitOverlay
               client={client}
@@ -1134,8 +1148,9 @@ const styles = StyleSheet.create({
   menuArrowText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', includeFontPadding: false, lineHeight: 22, textAlign: 'center', width: 34},
   output: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, overflow: 'hidden'},
   error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
-  progressPill: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.accent, borderRadius: 16, borderWidth: 1, bottom: 12, justifyContent: 'center', minHeight: 32, paddingHorizontal: 14, position: 'absolute', right: 12, zIndex: 4},
-  progressPillText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
+  logToggleRow: {alignItems: 'center', bottom: 24, elevation: 8, left: 0, position: 'absolute', right: 0, zIndex: 8},
+  logToggle: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 36, paddingHorizontal: 16},
+  logToggleText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
   historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
   keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
   controls: {backgroundColor: TERMINAL_BACKGROUND, paddingVertical: 4},

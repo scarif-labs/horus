@@ -295,14 +295,14 @@ describe('TerminalScreen', () => {
       await flushAsync();
     });
     expect(renderer.root.findByType(TerminalGrid).props.frame.alternate).toBe(true);
-    expect(renderer.root.findByType(TerminalGrid).props.startupOverlay).toBe('Starting OpenCode…');
-    expect(renderer.root.findByProps({testID: 'terminal-startup-overlay'})).toBeDefined();
+    expect(renderer.root.findAllByProps({testID: 'terminal-startup-progress'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'harness-mark-opencode'}).length).toBeGreaterThan(0);
 
     await ReactTestRenderer.act(async () => {
       runtime.emit({type: 'output', sessionId: 's-1-1', seq: 4, base64: encodeTestBase64('OpenCode')});
       await flushAsync();
     });
-    expect(renderer.root.findByType(TerminalGrid).props.startupOverlay).toBeUndefined();
+    expect(renderer.root.findAllByProps({testID: 'terminal-startup-progress'})).toHaveLength(0);
     expect(rowText(renderer)).toContain('OpenCode');
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
@@ -397,10 +397,15 @@ describe('TerminalScreen', () => {
     expect(has('terminal-install-progress')).toBe(true);
     expect(stepIsActive(1)).toBe(true);
 
-    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-install-show-log'}).props.onPress(); });
+    // One toggle, in one spot, switches between progress and log both ways.
+    const toggle = () => renderer.root.findByProps({testID: 'terminal-install-log-toggle'});
+    expect(toggle().props.accessibilityLabel).toBe('Show install log');
+    await ReactTestRenderer.act(async () => { toggle().props.onPress(); });
     expect(has('terminal-install-progress')).toBe(false);
-    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-install-show-progress'}).props.onPress(); });
+    expect(toggle().props.accessibilityLabel).toBe('Show install progress');
+    await ReactTestRenderer.act(async () => { toggle().props.onPress(); });
     expect(has('terminal-install-progress')).toBe(true);
+    expect(has('harness-mark-codex')).toBe(true);
 
     await emitText(2, 'HORUS_INSTALL_STAGE=base_ready\nHORUS_INSTALL_STAGE=codex\n');
     expect(stepIsActive(2)).toBe(true);
