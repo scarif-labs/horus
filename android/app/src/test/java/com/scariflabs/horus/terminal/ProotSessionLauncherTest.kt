@@ -30,7 +30,7 @@ class ProotSessionLauncherTest {
         prootVersion = "5.4.0",
       )
 
-      val launch = ProotSessionLauncher(runtime, scratch, hostProc)
+      val launch = ProotSessionLauncher(runtime, scratch, hostProc, bootTimeSeconds = { 1_759_390_000L })
         .interactiveShellLaunchSpec(rootfs, home, workspace)
 
       assertTrue(launch.argv.windowed(2).any { it == listOf("-b", "${home.canonicalPath}:/root") })
@@ -49,7 +49,8 @@ class ProotSessionLauncherTest {
       val fallbackStat = statBind!![1].removeSuffix(":${ProotSessionLauncher.GUEST_PROC}/stat")
       assertTrue(File(fallbackStat).isFile)
       assertEquals(
-        "cpu 0 0 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0 0 0\n",
+        "cpu 0 0 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0 0 0\nintr 0\nctxt 0\nbtime 1759390000\n" +
+          "processes 0\nprocs_running 1\nprocs_blocked 0\nsoftirq 0 0 0 0 0 0 0 0 0 0 0\n",
         File(fallbackStat).readText(),
       )
       val loadavgBind = launch.argv.windowed(2).firstOrNull {
@@ -980,6 +981,12 @@ class ProotSessionLauncherTest {
 
       assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
       entry.writeText("#!/usr/bin/env node\n")
+      // BusyBox ps (a symlink) cannot report start times for Codex's server.
+      val ps = File(rootfs, "bin/ps")
+      Files.createSymbolicLink(ps.toPath(), File(rootfs, "bin/busybox").toPath())
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      ps.delete()
+      ps.writeText("procps")
       assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
     } finally {
       base.deleteRecursively()
@@ -1120,7 +1127,7 @@ class ProotSessionLauncherTest {
 
       launcher.interactiveShellLaunchSpec(rootfs, home)
       assertEquals(
-        "cpu 0 0 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0 0 0\n",
+        ProotSessionLauncher.procGlobalFiles(0L).first().second,
         fallback.readText(),
       )
 

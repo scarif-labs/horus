@@ -27,6 +27,8 @@ class ProotSessionLauncher(
   private val hostProcDir: File = File(HOST_PROC),
   private val hostDevDir: File = File(HOST_DEV),
   private val dnsServersProvider: () -> List<String> = { emptyList() },
+  /** Boot time in Unix seconds, for the `btime` line of the stand-in /proc/stat. */
+  private val bootTimeSeconds: () -> Long = { DEVICE_BOOT_TIME_SECONDS },
   /**
    * Internal diagnostic switch. When false (the default) PRoot runs with
    * PROOT_NO_SECCOMP=1; when true the variable is omitted so PRoot may use
@@ -372,7 +374,7 @@ class ProotSessionLauncher(
   private fun prepareProcCompatibilityBinds(): List<ProcCompatibilityBind> {
     require(hostProcDir.isDirectory) { "host proc directory is missing" }
     var compatibilityDir: File? = null
-    return PROC_GLOBAL_FILES.mapNotNull { (name, content) ->
+    return procGlobalFiles(bootTimeSeconds()).mapNotNull { (name, content) ->
       val hostFile = File(hostProcDir, name)
       if (isReadable(hostFile)) return@mapNotNull null
 
@@ -953,13 +955,24 @@ class ProotSessionLauncher(
     return rootfsNode && rootfsNpm && markerReady && when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ->
         hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/@openai/codex/bin/codex.js") &&
-          hasCodexPayload(guestHomeDir)
+          hasCodexPayload(guestHomeDir) &&
+          hasProcpsPs(rootfsDir)
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ->
         (hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode") ||
           hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode.exe")) &&
           hasOpenCodePayload(guestHomeDir)
       else -> false
     }
+  }
+
+  /**
+   * Codex reads process start times with `ps -p PID -o lstart=`. BusyBox's
+   * /bin/ps is a symlink and lacks both options; procps-ng replaces it with
+   * a real binary.
+   */
+  private fun hasProcpsPs(rootfsDir: File): Boolean {
+    val ps = File(rootfsDir, "bin/ps").toPath()
+    return Files.isRegularFile(ps, java.nio.file.LinkOption.NOFOLLOW_LINKS)
   }
 
   private fun hasAlpineBaseUtilities(rootfsDir: File): Boolean =
@@ -1202,6 +1215,15 @@ class ProotSessionLauncher(
             mark_provision_stage apk_failed
             exit 21
           fi
+        fi
+      fi
+      # Codex's background server reads process start times with
+      # `ps -p PID -o lstart=`, which BusyBox ps does not support.
+      if [ "${'$'}target" = codex ] && ! ps -p "${'$'}${'$'}" -o lstart= >/dev/null 2>&1; then
+        mark_provision_stage apk
+        if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress procps-ng; then
+          mark_provision_stage apk_failed
+          exit 21
         fi
       fi
       mark_provision_stage base_ready
@@ -1602,12 +1624,33 @@ EOF
      * make the applet parse and render live process rows, but do not claim
      * real global CPU, memory, or load metrics.
      */
-    private val PROC_GLOBAL_FILES = listOf(
+    /**
+     * Stand-ins for global /proc files Android hides from apps. /proc/stat
+     * carries every line /proc/stat parsers require, and a real `btime`:
+     * tools such as Codex turn a process's start time (in ticks since boot,
+     * from /proc/<pid>/stat) into a date with it, and fail without it.
+     */
+    internal fun procGlobalFiles(bootTimeSeconds: Long): List<Pair<String, String>> = listOf(
       "stat" to """
         cpu 0 0 0 0 0 0 0 0 0 0
         cpu0 0 0 0 0 0 0 0 0 0 0
+        intr 0
+        ctxt 0
+        btime $bootTimeSeconds
+        processes 0
+        procs_running 1
+        procs_blocked 0
+        softirq 0 0 0 0 0 0 0 0 0 0 0
       """.trimIndent() + "\n",
       "loadavg" to "0.00 0.00 0.00 0/0 0\n",
     )
+
+    /**
+     * Read once per process so every session sees the same value; computing
+     * it again could land on the neighbouring second.
+     */
+    private val DEVICE_BOOT_TIME_SECONDS: Long by lazy {
+      runCatching { (System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 1000L }.getOrDefault(0L)
+    }
   }
 }
