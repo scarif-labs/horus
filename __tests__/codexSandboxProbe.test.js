@@ -6,18 +6,19 @@ const path = require('node:path');
 const probe = path.resolve(__dirname, '../android/app/src/androidTest/assets/codex-sandbox-probe.sh');
 
 describe('Codex sandbox capability probe under PRoot', () => {
+  let fixtures;
   let directory;
 
-  beforeEach(() => {
-    directory = mkdtempSync(path.join(tmpdir(), 'horus-sandbox-test-'));
+  beforeAll(() => {
+    fixtures = mkdtempSync(path.join(tmpdir(), 'horus-sandbox-fixtures-'));
     // macOS has no coreutils timeout. Verify the guest deadline arguments,
     // then run the immediate fixture; spawnSync supplies the host deadline.
-    writeFileSync(path.join(directory, 'timeout'), `#!/bin/sh
+    writeFileSync(path.join(fixtures, 'timeout'), `#!/bin/sh
 test "$1" = -s && test "$2" = KILL && test "$3" = 20 || exit 98
 shift 3
 exec "$@"
 `, {mode: 0o700});
-    writeFileSync(path.join(directory, 'codex'), `#!/bin/sh
+    writeFileSync(path.join(fixtures, 'codex'), `#!/bin/sh
 test "$#" -eq 8 || exit 99
 test "$1" = -c && test "$2" = features.use_legacy_landlock=false || exit 99
 test "$3" = -c && test "$4" = 'sandbox_mode="read-only"' || exit 99
@@ -27,6 +28,20 @@ printf 'private fixture stdout\\n'
 printf 'private fixture stderr\\n' >&2
 exit "$PROBE_FIXTURE_EXIT"
 `, {mode: 0o700});
+    // macOS scans each newly written executable on its first exec, which
+    // takes hundreds of milliseconds and seconds on a loaded machine. Pay
+    // that once here, outside the per-case host deadline. The guard exits
+    // also prove both fixtures run.
+    expect(spawnSync(path.join(fixtures, 'timeout')).status).toBe(98);
+    expect(spawnSync(path.join(fixtures, 'codex')).status).toBe(99);
+  }, 60000);
+
+  afterAll(() => {
+    rmSync(fixtures, {recursive: true, force: true});
+  });
+
+  beforeEach(() => {
+    directory = mkdtempSync(path.join(tmpdir(), 'horus-sandbox-test-'));
   });
 
   afterEach(() => {
@@ -43,10 +58,10 @@ exit "$PROBE_FIXTURE_EXIT"
     [124, 'fail', 'sandbox_timeout_or_signal'],
   ])('records exit %i without claiming isolation', (exitCode, status, detail) => {
     const log = path.join(directory, 'private.log');
-    const result = spawnSync('/bin/sh', [probe, path.join(directory, 'codex'), log], {
+    const result = spawnSync('/bin/sh', [probe, path.join(fixtures, 'codex'), log], {
       encoding: 'utf8',
       timeout: 2000,
-      env: {PATH: directory, PROBE_FIXTURE_EXIT: String(exitCode)},
+      env: {PATH: fixtures, PROBE_FIXTURE_EXIT: String(exitCode)},
     });
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
