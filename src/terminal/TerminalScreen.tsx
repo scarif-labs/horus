@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   AppState,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   PermissionsAndroid,
@@ -42,6 +43,7 @@ import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {uiColors} from './palette';
 import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastInstallStage} from './InstallProgressOverlay';
 import {SessionLimitOverlay} from './SessionLimitOverlay';
+import {readTerminalPaste} from './terminalPaste';
 
 export type TerminalScreenProps = Readonly<{
   client?: TerminalSessionClient;
@@ -72,6 +74,7 @@ type TerminalRuntimeBridge = Pick<
 >;
 
 const TERMINAL_LAYOUT_SETTLE_MS = 120;
+const RETURN_ICON = require('./key-icons/return.png');
 
 // Shared across input and output. Output decoding does not use stream mode,
 // so the decoder keeps no state between chunks.
@@ -103,13 +106,6 @@ function applyTerminalModifiers(value: string, ctrl: boolean, alt: boolean): str
 function arrowSequence(direction: TerminalArrow, ctrl: boolean, alt: boolean): string {
   const modifier = (ctrl ? 4 : 0) + (alt ? 2 : 0);
   return modifier === 0 ? `\u001b[${direction}` : `\u001b[1;${modifier + 1}${direction}`;
-}
-
-function navigationSequence(parameter: string, final: string, ctrl: boolean, alt: boolean): string {
-  const modifier = (ctrl ? 4 : 0) + (alt ? 2 : 0);
-  return modifier === 0
-    ? `\u001b[${parameter}${final}`
-    : `\u001b[${parameter || 1};${modifier + 1}${final}`;
 }
 
 type TerminalToolbarButtonProps = Readonly<{
@@ -163,7 +159,8 @@ function TerminalReturnLowerButton({disabled, onPress}: TerminalReturnButtonProp
       style={styles.returnKeyLower}
       testID="terminal-key-return">
       <View pointerEvents="none" style={styles.returnKeyNotch} testID="terminal-key-return-notch" />
-      <Text style={styles.returnKeyGlyph}>↵</Text>
+      {/* An image, not ↵: the UI font draws that glyph below the baseline. */}
+      <Image source={RETURN_ICON} style={styles.returnKeyIcon} />
       <Text style={styles.returnKeyText}>RETURN</Text>
     </Pressable>
   );
@@ -235,7 +232,7 @@ type TerminalControlsProps = Readonly<{
   onArrow: (direction: TerminalArrow) => void;
   onEscape: () => void;
   onKeyboardToggle: () => void;
-  onNavigation: (parameter: string, final: string) => void;
+  onPaste: () => void;
   onReturn: () => void;
   onTerminalKey: (value: string) => void;
   onToggleAlt: () => void;
@@ -246,7 +243,7 @@ type TerminalControlsProps = Readonly<{
   transcriptPagerOpen: boolean;
 }>;
 
-const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onNavigation, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
+const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
   return (
     <View style={styles.controls}>
       <View style={styles.controlRows}>
@@ -257,7 +254,7 @@ const TerminalControls = React.memo(function TerminalControlsView({altActive, ct
             <TerminalToolbarButton accessibilityLabel="Dash" disabled={!running} label="―" onPress={() => onTerminalKey('-')} testID="terminal-key-dash" />
             <TerminalToolbarButton accessibilityLabel={keyboardVisible ? 'Hide keyboard' : 'Show keyboard'} disabled={!running} label={keyboardVisible ? 'HIDE' : 'SHOW'} onPress={onKeyboardToggle} testID="terminal-keyboard-toggle" />
             <TerminalToolbarButton accessibilityLabel="Arrow up" disabled={!running} label="↑" onPress={() => onArrow('A')} testID="terminal-key-arrow-up" />
-            <TerminalToolbarButton accessibilityLabel="End" disabled={!running} label="END" onPress={() => onNavigation('', 'F')} testID="terminal-key-end" />
+            <TerminalToolbarButton accessibilityLabel="Paste" disabled={!running} label="PASTE" onPress={onPaste} testID="terminal-key-paste" />
             {toolchain === 'codex' && running ? (
               <TerminalToolbarButton
                 accessibilityLabel={transcriptPagerOpen ? 'Close transcript history' : 'Open transcript history'}
@@ -905,9 +902,12 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     void write(arrowSequence(direction, ctrlActive, altActive));
   }, [altActive, ctrlActive, write]);
 
-  const sendNavigation = React.useCallback((parameter: string, final: string) => {
-    void write(navigationSequence(parameter, final, ctrlActive, altActive));
-  }, [altActive, ctrlActive, write]);
+  const pasteClipboard = React.useCallback(() => {
+    void (async () => {
+      const sequence = await readTerminalPaste(nativeSessionId, displayBufferRef.current?.bracketedPaste ?? false);
+      if (sequence !== undefined && mountedRef.current) await write(sequence);
+    })();
+  }, [nativeSessionId, write]);
 
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
     const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
@@ -1133,7 +1133,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             onArrow={sendArrow}
             onEscape={sendEscape}
             onKeyboardToggle={toggleTerminalKeyboard}
-            onNavigation={sendNavigation}
+            onPaste={pasteClipboard}
             onReturn={submitTerminalInput}
             onTerminalKey={sendTerminalKey}
             onToggleAlt={toggleAlt}
@@ -1173,8 +1173,8 @@ const styles = StyleSheet.create({
   returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},
   returnKeyLower: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderBottomColor: uiColors.border, borderBottomWidth: 1, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopColor: TERMINAL_BACKGROUND, borderTopWidth: 1, flexDirection: 'row', height: 42, justifyContent: 'center', position: 'relative', width: 96},
   returnKeyNotch: {backgroundColor: uiColors.border, height: 1, left: 0, position: 'absolute', top: 0, width: 24},
-  returnKeyGlyph: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 25, fontWeight: '800', lineHeight: 28},
-  returnKeyText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.3, marginLeft: 4},
+  returnKeyIcon: {height: 18, tintColor: uiColors.accent, width: 18},
+  returnKeyText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', includeFontPadding: false, letterSpacing: 0.3, marginLeft: 6},
 });
 
 export default TerminalScreen;

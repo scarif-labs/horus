@@ -344,6 +344,11 @@ export class TerminalCellBuffer {
     };
   }
 
+  /** Whether the app asked for bracketed paste (mode 2004). */
+  get bracketedPaste(): boolean {
+    return !this.disposed && this.terminal.modes.bracketedPasteMode;
+  }
+
   /** Reduce frame churn while the native viewport is being dragged. */
   setScrolling(scrolling: boolean): void {
     if (this.disposed || this.scrolling === scrolling) return;

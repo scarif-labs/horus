@@ -1181,6 +1181,31 @@ class TerminalRuntimeModule(
     promise.resolve(frame?.let { NativeTerminalLinks.urlAt(it.lines, rowIndex, column.toInt()) })
   }
 
+  /** The clipboard's text for the PASTE key, or null when it holds none. */
+  override fun readClipboardText(promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(null)
+      return
+    }
+    // Android only lets the focused app read the clipboard; ask from the
+    // main thread, where that focus is tracked.
+    android.os.Handler(android.os.Looper.getMainLooper()).post {
+      val text = runCatching {
+        val clipboard = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(appContext)?.toString()
+      }.getOrNull()
+      promise.resolve(text?.takeIf { it.isNotEmpty() && it.length <= MAX_PASTE_CHARS })
+    }
+  }
+
+  /** Whether the app in a native session asked for bracketed paste. */
+  override fun isBracketedPaste(sessionId: String, promise: Promise) {
+    promise.resolve(
+      !isInvalidated() && TerminalSessionContract.isValidSessionId(sessionId) &&
+        NativeTerminalEngineRegistry.isBracketedPaste(sessionId),
+    )
+  }
+
   // File-explorer reads run on one short-lived worker: the thread exits when
   // idle, and a small queue bounds work a burst of taps can enqueue.
   private val guestFileExecutor: ThreadPoolExecutor by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -1378,6 +1403,7 @@ class TerminalRuntimeModule(
     const val SESSION_EVENT_QUEUE_CAPACITY = 256
     const val NATIVE_READY_SCAN_CHARS = 64
     const val MAX_CLIPBOARD_BASE64_CHARS = 65_536
+    const val MAX_PASTE_CHARS = 262_144
     const val LOG_TAG = "HorusTerminal"
     const val GUEST_FILE_IDLE_SECONDS = 30L
     const val GUEST_FILE_QUEUE_CAPACITY = 8

@@ -84,6 +84,9 @@ internal object NativeTerminalEngineRegistry {
 
   fun get(sessionId: String): NativeTerminalEngine? = engines[sessionId]
 
+  /** Whether the app in [sessionId] asked for bracketed paste (mode 2004). */
+  fun isBracketedPaste(sessionId: String): Boolean = engines[sessionId]?.bracketedPaste == true
+
   /** True while a canvas is subscribed to the session's frames. */
   fun isRendered(sessionId: String): Boolean = engines[sessionId]?.hasListeners() == true
 
@@ -413,6 +416,9 @@ internal class NativeTerminalEngine(
   private var graphicsActive = false
   private var mouseTracking = false
   private var mouseSgr = false
+  // Read off the parser thread when the user pastes.
+  @Volatile var bracketedPaste = false
+    private set
   private var synchronizedOutput = false
   private var synchronizedOutputStartedAt = 0L
   private var currentForeground = DEFAULT_FOREGROUND
@@ -1150,6 +1156,7 @@ internal class NativeTerminalEngine(
           1048 -> if (enabled) saveCursor() else restoreCursor()
           1000, 1002, 1003 -> mouseTracking = enabled
           1006 -> mouseSgr = enabled
+          2004 -> bracketedPaste = enabled
           2026 -> {
             if (enabled && !synchronizedOutput) synchronizedOutputStartedAt = System.nanoTime()
             synchronizedOutput = enabled
@@ -1504,6 +1511,7 @@ internal class NativeTerminalEngine(
     insertMode = false
     mouseTracking = false
     mouseSgr = false
+    bracketedPaste = false
     synchronizedOutput = false
     normal.clearAll(DEFAULT_FOREGROUND, DEFAULT_BACKGROUND)
     alternate.clearAll(DEFAULT_FOREGROUND, DEFAULT_BACKGROUND)

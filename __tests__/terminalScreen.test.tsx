@@ -754,7 +754,8 @@ describe('TerminalScreen', () => {
     expect(renderer?.root.findByProps({testID: 'terminal-key-ctrl'})).toBeDefined();
     expect(renderer?.root.findAllByProps({testID: 'terminal-key-home'})).toHaveLength(0);
     expect(renderer?.root.findByProps({testID: 'terminal-keyboard-toggle'})).toBeDefined();
-    expect(renderer?.root.findByProps({testID: 'terminal-key-end'})).toBeDefined();
+    expect(renderer?.root.findAllByProps({testID: 'terminal-key-end'})).toHaveLength(0);
+    expect(renderer?.root.findByProps({testID: 'terminal-key-paste'})).toBeDefined();
     expect(renderer?.root.findByProps({testID: 'terminal-key-return'})).toBeDefined();
     expect(renderer?.root.findAllByProps({testID: 'terminal-key-page-up'})).toHaveLength(0);
     expect(renderer?.root.findAllByProps({testID: 'terminal-key-page-down'})).toHaveLength(0);

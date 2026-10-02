@@ -79,6 +79,22 @@ class NativeTerminalEngineTest {
   }
 
   @Test
+  fun tracksBracketedPasteMode() {
+    val engine = NativeTerminalEngine("s-native-paste", 2, 8) { _, _ -> }
+    try {
+      assertFalse(engine.bracketedPaste)
+      assertTrue(engine.enqueue(1L, "\u001b[?2004hA".toByteArray(StandardCharsets.UTF_8)))
+      awaitFrame(engine) { it.lines[0].text[0] == "A" }
+      assertTrue(engine.bracketedPaste)
+      assertTrue(engine.enqueue(2L, "\u001b[?2004lB".toByteArray(StandardCharsets.UTF_8)))
+      awaitFrame(engine) { it.lines[0].text[1] == "B" }
+      assertFalse(engine.bracketedPaste)
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
   fun treatsAFreshEngineStartingMidStreamAsAGap() {
     val gaps = java.util.concurrent.atomic.AtomicInteger(0)
     val engine = NativeTerminalEngine("s-native-gap-fresh", 2, 8, onOutputGap = { gaps.incrementAndGet() }) { _, _ -> }
