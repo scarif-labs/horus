@@ -450,7 +450,7 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
         <StepHeader detail="Your phone’s missing keys sit above the keyboard. Try them." step={step} title="Terminal keys" />
         <View accessibilityLiveRegion="polite" style={styles.keyInfo} testID="onboarding-key-card">
           <Text style={[styles.keyInfoLabel, info === undefined && styles.keyInfoPrompt]} testID="onboarding-key-label">{info?.label ?? 'TAP A KEY'}</Text>
-          <Text style={styles.keyInfoDetail} testID="onboarding-key-detail">{info?.detail ?? 'See what each one does.'}</Text>
+          <Text numberOfLines={2} style={styles.keyInfoDetail} testID="onboarding-key-detail">{info?.detail ?? 'See what each one does.'}</Text>
         </View>
         <View style={styles.keyRow}>
           <TerminalControls
@@ -523,10 +523,12 @@ const styles = StyleSheet.create({
   problemLabelGap: {marginTop: 24},
   problemDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 6},
   url: {backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 10, padding: 10},
-  keyInfo: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 104, paddingHorizontal: 16, paddingVertical: 14},
-  keyInfoLabel: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800'},
+  keyInfo: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, justifyContent: 'center', height: 116, paddingHorizontal: 16},
+  keyInfoLabel: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800', lineHeight: 30},
   keyInfoPrompt: {color: uiColors.subdued, fontSize: 13, letterSpacing: 0.8},
-  keyInfoDetail: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},
+  // Room for two lines whether a key's note takes one or two, so the box
+  // and the key row below never move.
+  keyInfoDetail: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, height: 34, lineHeight: 17, marginTop: 8, textAlign: 'center', textAlignVertical: 'center'},
   keyRow: {borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, marginTop: 14, overflow: 'hidden'},
   gestures: {marginTop: 16},
   gesture: {alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 28},
