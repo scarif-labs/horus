@@ -947,8 +947,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     // resize the PTY/native parser. A SIGWINCH here makes Codex/Claude redraw
     // their whole screen and causes the visible prompt to jump to the top.
     // A shell has no full-screen redraw to protect: resize it like a desktop
-    // terminal so the prompt stays above the keyboard.
-    if (nativeHarness && toolchain !== 'shell' && expandedRows !== undefined && size.columns === requested?.columns && size.rows < expandedRows) return;
+    // terminal so the prompt stays above the keyboard. Neither does a
+    // full-screen (alternate-screen) app like Codex: it redraws cleanly and
+    // fits its header and composer into the space above the keyboard.
+    if (nativeHarness && toolchain !== 'shell' && !nativeScreen.alternate && expandedRows !== undefined && size.columns === requested?.columns && size.rows < expandedRows) return;
     const nextSize = {rows: size.rows, columns: size.columns};
     requestedSizeRef.current = nextSize;
     if (nativeHarness) {
@@ -968,7 +970,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       const result = await client.resizeSession(nextRequestId('resize'), activeSession, nextSize.rows, nextSize.columns);
       if (result.kind === 'error') throw new Error('terminal_resize_failed');
     });
-  }, [client, nativeHarness, size.rows, size.columns, state, toolchain]);
+  }, [client, nativeHarness, nativeScreen.alternate, size.rows, size.columns, state, toolchain]);
 
   const startupOverlay = (state === 'starting' || state === 'running') && toolchain !== 'shell' &&
     (nativeOpenCode || (nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
