@@ -2,6 +2,9 @@ package com.scariflabs.horus
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -21,6 +24,19 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     LaunchSessionIntent.record(intent)
+    keepContentClearOfNavigationBar(findViewById(android.R.id.content))
+  }
+
+  // The app draws edge to edge, so the navigation bar would cover the bottom
+  // of every screen. JS pads the top for the status bar; pad the rest here.
+  // The keyboard is left to KeyboardAvoidingView, which measures against
+  // this padded frame.
+  private fun keepContentClearOfNavigationBar(content: View) {
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val bars = insets.getInsets(WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.displayCutout())
+      view.setPadding(bars.left, 0, bars.right, bars.bottom)
+      insets
+    }
   }
 
   // A session notification tapped while Horus is already running.
