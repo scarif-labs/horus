@@ -70,4 +70,12 @@ class DownloadSourcesTest {
       root.deleteRecursively()
     }
   }
+
+  @Test
+  fun `the apk mirror rewrite keeps its end anchor out of shell expansion`() {
+    // Inside the double-quoted sed program an unescaped "$@" would expand to
+    // the script's arguments and silently break the rewrite.
+    val script = ProotSessionLauncher.APK_MIRROR_SCRIPT
+    assertTrue(script, script.contains("/?\\$@\$HORUS_ALPINE_MIRROR/\\1/\\2@"))
+  }
 }

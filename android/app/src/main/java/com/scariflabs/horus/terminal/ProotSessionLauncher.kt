@@ -1108,9 +1108,9 @@ class ProotSessionLauncher(
     // Points apk at the chosen mirror. Each repository line keeps its branch
     // and name (v3.24/main); only the server in front of it changes. The
     // mirror URL is validated by DownloadSources and cannot contain '@'.
-    private val APK_MIRROR_SCRIPT = """
+    internal val APK_MIRROR_SCRIPT = """
       if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
-        sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
+        sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?\${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
       fi
     """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
