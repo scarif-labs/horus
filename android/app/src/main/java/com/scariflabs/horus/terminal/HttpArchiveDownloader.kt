@@ -12,7 +12,11 @@ import java.net.URL
  * before anything is promoted. Plain HttpURLConnection keeps the terminal
  * namespace free of third-party dependencies.
  */
-class HttpArchiveDownloader : DistroStoreCore.ArchiveDownloader {
+class HttpArchiveDownloader(
+  // Some mirrors (Tsinghua, Aliyun) answer 403 to Android's default
+  // "Dalvik/…" user agent, so name the client.
+  private val userAgent: String = DEFAULT_USER_AGENT,
+) : DistroStoreCore.ArchiveDownloader {
 
   @Throws(IOException::class)
   override fun download(url: String, expectedBytes: Long, destination: File, timeoutMs: Long): Long {
@@ -20,6 +24,7 @@ class HttpArchiveDownloader : DistroStoreCore.ArchiveDownloader {
     connection.connectTimeout = timeoutMs.toInt().coerceAtMost(30_000)
     connection.readTimeout = timeoutMs.toInt().coerceAtMost(60_000)
     connection.instanceFollowRedirects = true
+    connection.setRequestProperty("User-Agent", userAgent)
     return try {
       val status = connection.responseCode
       if (status !in 200..299) throw IOException("HTTP $status for ${URL(url).host}")
@@ -46,5 +51,9 @@ class HttpArchiveDownloader : DistroStoreCore.ArchiveDownloader {
     } finally {
       connection.disconnect()
     }
+  }
+
+  companion object {
+    const val DEFAULT_USER_AGENT = "Horus (Android)"
   }
 }
