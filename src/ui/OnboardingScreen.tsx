@@ -6,6 +6,7 @@ import {uiColors} from './brand';
 import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {UI_FONT_FAMILY} from './typography';
+import {WelcomeDemo} from './WelcomeDemo';
 import {useHardwareBack} from './useHardwareBack';
 import {
   DEFAULT_BACKGROUND_PERMISSION_ACTIONS,
@@ -141,28 +142,14 @@ function SecondaryButton({label, onPress, testID}: Readonly<{label: string; onPr
   );
 }
 
-const WELCOME_POINTS: readonly Readonly<{title: string; detail: string}>[] = [
-  {title: 'Coding agents in your pocket', detail: 'Claude Code, Codex and OpenCode. No computer needed.'},
-  {title: 'A real Linux terminal', detail: 'Alpine Linux with git and zsh.'},
-  {title: 'Your GitHub projects', detail: 'Clone and work on them anywhere.'},
-  {title: 'Runs in the background', detail: 'Get notified when an agent needs you.'},
-];
-
 function WelcomeStep({onContinue}: Readonly<{onContinue: () => void}>): React.JSX.Element {
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-welcome">
       <View style={styles.step}>
-        <Text style={styles.welcomeTitle}>Welcome to Horus</Text>
-        <View style={styles.points}>
-          {WELCOME_POINTS.map(point => (
-            <View key={point.title} style={styles.point}>
-              <View style={styles.pointMark} />
-              <View style={styles.pointBody}>
-                <Text style={styles.pointTitle}>{point.title}</Text>
-                <Text style={styles.pointDetail}>{point.detail}</Text>
-              </View>
-            </View>
-          ))}
+        <Text style={styles.welcomeTitle}>Coding agents in your pocket</Text>
+        <Text style={styles.welcomeDetail}>A real Linux terminal. No computer needed.</Text>
+        <View style={styles.demo}>
+          <WelcomeDemo />
         </View>
         <PrimaryButton label="GET STARTED  →" onPress={onContinue} testID="welcome-continue" />
       </View>
@@ -444,13 +431,12 @@ const styles = StyleSheet.create({
   dotCurrent: {width: 18},
   title: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
   detail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},
-  welcomeTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginBottom: 6, textAlign: 'center'},
-  points: {marginTop: 12},
+  welcomeTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
+  welcomeDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 8, textAlign: 'center'},
+  demo: {marginBottom: 8, marginTop: 24},
   point: {flexDirection: 'row', marginTop: 12},
   pointMark: {backgroundColor: uiColors.accent, borderRadius: 2, height: 4, marginRight: 12, marginTop: 7, width: 4},
   pointBody: {flex: 1},
-  pointTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '700'},
-  pointDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 2},
   field: {marginTop: 10},
   note: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 10},
   secondary: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', marginTop: 10, minHeight: 46},
