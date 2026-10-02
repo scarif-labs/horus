@@ -14,6 +14,7 @@ import {
 } from '../files/fileExplorer';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
+import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 
 function formatSize(bytes: number): string {
@@ -58,7 +59,7 @@ function pathLabel(root: GuestFileRoot, path: GuestFilePath): string {
 
 function FileRow({entry, onPress}: {entry: GuestFileEntry; onPress: () => void}): React.JSX.Element {
   const isOpenable = entry.kind === 'directory' || entry.kind === 'file';
-  const glyph = entry.kind === 'directory' ? '▰' : entry.kind === 'file' ? '·' : entry.kind === 'symlink' ? '↗' : '—';
+  const glyph = entry.kind === 'symlink' ? '↗' : '—';
   return (
     <Pressable
       accessibilityLabel={`${entry.kind}, ${entry.name}${entry.kind === 'file' ? `, ${formatSize(entry.sizeBytes)}` : ''}`}
@@ -68,7 +69,9 @@ function FileRow({entry, onPress}: {entry: GuestFileEntry; onPress: () => void})
       onPress={onPress}
       style={[styles.fileRow, !isOpenable && styles.fileRowDisabled]}
       testID={`file-entry-${entry.kind}`}>
-      <Text style={[styles.fileGlyph, entry.kind === 'directory' && styles.folderGlyph]}>{glyph}</Text>
+      {entry.kind === 'directory' ? <EntryIcon kind="folder" />
+        : entry.kind === 'file' ? <EntryIcon kind="file" />
+          : <Text style={styles.fileGlyph}>{glyph}</Text>}
       <View style={styles.fileCopy}>
         <Text numberOfLines={1} style={styles.fileName}>{entry.name}</Text>
         <Text style={styles.fileMeta}>{entry.kind === 'file' ? formatSize(entry.sizeBytes) : entry.kind.toUpperCase()}</Text>
@@ -351,7 +354,6 @@ const styles = StyleSheet.create({
   fileRow: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row', marginBottom: 7, minHeight: 58, paddingHorizontal: 12},
   fileRowDisabled: {opacity: 0.65},
   fileGlyph: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', textAlign: 'center', width: 27},
-  folderGlyph: {color: uiColors.accent},
   fileCopy: {flex: 1, minWidth: 0, paddingVertical: 8},
   fileName: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '700'},
   fileMeta: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 8, letterSpacing: 0.3, marginTop: 4},

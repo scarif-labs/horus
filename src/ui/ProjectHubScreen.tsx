@@ -4,6 +4,7 @@ import {UI_FONT_FAMILY} from './typography';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import type {ProjectSummary} from '../projects/projectTypes';
+import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 
 export type {ProjectSummary} from '../projects/projectTypes';
@@ -110,19 +111,24 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
 
         {tab === 'local' ? (
           manualProjects.length > 0 ? (
+            <>
+            <Text style={styles.listLabel} testID="project-local-label">FOLDERS IN /workspace/projects</Text>
             <View style={styles.list} testID="project-local-list">
               {manualProjects.map((project, index) => (
                 <ProjectRow
-                  accessibilityLabel={`Open ${project.name}`}
+                  accessibilityLabel={`Open folder ${project.name} in ${toolName}`}
+                  detail={project.path}
                   first={index === 0}
+                  glyph="local"
                   key={project.path}
                   name={project.name}
                   onPress={() => onOpenProject(project)}
-                  trailing="›"
+                  trailing="Open ›"
                   testID={`project-${project.name}`}
                 />
               ))}
             </View>
+            </>
           ) : (
             <View style={styles.empty} testID="project-manual-empty">
               <Text style={styles.emptyTitle} testID="project-manual-empty-title">No projects on this device yet</Text>
@@ -147,12 +153,15 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
             </View>
             {githubReady ? (
               githubProjects.length > 0 ? (
+                <>
+                <Text style={styles.listLabel}>ON GITHUB · CLONED BEFORE OPENING</Text>
                 <View style={styles.list} testID="project-github-list">
                   {githubProjects.map((project, index) => (
                     <ProjectRow
                       accessibilityLabel={`Clone ${project.name}`}
                       detail={project.path}
                       first={index === 0}
+                      glyph="remote"
                       key={project.remote ?? project.path}
                       name={project.name}
                       onPress={() => onOpenProject(project)}
@@ -161,6 +170,7 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
                     />
                   ))}
                 </View>
+                </>
               ) : githubRepositoriesLoaded || loadingRepos ? (
                 <View style={styles.empty} testID="project-github-empty">
                   <Text style={styles.emptyTitle} testID="project-github-empty-title">{loadingRepos ? 'Loading repositories…' : 'No repositories found'}</Text>
@@ -231,11 +241,13 @@ function SegmentButton({active, label, onPress, testID}: Omit<TabButtonProps, 'c
   );
 }
 
-type ProjectRowProps = Readonly<{accessibilityLabel: string; detail?: string; first: boolean; name: string; onPress: () => void; trailing: string; testID: string}>;
+type ProjectRowProps = Readonly<{accessibilityLabel: string; detail?: string; first: boolean; glyph: 'local' | 'remote'; name: string; onPress: () => void; trailing: string; testID: string}>;
 
-function ProjectRow({accessibilityLabel, detail, first, name, onPress, trailing, testID}: ProjectRowProps): React.JSX.Element {
+/** Filled folder for one on this device, outline for a repository not cloned yet. */
+function ProjectRow({accessibilityLabel, detail, first, glyph, name, onPress, trailing, testID}: ProjectRowProps): React.JSX.Element {
   return (
     <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" onPress={onPress} style={[styles.row, !first && styles.rowDivider]} testID={testID}>
+      <EntryIcon kind={glyph === 'local' ? 'folder' : 'folder-outline'} />
       <View style={styles.rowCopy}>
         <Text numberOfLines={1} style={styles.rowName}>{name}</Text>
         {detail === undefined ? null : <Text numberOfLines={1} style={styles.rowDetail}>{detail}</Text>}
@@ -255,9 +267,10 @@ const styles = StyleSheet.create({
   tabText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800'},
   tabTextActive: {color: uiColors.background},
   banner: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 14},
-  list: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, marginTop: 14, overflow: 'hidden'},
+  list: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, marginTop: 8, overflow: 'hidden'},
   row: {alignItems: 'center', flexDirection: 'row', minHeight: 56, paddingHorizontal: 14, paddingVertical: 10},
   rowDivider: {borderTopColor: uiColors.borderSoft, borderTopWidth: 1},
+  listLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, letterSpacing: 0.6, marginTop: 18},
   rowCopy: {flex: 1, minWidth: 0},
   rowName: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '800'},
   rowDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, marginTop: 4},
