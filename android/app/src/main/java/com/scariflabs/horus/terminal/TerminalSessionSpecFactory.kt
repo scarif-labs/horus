@@ -37,6 +37,7 @@ class TerminalSessionSpecFactory(
   private val packagedProotRuntime: ProotRuntimeLocator.Location by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
     locateProotRuntimeUncached()
   }
+  private val downloadSourceSettings = DownloadSourceSettings.forStorageRoot(context.filesDir)
   private val store = DistroStoreCore(
     paths = paths,
     downloader = HttpArchiveDownloader(),
@@ -90,6 +91,7 @@ class TerminalSessionSpecFactory(
         runtime = located.runtime,
         scratchDir = File(paths.sessions, ".proot-scratch"),
         dnsServersProvider = ::activeDnsServers,
+        downloadSources = downloadSourceSettings.read(),
       )
       val launch = if (toolchainTarget == null) {
         launcher.interactiveShellLaunchSpec(
@@ -163,6 +165,7 @@ class TerminalSessionSpecFactory(
         runtime = located.runtime,
         scratchDir = File(paths.sessions, ".proot-scratch"),
         dnsServersProvider = ::activeDnsServers,
+        downloadSources = downloadSourceSettings.read(),
       )
       if (launcher.hasProvisionedToolchain(rootfsDir, guestHomeDir, target)) {
         ProvisionBuildOutcome.Ready(target)
@@ -207,6 +210,7 @@ class TerminalSessionSpecFactory(
         runtime = located.runtime,
         scratchDir = File(paths.sessions, ".proot-scratch"),
         dnsServersProvider = ::activeDnsServers,
+        downloadSources = downloadSourceSettings.read(),
       )
       RemoteAccessBuildOutcome.Success(
         launcher.remoteAccessLaunchSpec(

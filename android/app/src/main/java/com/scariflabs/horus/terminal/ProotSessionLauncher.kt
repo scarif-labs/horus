@@ -35,6 +35,8 @@ class ProotSessionLauncher(
    * its seccomp-filter acceleration. Only the seccomp device probe sets it.
    */
   private val seccompAcceleration: Boolean = false,
+  /** Alpine mirror and npm registry for package installs inside the guest. */
+  private val downloadSources: DownloadSources = DownloadSources(),
 ) {
 
   data class LaunchSpec(
@@ -352,6 +354,7 @@ class ProotSessionLauncher(
       add("PATH=$guestPath")
       add("LANG=$GUEST_LANG")
       add("TZ=${GuestTimeZone.forGuest(rootfsDir)}")
+      addAll(downloadSources.guestEnvironment())
     }
     return LaunchSpec(
       argv = argv,
@@ -1102,6 +1105,14 @@ class ProotSessionLauncher(
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $OPENCODE_AGENT_INSTRUCTIONS_END
     """.trimIndent()
+    // Points apk at the chosen mirror. Each repository line keeps its branch
+    // and name (v3.24/main); only the server in front of it changes. The
+    // mirror URL is validated by DownloadSources and cannot contain '@'.
+    private val APK_MIRROR_SCRIPT = """
+      if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
+        sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
+      fi
+    """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
       export HOME=/root
@@ -1113,6 +1124,7 @@ class ProotSessionLauncher(
       esac
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
       mkdir -p /root/.local/bin /root/.cache/horus
+      $APK_MIRROR_SCRIPT
       provision_stage=/root/.cache/horus/provision-stage
       mark_provision_stage() {
         printf '%s\n' "${'$'}1" > "${'$'}provision_stage"
@@ -1414,6 +1426,7 @@ EOF
       if [ "${'$'}{HORUS_SKIP_TOOLCHAIN_PROVISION:-0}" != 1 ]; then
         $TOOLCHAIN_PROVISION_SCRIPT
       else
+        $APK_MIRROR_SCRIPT
         printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
       fi
       # The install log has done its job; start the app on a clean screen

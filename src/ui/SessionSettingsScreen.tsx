@@ -3,6 +3,7 @@ import {Linking, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BackgroundPermissionsPanel} from './BackgroundPermissions';
 import {BrandHeader, uiColors} from './brand';
+import {DownloadSourcesPanel} from './DownloadSourcesPanel';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
 import {SettingsAction, SettingsExternalMark, SettingsRow, SettingsSection} from './SettingsList';
@@ -139,6 +140,7 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
 
         <BackgroundPermissionsPanel />
         <RemoteAccessPanel />
+        <DownloadSourcesPanel />
 
         <SettingsSection title="HELP">
           <SettingsRow

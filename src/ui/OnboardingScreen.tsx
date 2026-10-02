@@ -1,11 +1,12 @@
 import React from 'react';
 import {ActivityIndicator, Linking, StyleSheet, Text, TextInput, View} from 'react-native';
-import {PINNED_ROOTFS_URL} from '../terminal/distroContract';
+import {ALPINE_MIRRORS, npmRegistryFor, rootfsUrl, type DownloadSources} from '../terminal/downloadSources';
 import {AuthScreenLayout, authStyles} from './AuthScreenLayout';
 import {uiColors} from './brand';
 import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {UI_FONT_FAMILY} from './typography';
+import {MirrorPicker} from './MirrorPicker';
 import {WelcomeDemo} from './WelcomeDemo';
 import {TerminalControls, type TerminalArrow} from '../terminal/TerminalControls';
 import {useHardwareBack} from './useHardwareBack';
@@ -27,6 +28,9 @@ export type OnboardingActions = Readonly<{
   importRootfs: () => Promise<RootfsSetupResult>;
   /** Installs the shell's tools (unless skipped) and saves the password. */
   saveProfile: (password: string, options: Readonly<{skipTools: boolean; onToolsReady: () => void}>) => Promise<ProfileSetupResult>;
+  readDownloadSources: () => Promise<DownloadSources>;
+  /** Resolves false when the sources could not be saved. */
+  saveDownloadSources: (sources: DownloadSources) => Promise<boolean>;
   /** Leaves onboarding for the home screen. */
   done: () => void;
 }>;
@@ -271,6 +275,7 @@ type SetupStepProps = Readonly<{
 /** Waits for Alpine, then installs the shell's tools and saves the password. */
 function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupStepProps): React.JSX.Element {
   const [profile, setProfile] = React.useState<ProfileState>({kind: 'idle'});
+  const [mirror, setMirror] = React.useState<string | undefined>();
   const runningRef = React.useRef(false);
   const mountedRef = React.useRef(true);
   React.useEffect(() => {
@@ -291,6 +296,19 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
         else setProfile({kind: 'failed', stage: result.stage});
       });
   }, [actions, onDone, password]);
+
+  React.useEffect(() => {
+    actions.readDownloadSources().then(sources => { if (mountedRef.current) setMirror(sources.alpineMirror); }).catch(() => undefined);
+  }, [actions]);
+
+  // A mirror chosen here also sets the matching npm registry, then retries.
+  const chooseMirror = React.useCallback((url: string | undefined) => {
+    actions.saveDownloadSources({alpineMirror: url, npmRegistry: npmRegistryFor(url)}).then(saved => {
+      if (!saved || !mountedRef.current) return;
+      setMirror(url);
+      onRootfs('download');
+    }).catch(() => undefined);
+  }, [actions, onRootfs]);
 
   // Start the download if it never began, and carry on once Alpine is in.
   React.useEffect(() => {
@@ -315,7 +333,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
           <SetupTask label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
           <SetupTask label="Saving your password" status={saveStatus} testID="setup-task-profile" />
         </View>
-        {rootfs.kind === 'failed' ? <RootfsFailure errorCode={rootfs.errorCode} onImport={() => onRootfs('import')} onRetry={() => onRootfs('download')} /> : null}
+        {rootfs.kind === 'failed' ? <RootfsFailure errorCode={rootfs.errorCode} mirror={mirror} onImport={() => onRootfs('import')} onMirror={chooseMirror} onRetry={() => onRootfs('download')} /> : null}
         {profile.kind === 'failed' && profile.stage === 'alpine-tools' ? (
           <View style={styles.problem} testID="setup-tools-failed">
             <Text style={styles.problemTitle}>Tools need the internet</Text>
@@ -352,23 +370,36 @@ function SetupTask({label, status, testID}: Readonly<{label: string; status: Tas
 }
 
 /** Offline or a bad file: retry, or pick an archive downloaded elsewhere. */
-function RootfsFailure({errorCode, onRetry, onImport}: Readonly<{errorCode: string; onRetry: () => void; onImport: () => void}>): React.JSX.Element {
+type RootfsFailureProps = Readonly<{
+  errorCode: string;
+  mirror: string | undefined;
+  onMirror: (url: string | undefined) => void;
+  onRetry: () => void;
+  onImport: () => void;
+}>;
+
+/** Offline, blocked or a bad file: try a mirror, retry, or pick an archive downloaded elsewhere. */
+function RootfsFailure({errorCode, mirror, onMirror, onRetry, onImport}: RootfsFailureProps): React.JSX.Element {
   const badFile = errorCode === 'import_failed' || errorCode === 'digest_mismatch';
   const offline = errorCode === 'download_failed' || errorCode === 'import_cancelled';
+  const url = rootfsUrl(mirror);
   return (
     <View style={styles.problem} testID="setup-linux-failed">
-      <Text style={styles.problemTitle}>{badFile ? 'Wrong file' : offline ? 'Can’t reach the internet' : 'Linux couldn’t be installed'}</Text>
+      <Text style={styles.problemTitle}>{badFile ? 'Wrong file' : offline ? 'Couldn’t download Linux' : 'Linux couldn’t be installed'}</Text>
       <Text style={styles.problemDetail}>
         {badFile
           ? 'Its checksum didn’t match. Download it again from the link below.'
           : offline
-            ? 'Connect and try again, or choose the Alpine file if you have it.'
+            ? 'Check your connection, or try a mirror closer to you.'
             : `Something went wrong (${errorCode}).`}
       </Text>
-      <Text selectable style={styles.url} testID="setup-rootfs-url">{PINNED_ROOTFS_URL}</Text>
+      <Text style={styles.problemLabel}>DOWNLOAD FROM</Text>
+      <MirrorPicker onSelect={onMirror} options={ALPINE_MIRRORS} placeholder="https://mirror.example/alpine" testID="setup-mirror" value={mirror} />
       <PrimaryButton label="TRY AGAIN" onPress={onRetry} testID="setup-linux-retry" />
-      <SecondaryButton label="CHOOSE FILE" onPress={onImport} testID="setup-linux-import" />
-      <SecondaryButton label="OPEN LINK IN BROWSER ↗" onPress={() => { void Linking.openURL(PINNED_ROOTFS_URL).catch(() => undefined); }} testID="setup-linux-open-url" />
+      <Text style={[styles.problemLabel, styles.problemLabelGap]}>OR USE THE FILE</Text>
+      <Text selectable style={styles.url} testID="setup-rootfs-url">{url}</Text>
+      <SecondaryButton label="OPEN LINK IN BROWSER ↗" onPress={() => { void Linking.openURL(url).catch(() => undefined); }} testID="setup-linux-open-url" />
+      <SecondaryButton label="CHOOSE DOWNLOADED FILE" onPress={onImport} testID="setup-linux-import" />
     </View>
   );
 }
@@ -488,6 +519,8 @@ const styles = StyleSheet.create({
   taskLabelFailed: {color: uiColors.danger},
   problem: {marginTop: 20},
   problemTitle: {color: uiColors.warning, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '800'},
+  problemLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, letterSpacing: 0.9, marginBottom: 4, marginTop: 16},
+  problemLabelGap: {marginTop: 24},
   problemDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 6},
   url: {backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 10, padding: 10},
   keyInfo: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 104, paddingHorizontal: 16, paddingVertical: 14},

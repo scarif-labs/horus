@@ -1,6 +1,7 @@
 import React from 'react';
 import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
+import type {DownloadSources} from '../src/terminal/downloadSources';
 import {OnboardingScreen, type OnboardingActions, type ProfileSetupResult, type RootfsSetupResult} from '../src/ui/OnboardingScreen';
 
 function fakePermissions(initial: {notifications: boolean; batteryUnrestricted: boolean}) {
@@ -24,6 +25,8 @@ function fakeActions(overrides: Partial<OnboardingActions> = {}) {
     installRootfs: jest.fn(async (): Promise<RootfsSetupResult> => ({kind: 'success'})),
     importRootfs: jest.fn(async (): Promise<RootfsSetupResult> => ({kind: 'success'})),
     saveProfile: jest.fn(async (_password: string, _options: {skipTools: boolean; onToolsReady: () => void}): Promise<ProfileSetupResult> => ({kind: 'success'})),
+    readDownloadSources: jest.fn(async (): Promise<DownloadSources> => ({})),
+    saveDownloadSources: jest.fn(async (_sources: DownloadSources) => true),
     done: jest.fn(),
     ...overrides,
   };
@@ -172,6 +175,16 @@ describe('OnboardingScreen', () => {
     expect(has('setup-task-linux-failed')).toBe(true);
     expect(has('setup-linux-import')).toBe(true);
     expect(actions.saveProfile).not.toHaveBeenCalled();
+
+    // Picking a mirror saves it with the matching npm registry and retries.
+    await press('setup-mirror-tuna');
+    expect(actions.saveDownloadSources).toHaveBeenCalledWith({
+      alpineMirror: 'https://mirrors.tuna.tsinghua.edu.cn/alpine',
+      npmRegistry: 'https://registry.npmmirror.com',
+    });
+    expect(actions.installRootfs).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({testID: 'setup-rootfs-url'}).props.children)
+      .toBe('https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.0-aarch64.tar.gz');
 
     // Cancelling the picker keeps the offline explanation up.
     await press('setup-linux-import');

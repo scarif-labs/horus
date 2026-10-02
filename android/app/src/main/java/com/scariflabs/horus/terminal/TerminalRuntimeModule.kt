@@ -90,6 +90,8 @@ class TerminalRuntimeModule(
   private val paths: DistroStorePaths
     get() = DistroStorePaths(File(appContext.filesDir, TerminalRuntimeContract.STORAGE_ROOT_DIR_NAME))
 
+  private val downloadSourceSettings by lazy { DownloadSourceSettings.forStorageRoot(appContext.filesDir) }
+
   private val sessionSettings by lazy {
     TerminalSessionSettings(
       File(
@@ -406,6 +408,43 @@ class TerminalRuntimeModule(
     promise.resolve(sessionSettingsSuccess(sessionSettings.readLimit()))
   }
 
+  override fun getDownloadSources(promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    promise.resolve(downloadSourcesSuccess(downloadSourceSettings.read()))
+  }
+
+  /** Empty or missing fields mean the default server. */
+  override fun setDownloadSources(request: ReadableMap, promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    var invalid = false
+    fun source(key: String): String? {
+      if (!request.hasKey(key) || request.getType(key) == ReadableType.Null) return null
+      if (request.getType(key) != ReadableType.String) {
+        invalid = true
+        return null
+      }
+      val raw = request.getString(key)?.trim().orEmpty()
+      if (raw.isEmpty()) return null
+      return DownloadSources.normalize(raw) ?: null.also { invalid = true }
+    }
+    val sources = DownloadSources(alpineMirror = source("alpineMirror"), npmRegistry = source("npmRegistry"))
+    if (invalid) {
+      promise.resolve(sessionSettingsError("invalid_request"))
+      return
+    }
+    if (!downloadSourceSettings.write(sources)) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    promise.resolve(downloadSourcesSuccess(sources))
+  }
+
   override fun setSessionLimit(request: ReadableMap, promise: Promise) {
     if (isInvalidated()) {
       promise.resolve(sessionSettingsError("internal_error"))
@@ -515,7 +554,7 @@ class TerminalRuntimeModule(
     installExecutor.execute {
       val response = try {
         val outcome = if (imported == null) {
-          store.install()
+          store.install(url = downloadSourceSettings.read().rootfsUrl)
         } else {
           store.install(source = ContentUriArchiveReader(appContext.contentResolver, imported))
         }
@@ -1089,6 +1128,12 @@ class TerminalRuntimeModule(
   private fun errorStatus(errorCode: String): WritableMap = Arguments.createMap().apply {
     putString("status", "error")
     putString("errorCode", errorCode)
+  }
+
+  private fun downloadSourcesSuccess(sources: DownloadSources): WritableMap = Arguments.createMap().apply {
+    putString("status", "success")
+    sources.alpineMirror?.let { putString("alpineMirror", it) }
+    sources.npmRegistry?.let { putString("npmRegistry", it) }
   }
 
   private fun sessionSettingsSuccess(limit: Int): WritableMap = Arguments.createMap().apply {

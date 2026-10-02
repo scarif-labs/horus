@@ -13,6 +13,7 @@ import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
 import {lockedOutMessage, readUserProfile, verifyUserPassword, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
+import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
 import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
 import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
@@ -202,6 +203,11 @@ function App(): React.JSX.Element {
       }
       return setup;
     },
+    readDownloadSources: async () => {
+      const result = await readDownloadSources();
+      return result.kind === 'success' ? result.sources : {};
+    },
+    saveDownloadSources: async sources => (await writeDownloadSources(sources)).kind === 'success',
     done: () => {
       setProfileError(undefined);
       setRoute('home');

@@ -128,6 +128,19 @@ export type SessionSettingsResponse = {
   errorCode?: TerminalRuntimeErrorCode;
 };
 
+export type DownloadSourcesResponse = {
+  status: 'success' | 'error';
+  /** Absent means the default server. */
+  alpineMirror?: string;
+  npmRegistry?: string;
+  errorCode?: TerminalRuntimeErrorCode;
+};
+
+export type SetDownloadSourcesRequest = {
+  alpineMirror?: string;
+  npmRegistry?: string;
+};
+
 export type SetSessionLimitRequest = {
   maxConcurrentSessions: number;
 };
@@ -496,6 +509,9 @@ export interface Spec extends TurboModule {
   getRuntimeStatus(): Promise<TerminalRuntimeStatusResponse>;
   getSessionSettings(): Promise<SessionSettingsResponse>;
   setSessionLimit(request: SetSessionLimitRequest): Promise<SessionSettingsResponse>;
+  /** The Alpine mirror and npm registry used for downloads. */
+  getDownloadSources(): Promise<DownloadSourcesResponse>;
+  setDownloadSources(request: SetDownloadSourcesRequest): Promise<DownloadSourcesResponse>;
   /** Returns the bounded, credential-free persisted native diagnostic tail. */
   getDebugLog(): Promise<TerminalDebugLogResponse>;
   installRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
