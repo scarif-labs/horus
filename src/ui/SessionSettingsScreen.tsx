@@ -5,6 +5,7 @@ import {BackgroundPermissionsPanel} from './BackgroundPermissions';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
+import {SettingsAction, SettingsRow, SettingsSection} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
 import {
@@ -80,8 +81,8 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
     <ScreenShell testID="session-settings-screen">
       <ScrollView contentContainerStyle={styles.content}>
         <BrandHeader
-          eyebrow="SETTINGS"
-          title="Runtime"
+          eyebrow="HORUS"
+          title="Settings"
           meta={null}
           action={(
             <Pressable
@@ -95,42 +96,45 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
           )}
         />
 
-        <View style={styles.panel}>
-          <Text style={styles.sectionLabel}>CONCURRENT APPS</Text>
-          <Text style={styles.title}>How many apps may run at once?</Text>
-          <Text style={styles.detail}>Each running terminal or AI app stays alive in its own notification while Horus is in the background.</Text>
-          <View style={styles.options}>
-            {Array.from({length: TERMINAL_SESSION_LIMIT_MAX - TERMINAL_SESSION_LIMIT_MIN + 1}, (_, index) => index + TERMINAL_SESSION_LIMIT_MIN).map(limit => {
-              const selected = settings?.maxConcurrentSessions === limit;
-              return (
-                <Pressable
-                  key={limit}
-                  accessibilityLabel={limitLabel(limit)}
-                  accessibilityRole="button"
-                  accessibilityState={{disabled: loading || saving, selected}}
-                  disabled={loading || saving}
-                  onPress={() => { void chooseLimit(limit); }}
-                  style={[styles.option, selected && styles.optionSelected, (loading || saving) && styles.optionDisabled]}
-                  testID={`settings-session-limit-${limit}`}>
-                  <Text style={[styles.optionValue, selected && styles.optionValueSelected]}>{limit}</Text>
-                  <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{limit === 1 ? 'APP' : 'APPS'}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={styles.currentValue} testID="settings-session-limit-current">
-            {loading ? 'Loading…' : settings === undefined ? 'Unavailable' : `Current limit: ${limitLabel(settings.maxConcurrentSessions)}`}
-          </Text>
-          {error === undefined ? null : <Text style={styles.error} testID="settings-error">{error}</Text>}
-          {error === undefined || loading ? null : (
-            <Pressable accessibilityRole="button" onPress={() => { void refresh(); }} style={styles.retry} testID="settings-retry">
-              <Text style={styles.retryText}>RETRY</Text>
-            </Pressable>
+        <SettingsSection
+          footer={error === undefined ? (
+            <Text style={styles.footer} testID="settings-session-limit-current">
+              {loading ? 'Loading…' : settings === undefined ? 'Unavailable' : `Up to ${limitLabel(settings.maxConcurrentSessions)} at once. Each keeps its own notification while Horus is in the background.`}
+            </Text>
+          ) : (
+            <View style={styles.errorRow}>
+              <Text style={styles.error} testID="settings-error">{error}</Text>
+              {loading ? null : <SettingsAction label="RETRY" onPress={() => { void refresh(); }} testID="settings-retry" tone="danger" />}
+            </View>
           )}
-        </View>
+          title="SESSIONS">
+          <SettingsRow
+            icon="layers"
+            label="Apps at once"
+            right={(
+              <View style={styles.options}>
+                {Array.from({length: TERMINAL_SESSION_LIMIT_MAX - TERMINAL_SESSION_LIMIT_MIN + 1}, (_, index) => index + TERMINAL_SESSION_LIMIT_MIN).map(limit => {
+                  const selected = settings?.maxConcurrentSessions === limit;
+                  return (
+                    <Pressable
+                      key={limit}
+                      accessibilityLabel={limitLabel(limit)}
+                      accessibilityRole="button"
+                      accessibilityState={{disabled: loading || saving, selected}}
+                      disabled={loading || saving}
+                      onPress={() => { void chooseLimit(limit); }}
+                      style={[styles.option, selected && styles.optionSelected, (loading || saving) && styles.optionDisabled]}
+                      testID={`settings-session-limit-${limit}`}>
+                      <Text style={[styles.optionValue, selected && styles.optionValueSelected]}>{limit}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          />
+        </SettingsSection>
 
         <BackgroundPermissionsPanel />
-
         <RemoteAccessPanel />
       </ScrollView>
     </ScreenShell>
@@ -138,23 +142,16 @@ export function SessionSettingsScreen({onBack, readSettings = readSessionSetting
 }
 
 const styles = StyleSheet.create({
-  content: {paddingHorizontal: 18, paddingBottom: 24},
-  panel: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, padding: 15},
-  sectionLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.8},
-  title: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 17, fontWeight: '800', marginTop: 12},
-  detail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 17, marginTop: 8},
-  options: {flexDirection: 'row', gap: 8, marginTop: 18},
-  option: {alignItems: 'center', backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, flex: 1, minHeight: 76, justifyContent: 'center'},
-  optionSelected: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
+  content: {paddingHorizontal: 18, paddingBottom: 28},
+  options: {backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, flexDirection: 'row', gap: 2, marginLeft: 10, padding: 2},
+  option: {alignItems: 'center', borderRadius: 6, height: 30, justifyContent: 'center', width: 32},
+  optionSelected: {backgroundColor: uiColors.accent},
   optionDisabled: {opacity: 0.55},
-  optionValue: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800'},
+  optionValue: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '800'},
   optionValueSelected: {color: uiColors.background},
-  optionLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 8, letterSpacing: 0.5, marginTop: 4},
-  optionLabelSelected: {color: uiColors.background},
-  currentValue: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 15},
-  error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 15},
-  retry: {alignItems: 'center', borderColor: uiColors.danger, borderRadius: 7, borderWidth: 1, marginTop: 12, minHeight: 36, justifyContent: 'center'},
-  retryText: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.5},
+  footer: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 14, marginHorizontal: 4, marginTop: 8},
+  errorRow: {alignItems: 'center', flexDirection: 'row', marginHorizontal: 4, marginTop: 8},
+  error: {color: uiColors.danger, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 14},
   backButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 7, borderWidth: 1, justifyContent: 'center', minHeight: 32, minWidth: 58, paddingHorizontal: 8},
   backText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800'},
 });

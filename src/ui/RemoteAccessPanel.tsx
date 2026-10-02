@@ -1,7 +1,7 @@
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import {StyleSheet, Text} from 'react-native';
 import {uiColors} from './brand';
-import {InteractivePressable as Pressable} from './InteractivePressable';
+import {SettingsAction, SettingsRow, SettingsSection, SettingsSwitch} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {
   readRemoteAccess,
@@ -66,71 +66,49 @@ export function RemoteAccessPanel({
   }, [apply, busy]);
 
   const enabled = snapshot?.enabled === true;
+  const computers = snapshot?.computers ?? [];
   return (
-    <View style={styles.panel} testID="remote-access-panel">
-      <Text style={styles.sectionLabel}>REMOTE ACCESS</Text>
-      <Text style={styles.title}>Use this phone from a computer</Text>
-      <Text style={styles.detail}>
-        Optional. Connect the phone over USB and run `horus pair` on your computer to get a shell here over SSH.
-        Only computers you pair with your Horus password can log in, and nothing listens on Wi-Fi.
-      </Text>
-      <Pressable
-        accessibilityLabel={enabled ? 'Turn off remote access' : 'Turn on remote access'}
-        accessibilityRole="switch"
-        accessibilityState={{checked: enabled, disabled: snapshot === undefined || busy}}
-        disabled={snapshot === undefined || busy}
-        onPress={() => { void run(() => setEnabled(!enabled)); }}
-        style={[styles.toggle, enabled && styles.toggleOn, (snapshot === undefined || busy) && styles.disabled]}
-        testID="remote-access-toggle">
-        <Text style={[styles.toggleText, enabled && styles.toggleTextOn]}>{enabled ? 'ON' : 'OFF'}</Text>
-      </Pressable>
-      <Text style={styles.status} testID="remote-access-status">
-        {snapshot === undefined ? (error ? 'Unavailable' : 'Loading…') : remoteAccessStatusLabel(snapshot)}
-      </Text>
-      {snapshot === undefined || snapshot.computers.length === 0 ? null : (
-        <View style={styles.computers}>
-          <Text style={styles.sectionLabel}>PAIRED COMPUTERS</Text>
-          {snapshot.computers.map(computer => (
-            <View key={computer.fingerprint} style={styles.computer} testID="remote-access-computer">
-              <View style={styles.computerText}>
-                <Text numberOfLines={1} style={styles.computerLabel}>{computer.label === '' ? 'Unnamed key' : computer.label}</Text>
-                <Text numberOfLines={1} style={styles.fingerprint}>{computer.fingerprint}</Text>
-              </View>
-              <Pressable
-                accessibilityLabel={`Revoke ${computer.label}`}
-                accessibilityRole="button"
-                disabled={busy}
-                onPress={() => { void run(() => revoke(computer.fingerprint)); }}
-                style={[styles.revoke, busy && styles.disabled]}
-                testID="remote-access-revoke">
-                <Text style={styles.revokeText}>REVOKE</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      )}
-      {error && snapshot !== undefined ? <Text style={styles.error}>Could not update remote access. Try again.</Text> : null}
-    </View>
+    <SettingsSection
+      footer={error && snapshot !== undefined ? 'Could not update remote access. Try again.' : 'Optional. Run `horus pair` on a computer connected over USB to get a shell here over SSH. Only computers paired with your Horus password can log in, and nothing listens on Wi-Fi.'}
+      footerTone={error && snapshot !== undefined ? 'danger' : 'muted'}
+      testID="remote-access-panel"
+      title="REMOTE ACCESS">
+      <SettingsRow
+        below={<Text style={styles.status} testID="remote-access-status">{snapshot === undefined ? (error ? 'Unavailable' : 'Loading…') : remoteAccessStatusLabel(snapshot)}</Text>}
+        icon="laptop"
+        label="Use from a computer"
+        right={(
+          <SettingsSwitch
+            accessibilityLabel={enabled ? 'Turn off remote access' : 'Turn on remote access'}
+            disabled={snapshot === undefined || busy}
+            onPress={() => { void run(() => setEnabled(!enabled)); }}
+            testID="remote-access-toggle"
+            value={enabled}
+          />
+        )}
+      />
+      {computers.map(computer => (
+        <SettingsRow
+          detail={computer.fingerprint}
+          key={computer.fingerprint}
+          label={computer.label === '' ? 'Unnamed key' : computer.label}
+          right={(
+            <SettingsAction
+              accessibilityLabel={`Revoke ${computer.label}`}
+              disabled={busy}
+              label="REVOKE"
+              onPress={() => { void run(() => revoke(computer.fingerprint)); }}
+              testID="remote-access-revoke"
+              tone="danger"
+            />
+          )}
+          testID="remote-access-computer"
+        />
+      ))}
+    </SettingsSection>
   );
 }
 
 const styles = StyleSheet.create({
-  panel: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 15},
-  sectionLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.8},
-  title: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 17, fontWeight: '800', marginTop: 12},
-  detail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 17, marginTop: 8},
-  toggle: {alignItems: 'center', backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, justifyContent: 'center', marginTop: 16, minHeight: 48},
-  toggleOn: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
-  toggleText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '800', letterSpacing: 0.8},
-  toggleTextOn: {color: uiColors.background},
-  disabled: {opacity: 0.55},
-  status: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 12},
-  computers: {marginTop: 16},
-  computer: {alignItems: 'center', borderColor: uiColors.border, borderTopWidth: 1, flexDirection: 'row', gap: 10, marginTop: 10, paddingTop: 10},
-  computerText: {flex: 1},
-  computerLabel: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '700'},
-  fingerprint: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, marginTop: 3},
-  revoke: {alignItems: 'center', borderColor: uiColors.danger, borderRadius: 7, borderWidth: 1, justifyContent: 'center', minHeight: 32, paddingHorizontal: 10},
-  revokeText: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.5},
-  error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 12},
+  status: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 13, marginLeft: 32, marginTop: 4},
 });
