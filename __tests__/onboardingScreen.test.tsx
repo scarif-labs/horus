@@ -76,6 +76,16 @@ describe('OnboardingScreen', () => {
     expect(has('onboarding-key-card')).toBe(true);
     const keyLabels = renderer.root.findAllByType(Text).map(node => node.props.children);
     for (const key of ['ESC', 'CTRL', 'ALT', 'TAB', 'PASTE', '↑']) expect(keyLabels).toContain(key);
+    // The key row is the terminal's own; tapping a key explains it.
+    expect(renderer.root.findByProps({testID: 'onboarding-key-label'}).props.children).toBe('TAP A KEY');
+    await press('terminal-key-esc');
+    expect(renderer.root.findByProps({testID: 'onboarding-key-label'}).props.children).toBe('ESC');
+    const ctrlSelected = () => renderer.root.findAllByProps({testID: 'terminal-key-ctrl'}).some(node => node.props.accessibilityState?.selected === true);
+    await press('terminal-key-ctrl');
+    expect(ctrlSelected()).toBe(true);
+    await press('terminal-key-arrow-up');
+    expect(renderer.root.findByProps({testID: 'onboarding-key-label'}).props.children).toBe('↑');
+    expect(ctrlSelected()).toBe(false);
 
     await press('onboarding-done');
     expect(actions.done).toHaveBeenCalledTimes(1);

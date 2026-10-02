@@ -7,6 +7,7 @@ import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {UI_FONT_FAMILY} from './typography';
 import {WelcomeDemo} from './WelcomeDemo';
+import {TerminalControls, type TerminalArrow} from '../terminal/TerminalControls';
 import {useHardwareBack} from './useHardwareBack';
 import {
   DEFAULT_BACKGROUND_PERMISSION_ACTIONS,
@@ -144,14 +145,13 @@ function SecondaryButton({label, onPress, testID}: Readonly<{label: string; onPr
 
 function WelcomeStep({onContinue}: Readonly<{onContinue: () => void}>): React.JSX.Element {
   return (
-    <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-welcome">
+    <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="GET STARTED  →" onPress={onContinue} testID="welcome-continue" />} pinned screenTestID="onboarding-welcome">
       <View style={styles.step}>
         <Text style={styles.welcomeTitle}>Coding agents in your pocket</Text>
         <Text style={styles.welcomeDetail}>A real Linux terminal. No computer needed.</Text>
         <View style={styles.demo}>
           <WelcomeDemo />
         </View>
-        <PrimaryButton label="GET STARTED  →" onPress={onContinue} testID="welcome-continue" />
       </View>
     </AuthScreenLayout>
   );
@@ -177,7 +177,7 @@ function PasswordStep({step, onContinue}: Readonly<{step: number; onContinue: (p
   };
 
   return (
-    <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-password">
+    <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="CONTINUE  →" onPress={submit} testID="profile-continue" />} pinned screenTestID="onboarding-password">
       <View style={styles.step}>
         <StepHeader
           detail="Agents can use your code and accounts. This keeps them safe if someone picks up your phone."
@@ -187,7 +187,6 @@ function PasswordStep({step, onContinue}: Readonly<{step: number; onContinue: (p
         <TextInput accessibilityLabel="Repeat password" autoCapitalize="none" autoCorrect={false} onChangeText={setConfirmation} onSubmitEditing={submit} placeholder="Repeat password" placeholderTextColor={uiColors.subdued} ref={confirmRef} returnKeyType="done" secureTextEntry style={[authStyles.input, styles.field]} testID="profile-password-confirm" value={confirmation} />
         <Text style={styles.note}>Stored only on this phone. It can’t be recovered.</Text>
         {error === undefined ? null : <Text style={authStyles.error} testID="profile-error">{error}</Text>}
-        <PrimaryButton label="CONTINUE  →" onPress={submit} testID="profile-continue" />
       </View>
     </AuthScreenLayout>
   );
@@ -208,20 +207,24 @@ function PermissionsStep({step, permissions, onContinue}: PermissionsStepProps):
   const primary = state.allGranted
     ? onContinue
     : !notificationsAllowed ? state.requestNotifications : state.requestBattery;
+  const footer = (
+    <>
+      <PrimaryButton label={state.allGranted ? 'CONTINUE  →' : 'ALLOW'} onPress={primary} testID="permissions-continue" />
+      {state.allGranted ? null : (
+        <Pressable accessibilityRole="button" onPress={onContinue} style={styles.skip} testID="permissions-skip">
+          <Text style={styles.skipText}>Not now</Text>
+        </Pressable>
+      )}
+    </>
+  );
   return (
-    <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-permissions">
+    <AuthScreenLayout brandTestID="setup" footer={footer} pinned screenTestID="onboarding-permissions">
       <View style={styles.step}>
         <StepHeader detail="So agents keep running with the screen off." step={step} title="Keep your agents running" />
         <View style={styles.checklist}>
           <PermissionCheck allowed={notificationsAllowed} detail="When an agent finishes or needs you." icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
           <PermissionCheck allowed={batteryAllowed} detail="So Android doesn’t pause agents." icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
         </View>
-        <PrimaryButton label={state.allGranted ? 'CONTINUE  →' : 'ALLOW'} onPress={primary} testID="permissions-continue" />
-        {state.allGranted ? null : (
-          <Pressable accessibilityRole="button" onPress={onContinue} style={styles.skip} testID="permissions-skip">
-            <Text style={styles.skipText}>Not now</Text>
-          </Pressable>
-        )}
       </View>
     </AuthScreenLayout>
   );
@@ -304,7 +307,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
   const linuxLabel = rootfs.kind === 'working' && rootfs.source === 'import' ? 'Installing Linux from your file' : 'Downloading Linux';
 
   return (
-    <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-setup">
+    <AuthScreenLayout brandTestID="setup" pinned screenTestID="onboarding-setup">
       <View style={styles.step}>
         <StepHeader detail="This can take a few minutes." step={step} title="Installing Linux" />
         <View accessibilityLiveRegion="polite" style={styles.tasks}>
@@ -370,53 +373,80 @@ function RootfsFailure({errorCode, onRetry, onImport}: Readonly<{errorCode: stri
   );
 }
 
-type KeyTip = Readonly<{keys: readonly string[]; detail: string}>;
+type KeyInfo = Readonly<{label: string; detail: string}>;
 
-const KEY_TIPS: readonly KeyTip[] = [
-  {keys: ['ESC'], detail: 'Interrupt an agent or close a menu'},
-  {keys: ['↑', '↓', '←', '→'], detail: 'Move through menus and history'},
-  {keys: ['CTRL', 'ALT'], detail: 'Tap, then a key. CTRL C stops a command'},
-  {keys: ['TAB'], detail: 'Complete names'},
-  {keys: ['PASTE'], detail: 'Paste from the clipboard'},
-  {keys: ['SHOW'], detail: 'Show or hide the keyboard'},
-  {keys: ['RETURN'], detail: 'Send'},
+const KEY_INFO = {
+  esc: {label: 'ESC', detail: 'Interrupts an agent or closes a menu.'},
+  slash: {label: '/', detail: 'Starts a slash command, like /help.'},
+  dash: {label: '―', detail: 'A dash, for command options.'},
+  keyboard: {label: 'SHOW', detail: 'Shows or hides the keyboard.'},
+  up: {label: '↑', detail: 'Moves up a menu, or back through earlier commands.'},
+  down: {label: '↓', detail: 'Moves down a menu.'},
+  left: {label: '←', detail: 'Moves the cursor left.'},
+  right: {label: '→', detail: 'Moves the cursor right.'},
+  paste: {label: 'PASTE', detail: 'Pastes from the clipboard, like a sign-in code.'},
+  tab: {label: 'TAB', detail: 'Completes file and command names.'},
+  ctrl: {label: 'CTRL', detail: 'Applies to the next key. CTRL then C stops a command.'},
+  alt: {label: 'ALT', detail: 'Applies to the next key, for shortcuts.'},
+  return: {label: 'RETURN', detail: 'Sends what you typed.'},
+} satisfies Record<string, KeyInfo>;
+
+const ARROW_INFO: Readonly<Record<TerminalArrow, KeyInfo>> = {A: KEY_INFO.up, B: KEY_INFO.down, C: KEY_INFO.right, D: KEY_INFO.left};
+const TERMINAL_KEY_INFO: Readonly<Record<string, KeyInfo>> = {'/': KEY_INFO.slash, '-': KEY_INFO.dash, '\t': KEY_INFO.tab};
+
+const GESTURES: readonly Readonly<{glyph: string; label: string}>[] = [
+  {glyph: '↕', label: 'Swipe the terminal to scroll'},
+  {glyph: '↗', label: 'Tap a link to open it'},
+  {glyph: '←', label: 'Back keeps the agent running'},
 ];
 
-const GESTURE_TIPS: readonly string[] = [
-  'Swipe to scroll',
-  'Tap a link to open it',
-  'Back keeps the agent running',
-];
-
-/** A cheat sheet for the terminal's key row, shown once before home. */
+/** The terminal's real key row, to try out: each tap explains that key. */
 function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>): React.JSX.Element {
+  const [info, setInfo] = React.useState<KeyInfo | undefined>();
+  const [ctrl, setCtrl] = React.useState(false);
+  const [alt, setAlt] = React.useState(false);
+  const [keyboard, setKeyboard] = React.useState(false);
+  const show = React.useCallback((next: KeyInfo) => {
+    setCtrl(false);
+    setAlt(false);
+    setInfo(next);
+  }, []);
+  const noop = React.useCallback(() => undefined, []);
+
   return (
-    <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-keys">
+    <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="START USING HORUS  →" onPress={onDone} testID="onboarding-done" />} pinned screenTestID="onboarding-keys">
       <View style={styles.step}>
-        <StepHeader detail="The keys your phone is missing sit above the keyboard." step={step} title="Using the terminal" />
-        <View style={authStyles.card} testID="onboarding-key-card">
-          {KEY_TIPS.map(tip => (
-            <View key={tip.keys.join()} style={styles.keyTip}>
-              <View style={styles.keyCaps}>
-                {tip.keys.map(key => (
-                  <View key={key} style={styles.keyCap}>
-                    <Text style={styles.keyCapText}>{key}</Text>
-                  </View>
-                ))}
-              </View>
-              <Text style={styles.keyDetail}>{tip.detail}</Text>
+        <StepHeader detail="Your phone’s missing keys sit above the keyboard. Try them." step={step} title="Terminal keys" />
+        <View accessibilityLiveRegion="polite" style={styles.keyInfo} testID="onboarding-key-card">
+          <Text style={[styles.keyInfoLabel, info === undefined && styles.keyInfoPrompt]} testID="onboarding-key-label">{info?.label ?? 'TAP A KEY'}</Text>
+          <Text style={styles.keyInfoDetail} testID="onboarding-key-detail">{info?.detail ?? 'See what each one does.'}</Text>
+        </View>
+        <View style={styles.keyRow}>
+          <TerminalControls
+            altActive={alt}
+            ctrlActive={ctrl}
+            keyboardVisible={keyboard}
+            onArrow={direction => show(ARROW_INFO[direction])}
+            onEscape={() => show(KEY_INFO.esc)}
+            onKeyboardToggle={() => { setKeyboard(value => !value); show(KEY_INFO.keyboard); }}
+            onPaste={() => show(KEY_INFO.paste)}
+            onReturn={() => show(KEY_INFO.return)}
+            onTerminalKey={value => { const next = TERMINAL_KEY_INFO[value]; if (next !== undefined) show(next); }}
+            onToggleAlt={() => { setAlt(value => !value); setCtrl(false); setInfo(KEY_INFO.alt); }}
+            onToggleCtrl={() => { setCtrl(value => !value); setAlt(false); setInfo(KEY_INFO.ctrl); }}
+            onToggleTranscriptPager={noop}
+            running
+            toolchain="shell"
+            transcriptPagerOpen={false} />
+        </View>
+        <View style={styles.gestures}>
+          {GESTURES.map(gesture => (
+            <View key={gesture.label} style={styles.gesture}>
+              <Text style={styles.gestureGlyph}>{gesture.glyph}</Text>
+              <Text style={styles.gestureLabel}>{gesture.label}</Text>
             </View>
           ))}
-          <View style={styles.gestures}>
-            {GESTURE_TIPS.map(tip => (
-              <View key={tip} style={styles.point}>
-                <View style={styles.pointMark} />
-                <Text style={[styles.keyDetail, styles.pointBody]}>{tip}</Text>
-              </View>
-            ))}
-          </View>
         </View>
-        <PrimaryButton label="START USING HORUS  →" onPress={onDone} testID="onboarding-done" />
       </View>
     </AuthScreenLayout>
   );
@@ -434,9 +464,6 @@ const styles = StyleSheet.create({
   welcomeTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
   welcomeDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 8, textAlign: 'center'},
   demo: {marginBottom: 8, marginTop: 24},
-  point: {flexDirection: 'row', marginTop: 12},
-  pointMark: {backgroundColor: uiColors.accent, borderRadius: 2, height: 4, marginRight: 12, marginTop: 7, width: 4},
-  pointBody: {flex: 1},
   field: {marginTop: 10},
   note: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 10},
   secondary: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', marginTop: 10, minHeight: 46},
@@ -463,10 +490,13 @@ const styles = StyleSheet.create({
   problemTitle: {color: uiColors.warning, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '800'},
   problemDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 6},
   url: {backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 10, padding: 10},
-  keyTip: {alignItems: 'center', flexDirection: 'row', gap: 12, paddingVertical: 7},
-  keyCaps: {flexDirection: 'row', flexWrap: 'wrap', gap: 4, width: 120},
-  keyCap: {alignItems: 'center', backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 6, borderWidth: 1, justifyContent: 'center', minHeight: 26, minWidth: 26, paddingHorizontal: 6},
-  keyCapText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800'},
-  keyDetail: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 16},
-  gestures: {borderTopColor: uiColors.borderSoft, borderTopWidth: 1, marginTop: 8, paddingTop: 2},
+  keyInfo: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 104, paddingHorizontal: 16, paddingVertical: 14},
+  keyInfoLabel: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800'},
+  keyInfoPrompt: {color: uiColors.subdued, fontSize: 13, letterSpacing: 0.8},
+  keyInfoDetail: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},
+  keyRow: {borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, marginTop: 14, overflow: 'hidden'},
+  gestures: {marginTop: 16},
+  gesture: {alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 28},
+  gestureGlyph: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 13, textAlign: 'center', width: 18},
+  gestureLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11},
 });
