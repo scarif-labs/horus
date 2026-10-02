@@ -25,8 +25,10 @@ object TerminalSessionContract {
   /** Worst-case base64 length of [MAX_INPUT_BYTES] (with padding). */
   const val MAX_INPUT_BASE64_CHARS = ((MAX_INPUT_BYTES + 2) / 3) * 4
 
-  /** The default user-facing session limit; Settings can raise it to the hard bound. */
-  const val DEFAULT_ACTIVE_SESSIONS = 1
+  /** The lowest session limit Settings offers. */
+  const val MIN_ACTIVE_SESSIONS = 1
+  /** The default user-facing session limit; Settings can change it within the bounds. */
+  const val DEFAULT_ACTIVE_SESSIONS = 2
   /** Hard bound for persisted session metadata and native protocol arrays. */
   const val MAX_ACTIVE_SESSIONS = 4
 
@@ -80,7 +82,7 @@ object TerminalSessionContract {
 
   fun isValidColumns(columns: Int): Boolean = columns in MIN_COLUMNS..MAX_COLUMNS
 
-  fun isValidActiveSessionLimit(limit: Int): Boolean = limit in DEFAULT_ACTIVE_SESSIONS..MAX_ACTIVE_SESSIONS
+  fun isValidActiveSessionLimit(limit: Int): Boolean = limit in MIN_ACTIVE_SESSIONS..MAX_ACTIVE_SESSIONS
 
   /** A positive status is the waitpid exit code; negative is a signal (or errno). */
   fun isPlausibleEncodedStatus(encoded: Int): Boolean = encoded in -64..255

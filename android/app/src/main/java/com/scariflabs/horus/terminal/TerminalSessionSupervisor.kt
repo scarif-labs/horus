@@ -581,7 +581,7 @@ class TerminalSessionSupervisor(
   private fun configuredSessionLimit(): Int = runCatching { maxActiveSessions() }
     .getOrDefault(TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS)
     .coerceIn(
-      TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS,
+      TerminalSessionContract.MIN_ACTIVE_SESSIONS,
       TerminalSessionContract.MAX_ACTIVE_SESSIONS,
     )
 

@@ -35,7 +35,7 @@ class TerminalSessionSettingsTest {
     val root = Files.createTempDirectory("horus-session-settings-write").toFile()
     try {
       val settings = TerminalSessionSettings(root.resolve("settings/session-settings.json"))
-      assertFalse(settings.writeLimit(TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS - 1))
+      assertFalse(settings.writeLimit(TerminalSessionContract.MIN_ACTIVE_SESSIONS - 1))
       assertFalse(settings.writeLimit(TerminalSessionContract.MAX_ACTIVE_SESSIONS + 1))
       assertTrue(settings.writeLimit(TerminalSessionContract.MAX_ACTIVE_SESSIONS))
       assertEquals(TerminalSessionContract.MAX_ACTIVE_SESSIONS, settings.readLimit())

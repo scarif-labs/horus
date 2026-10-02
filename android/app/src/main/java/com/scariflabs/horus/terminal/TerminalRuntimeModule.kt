@@ -1094,7 +1094,7 @@ class TerminalRuntimeModule(
   private fun sessionSettingsSuccess(limit: Int): WritableMap = Arguments.createMap().apply {
     putString("status", "success")
     putInt("maxConcurrentSessions", limit)
-    putInt("minConcurrentSessions", TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS)
+    putInt("minConcurrentSessions", TerminalSessionContract.MIN_ACTIVE_SESSIONS)
     putInt("maxSupportedConcurrentSessions", TerminalSessionContract.MAX_ACTIVE_SESSIONS)
   }
 

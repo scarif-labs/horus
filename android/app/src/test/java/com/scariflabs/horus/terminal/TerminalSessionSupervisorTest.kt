@@ -557,8 +557,8 @@ class TerminalSessionSupervisorTest {
   }
 
   @Test
-  fun theDefaultSessionLimitAllowsOnlyOneRunningSession() {
-    val harness = newHarness(maxActiveSessions = { TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS })
+  fun theLowestSessionLimitAllowsOnlyOneRunningSession() {
+    val harness = newHarness(maxActiveSessions = { TerminalSessionContract.MIN_ACTIVE_SESSIONS })
     val first = harness.supervisor.start("s-1", spec())
     assertTrue(first is TerminalSessionSupervisor.StartOutcome.Success)
 
@@ -574,7 +574,7 @@ class TerminalSessionSupervisorTest {
   @Test
   fun aNonCountedUtilitySessionDoesNotConsumeTheUserSessionSlot() {
     val harness = newHarness(
-      maxActiveSessions = { TerminalSessionContract.DEFAULT_ACTIVE_SESSIONS },
+      maxActiveSessions = { TerminalSessionContract.MIN_ACTIVE_SESSIONS },
     )
     assertTrue(harness.supervisor.start("s-shell", spec()) is TerminalSessionSupervisor.StartOutcome.Success)
     assertTrue(

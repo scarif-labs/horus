@@ -1,7 +1,7 @@
 import nativeTerminalRuntime, {type SessionSettingsResponse, type Spec} from '../../native/NativeTerminalRuntime';
 
 export const TERMINAL_SESSION_LIMIT_MIN = 1 as const;
-export const TERMINAL_SESSION_LIMIT_DEFAULT = 1 as const;
+export const TERMINAL_SESSION_LIMIT_DEFAULT = 2 as const;
 export const TERMINAL_SESSION_LIMIT_MAX = 4 as const;
 
 export type SessionSettings = Readonly<{
