@@ -83,7 +83,7 @@ function PermissionCheck({allowed, icon, label, onPress, testID}: PermissionChec
       <EntryIcon kind={icon} size={20} tint={allowed ? uiColors.accent : uiColors.ink} />
       <Text style={styles.checkLabel}>{label}</Text>
       <View style={[styles.checkMark, allowed && styles.checkMarkOn]}>
-        {allowed ? <Text style={styles.checkMarkText}>✓</Text> : null}
+        {allowed ? <EntryIcon kind="check" size={14} style={styles.checkIcon} /> : null}
       </View>
     </Pressable>
   );
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
   checkLabel: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 13},
   checkMark: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 11, borderWidth: 1.5, height: 22, justifyContent: 'center', width: 22},
   checkMarkOn: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
-  checkMarkText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '900', includeFontPadding: false},
+  checkIcon: {marginRight: 0},
   skip: {alignItems: 'center', justifyContent: 'center', marginTop: 6, minHeight: 44},
   skipText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11},
 });

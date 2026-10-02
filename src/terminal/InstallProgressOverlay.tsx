@@ -51,7 +51,7 @@ export function InstallProgressOverlay({step, toolchain, onShowLog}: InstallProg
             return (
               <View key={text} style={styles.stepRow} testID={`terminal-install-step-${index}`}>
                 <View style={[styles.marker, done && styles.markerDone, active && styles.markerActive]}>
-                  {done ? <Text style={styles.check}>✓</Text> : active ? <ActivityIndicator color={uiColors.accent} size="small" /> : null}
+                  {done ? <View style={styles.check} /> : active ? <ActivityIndicator color={uiColors.accent} size="small" /> : null}
                 </View>
                 <Text style={[styles.stepText, done && styles.stepTextDone, active && styles.stepTextActive]}>{text}</Text>
               </View>
@@ -76,7 +76,8 @@ const styles = StyleSheet.create({
   marker: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, height: 24, justifyContent: 'center', width: 24},
   markerDone: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
   markerActive: {borderColor: uiColors.accent},
-  check: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '900', includeFontPadding: false},
+  // Drawn, not a ✓ character: the UI font has no check-mark glyph.
+  check: {borderBottomWidth: 2.5, borderColor: uiColors.background, borderRightWidth: 2.5, height: 11, marginTop: -3, transform: [{rotate: '45deg'}], width: 6},
   stepText: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 12},
   stepTextDone: {color: uiColors.muted},
   stepTextActive: {color: uiColors.ink, fontWeight: '800'},

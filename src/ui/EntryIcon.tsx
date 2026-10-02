@@ -12,8 +12,9 @@ import {uiColors} from './brand';
  * - file: a regular file
  * - refresh: the reload action on a list
  * - bell, battery: the background permissions
+ * - check: a completed item
  */
-export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh' | 'bell' | 'battery';
+export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh' | 'bell' | 'battery' | 'check';
 
 const SOURCES = {
   folder: require('../../assets/ui/folder.png'),
@@ -22,6 +23,7 @@ const SOURCES = {
   refresh: require('../../assets/ui/refresh.png'),
   bell: require('../../assets/ui/bell.png'),
   battery: require('../../assets/ui/battery.png'),
+  check: require('../../assets/ui/check.png'),
 } as const;
 
 const DEFAULT_TINT: Record<EntryIconKind, string> = {
@@ -31,6 +33,7 @@ const DEFAULT_TINT: Record<EntryIconKind, string> = {
   refresh: uiColors.accent,
   bell: uiColors.ink,
   battery: uiColors.ink,
+  check: uiColors.background,
 };
 
 type EntryIconProps = Readonly<{kind: EntryIconKind; size?: number; tint?: string; style?: StyleProp<ImageStyle>}>;
