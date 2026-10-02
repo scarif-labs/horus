@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
+import {ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
@@ -367,6 +367,75 @@ describe('TerminalScreen', () => {
 
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
     expect(runtime.listeners).toHaveLength(0);
+  });
+
+  test('shows install progress instead of the apk transcript on first launch, with the log one tap away', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+      );
+      await flushAsync();
+    });
+    const emitText = async (seq: number, text: string) => {
+      await ReactTestRenderer.act(async () => {
+        runtime.emit({type: 'output', sessionId: 's-1-1', seq, base64: encodeTestBase64(text)});
+        await flushAsync();
+      });
+    };
+    const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
+    const stepIsActive = (index: number) =>
+      renderer.root.findByProps({testID: `terminal-install-step-${index}`}).findAllByType(ActivityIndicator).length > 0;
+
+    expect(has('terminal-install-progress')).toBe(false);
+    await emitText(1, 'HORUS_INSTALL_TARGET=codex\nHORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=apk\n(1/7) Installing ada-libs\n');
+    expect(has('terminal-install-progress')).toBe(true);
+    expect(stepIsActive(1)).toBe(true);
+
+    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-install-show-log'}).props.onPress(); });
+    expect(has('terminal-install-progress')).toBe(false);
+    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-install-show-progress'}).props.onPress(); });
+    expect(has('terminal-install-progress')).toBe(true);
+
+    await emitText(2, 'HORUS_INSTALL_STAGE=base_ready\nHORUS_INSTALL_STAGE=codex\n');
+    expect(stepIsActive(2)).toBe(true);
+
+    // A failed stage hands the screen back to the transcript and its error.
+    await emitText(3, 'HORUS_INSTALL_STAGE=codex_failed\n');
+    expect(has('terminal-install-progress')).toBe(false);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('shows install progress when returning to a session that is still installing', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />,
+      );
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=codex\n')});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-install-progress'}).length).toBeGreaterThan(0);
+
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 2, base64: encodeTestBase64('HORUS_INSTALL_STAGE=ready\nHORUS_TOOLCHAIN_READY\n')});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-install-progress'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
   test('completes a workspace handoff when clone output is replayed from an already exited session', async () => {

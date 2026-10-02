@@ -40,6 +40,7 @@ import {toolchainInstallLabel} from './toolchainLabels';
 import {nextRequestId} from './terminalRequestId';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {uiColors} from './palette';
+import {InstallProgressOverlay, installStepForStage, lastInstallStage} from './InstallProgressOverlay';
 import {SessionLimitOverlay} from './SessionLimitOverlay';
 
 export type TerminalScreenProps = Readonly<{
@@ -314,6 +315,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [keyboardShowRequest, setKeyboardShowRequest] = React.useState(0);
   const [keyboardHideRequest, setKeyboardHideRequest] = React.useState(0);
   const [harnessFrameReady, setHarnessFrameReady] = React.useState(false);
+  // Last HORUS_INSTALL_STAGE seen while first-run provisioning runs; undefined
+  // when the app was already installed.
+  const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
+  const installStageRef = React.useRef<string | undefined>(undefined);
+  const [installLogVisible, setInstallLogVisible] = React.useState(false);
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
   const [error, setError] = React.useState<string | undefined>(undefined);
   const sessionLimitReached = error === 'session_limit_reached';
@@ -336,6 +342,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const openedGithubLoginUrlsRef = React.useRef<Set<string>>(new Set());
   const installOutputTailRef = React.useRef('');
   const installReadyRef = React.useRef(false);
+  // Whether HORUS_TOOLCHAIN_READY was actually seen. installReadyRef is also
+  // assumed true for a resumed session; this one drives the install screen,
+  // so a session left mid-install still shows its progress on return.
+  const readyMarkerSeenRef = React.useRef(false);
   const completionOutputTailRef = React.useRef('');
   const completionMarkerSeenRef = React.useRef(false);
   const completionDeliveredRef = React.useRef(false);
@@ -601,13 +611,19 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       onOutput: chunk => {
         if (!mountedRef.current) return;
         lastOutputSeqRef.current = Math.max(lastOutputSeqRef.current, chunk.seq);
-        const scanInstallMarker = !installReadyRef.current;
+        const scanInstallMarker = !readyMarkerSeenRef.current;
         const scanGithubLogin = toolchain === 'github' && onGithubDeviceLogin !== undefined;
         const scanCompletionMarker = completionMarker !== undefined && !completionMarkerSeenRef.current;
         if (scanInstallMarker || scanGithubLogin || scanCompletionMarker) {
           const outputText = textDecoder.decode(chunk.bytes);
           if (scanInstallMarker) {
+            const stage = lastInstallStage(outputText);
+            if (stage !== undefined && stage !== installStageRef.current) {
+              installStageRef.current = stage;
+              setInstallStage(stage);
+            }
             if (hasToolchainReadyMarker(appendToOutputTail(installOutputTailRef, outputText, 512))) {
+              readyMarkerSeenRef.current = true;
               installReadyRef.current = true;
               if (nativeHarness) setNativeHarnessReady(true);
             }
@@ -726,7 +742,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     completionMarkerSeenRef.current = false;
     completionDeliveredRef.current = false;
     installReadyRef.current = false;
+    readyMarkerSeenRef.current = false;
     setHarnessFrameReady(false);
+    installStageRef.current = undefined;
+    setInstallStage(undefined);
+    setInstallLogVisible(false);
     displayBufferRef.current?.dispose();
     displayBufferRef.current = undefined;
     setNativeSessionId(undefined);
@@ -973,6 +993,18 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     });
   }, [client, nativeHarness, size.rows, size.columns, state, toolchain]);
 
+  const startupOverlay = (state === 'starting' || state === 'running') && toolchain !== 'shell' &&
+    (nativeOpenCode || (nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
+    ? `Starting ${toolchainInstallLabel(toolchain)}…`
+    : undefined;
+  // An install stage on the wire means first-run provisioning is running:
+  // show the step-by-step screen instead of the apk transcript until the app
+  // paints. A failed stage hands the screen back to the log and its error.
+  const installFailed = installStage?.endsWith('_failed') === true;
+  const showInstallProgress = installStage !== undefined && !installFailed && !installLogVisible &&
+    toolchain !== 'shell' && (state === 'starting' || state === 'running') &&
+    (!readyMarkerSeenRef.current || startupOverlay !== undefined);
+
   return (
     <>
       <StatusBar barStyle="light-content" />
@@ -988,10 +1020,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
               cellWidth={cellWidth}
               running={running}
-              startupOverlay={(state === 'starting' || state === 'running') && toolchain !== 'shell' &&
-                (nativeOpenCode || (nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
-                ? `Starting ${toolchainInstallLabel(toolchain)}…`
-                : undefined}
+              startupOverlay={startupOverlay !== undefined && !showInstallProgress ? startupOverlay : undefined}
               onCellWidth={setCellWidth}
               onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
@@ -1001,6 +1030,18 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               placeholder={`${toolchainInstallLabel(toolchain)} install starting…`}
               onLayout={handleOutputLayout}
             />
+            {showInstallProgress && installStage !== undefined ? (
+              <InstallProgressOverlay
+                onShowLog={() => setInstallLogVisible(true)}
+                step={Math.max(installStepForStage(installStage, toolchain), readyMarkerSeenRef.current ? 3 : 0)}
+                toolchain={toolchain}
+              />
+            ) : null}
+            {installLogVisible && installStage !== undefined && !installFailed && (state === 'starting' || state === 'running') && !readyMarkerSeenRef.current ? (
+              <Pressable accessibilityLabel="Show install progress" accessibilityRole="button" onPress={() => setInstallLogVisible(false)} style={styles.progressPill} testID="terminal-install-show-progress">
+                <Text style={styles.progressPillText}>SHOW PROGRESS</Text>
+              </Pressable>
+            ) : null}
             <SessionLimitOverlay
               client={client}
               visible={sessionLimitReached}
@@ -1093,6 +1134,8 @@ const styles = StyleSheet.create({
   menuArrowText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', includeFontPadding: false, lineHeight: 22, textAlign: 'center', width: 34},
   output: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, overflow: 'hidden'},
   error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
+  progressPill: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.accent, borderRadius: 16, borderWidth: 1, bottom: 12, justifyContent: 'center', minHeight: 32, paddingHorizontal: 14, position: 'absolute', right: 12, zIndex: 4},
+  progressPillText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
   historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
   keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
   controls: {backgroundColor: TERMINAL_BACKGROUND, paddingVertical: 4},
