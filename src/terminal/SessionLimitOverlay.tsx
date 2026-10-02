@@ -1,28 +1,38 @@
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
+import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
+import {HarnessMark} from './harnessLogos';
 import type {TerminalSessionClient} from './session/sessionClient';
 import type {ActiveTerminalSession} from './session/sessionContract';
-import {TERMINAL_FOREGROUND} from './terminalBuffer';
-import {formatSessionAge, sessionTitle} from './toolchainLabels';
+import {formatSessionAge, sessionTitle, toolchainInstallLabel} from './toolchainLabels';
 import {nextRequestId} from './terminalRequestId';
+import {readSessionSettings, type SessionSettingsResult} from './session/sessionSettings';
 import {uiColors} from './palette';
 
 type SessionLimitOverlayProps = Readonly<{
   client: TerminalSessionClient;
   /** Whether the session limit was reached; the overlay renders nothing otherwise. */
   visible: boolean;
-  message: string;
-  /** Called after the user stops a session, to retry starting this one. */
+  /** The app this screen is trying to open. */
+  toolchain: TerminalToolchainTarget;
+  /** Called after the user closes a session, to retry starting this one. */
   onSessionFreed: () => Promise<void>;
+  onBack?: () => void;
+  readSettings?: () => Promise<SessionSettingsResult>;
 }>;
 
-export function SessionLimitOverlay({client, visible, message, onSessionFreed}: SessionLimitOverlayProps): React.JSX.Element | null {
-  const [limitSessions, setLimitSessions] = React.useState<readonly ActiveTerminalSession[]>([]);
-  const [limitSessionsLoading, setLimitSessionsLoading] = React.useState(false);
-  const [terminatingLimitSessionId, setTerminatingLimitSessionId] = React.useState<string | undefined>();
-  const [limitSessionActionError, setLimitSessionActionError] = React.useState(false);
+/**
+ * Shown instead of an app when the session limit is full: lists what is
+ * running so the user can close one, and this app then opens.
+ */
+export function SessionLimitOverlay({client, visible, toolchain, onSessionFreed, onBack, readSettings = readSessionSettings}: SessionLimitOverlayProps): React.JSX.Element | null {
+  const [sessions, setSessions] = React.useState<readonly ActiveTerminalSession[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [closingId, setClosingId] = React.useState<string | undefined>();
+  const [failed, setFailed] = React.useState(false);
+  const [limit, setLimit] = React.useState<number | undefined>();
   const mountedRef = React.useRef(true);
 
   React.useEffect(() => {
@@ -34,106 +44,113 @@ export function SessionLimitOverlay({client, visible, message, onSessionFreed}: 
 
   React.useEffect(() => {
     if (!visible) {
-      setLimitSessions([]);
-      setLimitSessionsLoading(false);
-      setTerminatingLimitSessionId(undefined);
-      setLimitSessionActionError(false);
+      setSessions([]);
+      setLoading(false);
+      setClosingId(undefined);
+      setFailed(false);
       return;
     }
     let cancelled = false;
-    setLimitSessionsLoading(true);
-    setLimitSessionActionError(false);
+    readSettings().then(result => {
+      if (!cancelled && mountedRef.current && result.kind === 'success') setLimit(result.settings.maxConcurrentSessions);
+    }).catch(() => undefined);
+    setLoading(true);
+    setFailed(false);
     void client.listTerminalSessions(nextRequestId('limit-sessions')).then(result => {
       if (cancelled || !mountedRef.current) return;
-      if (result.kind === 'success') setLimitSessions(result.sessions);
-      else setLimitSessionActionError(true);
-      setLimitSessionsLoading(false);
+      if (result.kind === 'success') setSessions(result.sessions);
+      else setFailed(true);
+      setLoading(false);
     }).catch(() => {
       if (cancelled || !mountedRef.current) return;
-      setLimitSessionActionError(true);
-      setLimitSessionsLoading(false);
+      setFailed(true);
+      setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [client, visible]);
+  }, [client, readSettings, visible]);
 
-  const terminateLimitSession = React.useCallback(async (sessionId: string) => {
-    if (terminatingLimitSessionId !== undefined) return;
-    setTerminatingLimitSessionId(sessionId);
-    setLimitSessionActionError(false);
+  const closeSession = React.useCallback(async (sessionId: string) => {
+    if (closingId !== undefined) return;
+    setClosingId(sessionId);
+    setFailed(false);
     const result = await client.stopSession(nextRequestId('limit-stop'), sessionId, 'user_stop');
     if (!mountedRef.current) return;
     if (result.kind !== 'success') {
-      setTerminatingLimitSessionId(undefined);
-      setLimitSessionActionError(true);
+      setClosingId(undefined);
+      setFailed(true);
       return;
     }
-    setLimitSessions(current => current.filter(session => session.sessionId !== sessionId));
-    setTerminatingLimitSessionId(undefined);
+    setSessions(current => current.filter(session => session.sessionId !== sessionId));
+    setClosingId(undefined);
     await onSessionFreed();
-  }, [client, onSessionFreed, terminatingLimitSessionId]);
+  }, [client, closingId, onSessionFreed]);
 
   if (!visible) return null;
+  const label = toolchainInstallLabel(toolchain);
   return (
-    <View pointerEvents="auto" style={styles.sessionLimitOverlay} testID="session-limit-warning-overlay">
-      <View style={styles.sessionLimitCard} testID="session-limit-warning">
-        <Text style={styles.sessionLimitTitle} testID="session-limit-warning-title">Too many apps running</Text>
-        <Text style={styles.sessionLimitMessage} testID="session-limit-warning-message">
-          {message}
+    <View pointerEvents="auto" style={styles.overlay} testID="session-limit-warning-overlay">
+      <View style={styles.content} testID="session-limit-warning">
+        <HarnessMark size={48} toolchain={toolchain} />
+        <Text style={styles.title} testID="session-limit-warning-title">Close an app to open {label}</Text>
+        <Text style={styles.detail} testID="session-limit-warning-message">
+          {limit === undefined
+            ? 'You can change how many run at once in Settings.'
+            : `Horus runs up to ${limit === 1 ? '1 app' : `${limit} apps`} at once. You can change this in Settings.`}
         </Text>
-        <Text style={styles.sessionLimitDetails} testID="session-limit-warning-settings-hint">
-          You can change the limit in Settings under Concurrent apps.
-        </Text>
-        {limitSessionsLoading ? <Text style={styles.sessionLimitDetails} testID="session-limit-sessions-loading">Loading active sessions…</Text> : null}
-        {!limitSessionsLoading && limitSessions.length === 0 && !limitSessionActionError ? (
-          <Text style={styles.sessionLimitDetails} testID="session-limit-no-sessions">No active session details are available.</Text>
-        ) : null}
-        {!limitSessionsLoading && limitSessions.length > 0 ? (
-          <View style={styles.sessionLimitSessions} testID="session-limit-sessions">
-            {limitSessions.map(session => {
-              const stopping = terminatingLimitSessionId === session.sessionId;
-              const title = sessionTitle(session);
-              return (
-                <View key={session.sessionId} style={styles.sessionLimitSessionRow} testID={`session-limit-session-${session.sessionId}`}>
-                  <View style={styles.sessionLimitSessionCopy}>
-                    <Text numberOfLines={1} style={styles.sessionLimitSessionTitle} testID={`session-limit-session-title-${session.sessionId}`}>{title}</Text>
-                    <Text numberOfLines={1} style={styles.sessionLimitSessionMeta} testID={`session-limit-session-meta-${session.sessionId}`}>ACTIVE PTY · {formatSessionAge(session.startedAtMs)}</Text>
-                  </View>
-                  <Pressable
-                    accessibilityLabel={`Terminate ${title}`}
-                    accessibilityRole="button"
-                    accessibilityState={{disabled: terminatingLimitSessionId !== undefined}}
-                    disabled={terminatingLimitSessionId !== undefined}
-                    onPress={() => { void terminateLimitSession(session.sessionId); }}
-                    style={[styles.sessionLimitTerminate, stopping && styles.sessionLimitTerminateDisabled]}
-                    testID={`session-limit-terminate-${session.sessionId}`}>
-                    <Text style={styles.sessionLimitTerminateText}>{stopping ? 'STOPPING' : 'TERMINATE'}</Text>
-                  </Pressable>
+        <View style={styles.list} testID="session-limit-sessions">
+          {loading ? <ActivityIndicator color={uiColors.accent} style={styles.loading} testID="session-limit-sessions-loading" /> : null}
+          {sessions.map(session => {
+            const closing = closingId === session.sessionId;
+            const title = sessionTitle(session);
+            return (
+              <View key={session.sessionId} style={styles.row} testID={`session-limit-session-${session.sessionId}`}>
+                <HarnessMark size={28} toolchain={session.toolchain} />
+                <View style={styles.rowCopy}>
+                  <Text numberOfLines={1} style={styles.rowTitle} testID={`session-limit-session-title-${session.sessionId}`}>{title}</Text>
+                  <Text numberOfLines={1} style={styles.rowMeta} testID={`session-limit-session-meta-${session.sessionId}`}>Running {formatSessionAge(session.startedAtMs)}</Text>
                 </View>
-              );
-            })}
-          </View>
-        ) : null}
-        {limitSessionActionError ? <Text style={styles.sessionLimitActionError} testID="session-limit-action-error">Could not load or stop the active session. Try again from the menu.</Text> : null}
+                <Pressable
+                  accessibilityLabel={`Close ${title}`}
+                  accessibilityRole="button"
+                  accessibilityState={{busy: closing, disabled: closingId !== undefined}}
+                  disabled={closingId !== undefined}
+                  onPress={() => { void closeSession(session.sessionId); }}
+                  style={[styles.close, closingId !== undefined && !closing && styles.closeDisabled]}
+                  testID={`session-limit-terminate-${session.sessionId}`}>
+                  <Text style={styles.closeText}>{closing ? 'CLOSING…' : 'CLOSE'}</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+        {failed ? <Text style={styles.error} testID="session-limit-action-error">That didn’t work. Try again.</Text> : null}
+        {onBack === undefined ? null : (
+          <Pressable accessibilityRole="button" onPress={onBack} style={styles.back} testID="session-limit-back">
+            <Text style={styles.backText}>BACK</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sessionLimitOverlay: {alignItems: 'center', backgroundColor: 'rgba(13, 17, 18, 0.82)', bottom: 0, justifyContent: 'center', left: 0, padding: 18, position: 'absolute', right: 0, top: 0, zIndex: 5},
-  sessionLimitCard: {backgroundColor: '#182022', borderColor: uiColors.danger, borderRadius: 12, borderWidth: 1, maxWidth: 520, paddingHorizontal: 20, paddingVertical: 18, width: '100%'},
-  sessionLimitTitle: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 17, fontWeight: '800', textAlign: 'center'},
-  sessionLimitMessage: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 13, lineHeight: 19, marginTop: 10, textAlign: 'center'},
-  sessionLimitDetails: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 14, textAlign: 'center'},
-  sessionLimitSessions: {gap: 8, marginTop: 14},
-  sessionLimitSessionRow: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row', minHeight: 58, paddingHorizontal: 9, paddingVertical: 7},
-  sessionLimitSessionCopy: {flex: 1, minWidth: 0},
-  sessionLimitSessionTitle: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '800'},
-  sessionLimitSessionMeta: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 8, letterSpacing: 0.2, marginTop: 4},
-  sessionLimitTerminate: {alignItems: 'center', borderColor: uiColors.danger, borderRadius: 6, borderWidth: 1, justifyContent: 'center', marginLeft: 8, minHeight: 32, minWidth: 78, paddingHorizontal: 7},
-  sessionLimitTerminateDisabled: {borderColor: uiColors.muted, opacity: 0.7},
-  sessionLimitTerminateText: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 8, fontWeight: '800', letterSpacing: 0.1},
-  sessionLimitActionError: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 15, marginTop: 12, textAlign: 'center'},
+  overlay: {backgroundColor: uiColors.background, bottom: 0, justifyContent: 'center', left: 0, paddingHorizontal: 24, position: 'absolute', right: 0, top: 0, zIndex: 5, elevation: 5},
+  content: {alignItems: 'center', alignSelf: 'center', maxWidth: 420, width: '100%'},
+  title: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 16, textAlign: 'center'},
+  detail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},
+  list: {alignSelf: 'stretch', gap: 8, marginTop: 24, minHeight: 60},
+  loading: {marginTop: 18},
+  row: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, flexDirection: 'row', gap: 12, minHeight: 60, paddingHorizontal: 12},
+  rowCopy: {flex: 1, minWidth: 0},
+  rowTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '700'},
+  rowMeta: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 3},
+  close: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 36, minWidth: 76, paddingHorizontal: 10},
+  closeDisabled: {opacity: 0.5},
+  closeText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.5},
+  error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 12, textAlign: 'center'},
+  back: {alignItems: 'center', alignSelf: 'stretch', borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, justifyContent: 'center', marginTop: 20, minHeight: 46},
+  backText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
 });

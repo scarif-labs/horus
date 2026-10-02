@@ -118,13 +118,6 @@ function errorLabel(operation: TrustedSessionOperation | {kind: 'error'; errorCo
   return operation.kind === 'error' ? operation.errorCode : operation.kind === 'incomplete' ? 'incomplete_stop' : 'unknown_error';
 }
 
-function terminalErrorMessage(errorCode: string): string {
-  if (errorCode === 'session_limit_reached') {
-    return 'Android closes apps that use too much memory, so Horus limits how many terminals and AI apps run at once, including ones left running in the background. Stop one below to start this one.';
-  }
-  return errorCode;
-}
-
 function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'github') return 'toolchain_github_install_failed';
   if (target === 'claude') return 'toolchain_install_failed';
@@ -1048,9 +1041,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             ) : null}
             <SessionLimitOverlay
               client={client}
-              visible={sessionLimitReached}
-              message={sessionLimitReached ? terminalErrorMessage(error) : ''}
+              onBack={onHome ?? onBack}
               onSessionFreed={start}
+              toolchain={toolchain}
+              visible={sessionLimitReached}
             />
           </View>
 
@@ -1106,7 +1100,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               Some earlier terminal output is unavailable.
             </Text>
           ) : null}
-          {error !== undefined && !sessionLimitReached ? <Text style={styles.error} testID="terminal-error">{terminalErrorMessage(error)}</Text> : null}
+          {error !== undefined && !sessionLimitReached ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
           <TerminalControls
             altActive={altActive}
             ctrlActive={ctrlActive}

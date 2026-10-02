@@ -601,15 +601,8 @@ describe('TerminalScreen', () => {
     });
 
     expect(onCommandFailure).toHaveBeenCalledTimes(1);
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-message'}).props.children).toBe(
-      'Android closes apps that use too much memory, so Horus limits how many terminals and AI apps run at once, including ones left running in the background. Stop one below to start this one.',
-    );
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toBe('Too many apps running');
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-settings-hint'}).props.children).toBe(
-      'You can change the limit in Settings under Concurrent apps.',
-    );
+    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Alpine shell']);
     expect(renderer.root.findByProps({testID: 'session-limit-warning-overlay'}).props.style).toMatchObject({
-      alignItems: 'center',
       justifyContent: 'center',
       position: 'absolute',
     });
@@ -744,9 +737,7 @@ describe('TerminalScreen', () => {
       await flushAsync();
     });
 
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-message'}).props.children).toBe(
-      'Android closes apps that use too much memory, so Horus limits how many terminals and AI apps run at once, including ones left running in the background. Stop one below to start this one.',
-    );
+    expect(renderer.root.findAllByProps({testID: 'session-limit-warning'}).length).toBeGreaterThan(0);
     expect(renderer.root.findByProps({testID: 'terminal-home'})).toBeDefined();
     const menuButton = renderer.root.findByProps({testID: 'terminal-home'});
     expect(menuButton.props.accessibilityLabel).toBe('Back to home');
@@ -784,7 +775,8 @@ describe('TerminalScreen', () => {
     });
 
     expect(renderer.root.findByProps({testID: 'session-limit-session-title-s-1-1'}).props.children).toBe('OpenCode');
-    expect(renderer.root.findByProps({testID: 'session-limit-session-meta-s-1-1'}).props.children).toEqual(expect.arrayContaining([expect.stringContaining('ACTIVE PTY')]));
+    expect(renderer.root.findByProps({testID: 'session-limit-session-meta-s-1-1'}).props.children).toEqual(['Running ', '3 min']);
+    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Codex']);
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'session-limit-terminate-s-1-1'}).props.onPress();
       await flushAsync();
