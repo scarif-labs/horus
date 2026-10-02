@@ -48,6 +48,11 @@ import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverla
 
 export type TerminalScreenProps = Readonly<{
   client?: TerminalSessionClient;
+  /**
+   * How long a new session waits for the terminal's first measured size
+   * before starting at the default size. 0 starts at once.
+   */
+  sizeWaitMs?: number;
   runtime?: TerminalRuntimeBridge | null;
   onBack?: () => void;
   onHome?: () => void;
@@ -75,6 +80,7 @@ type TerminalRuntimeBridge = Pick<
 >;
 
 const TERMINAL_LAYOUT_SETTLE_MS = 120;
+const SESSION_SIZE_WAIT_MS = 1_000;
 
 // Shared across input and output. Output decoding does not use stream mode,
 // so the decoder keeps no state between chunks.
@@ -168,12 +174,36 @@ const TerminalHeader = React.memo(function TerminalHeaderView({onBack, onHome}: 
 });
 
 
-export function TerminalScreen({client: providedClient, runtime = undefined, onBack, onGithubDeviceLogin, onHome, sessionCommand, completionMarker, onCompletion, onCommandFailure, existingSessionId, runtimeReady = false, stopSessionOnUnmount = true, toolchain = 'shell'}: TerminalScreenProps): React.JSX.Element {
+export function TerminalScreen({client: providedClient, runtime = undefined, onBack, onGithubDeviceLogin, onHome, sessionCommand, completionMarker, onCompletion, onCommandFailure, existingSessionId, runtimeReady = false, sizeWaitMs = SESSION_SIZE_WAIT_MS, stopSessionOnUnmount = true, toolchain = 'shell'}: TerminalScreenProps): React.JSX.Element {
   const [viewport, setViewport] = React.useState({width: 0, height: 0});
   const viewportRef = React.useRef(viewport);
   const pendingViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
   const viewportTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [cellWidth, setCellWidth] = React.useState(8);
+  const [cellWidthMeasured, setCellWidthMeasured] = React.useState(false);
+  const measureCellWidth = React.useCallback((width: number) => {
+    setCellWidth(width);
+    setCellWidthMeasured(true);
+  }, []);
+  // A new session starts at the measured size: an app like Claude Code draws
+  // its header the moment it launches, and a later resize cannot redraw
+  // lines that have already scrolled up. Starting waits for the terminal's
+  // first layout, or a short timeout if it never comes.
+  const sizeMeasuredRef = React.useRef(false);
+  const sizeWaitersRef = React.useRef(new Set<() => void>());
+  const waitForMeasuredSize = React.useCallback(() => new Promise<void>(resolve => {
+    if (sizeMeasuredRef.current || sizeWaitMs <= 0) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      sizeWaitersRef.current.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, sizeWaitMs);
+    sizeWaitersRef.current.add(done);
+  }), [sizeWaitMs]);
   const [keyboardVisible, setKeyboardVisible] = React.useState(Keyboard.isVisible());
   const keyboardVisibleRef = React.useRef(keyboardVisible);
   const lastExpandedViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
@@ -184,6 +214,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   );
   const sizeRef = React.useRef(size);
   sizeRef.current = size;
+  const sizeMeasured = viewport.width > 0 && viewport.height > 0 && cellWidthMeasured;
+  React.useEffect(() => {
+    // Runs after the render that put the measured size in sizeRef.
+    if (!sizeMeasured) return;
+    sizeMeasuredRef.current = true;
+    for (const done of [...sizeWaitersRef.current]) done();
+  }, [sizeMeasured]);
   const requestedSizeRef = React.useRef<TerminalSize | undefined>(undefined);
   const client = React.useMemo(
     () => providedClient ?? new TerminalSessionClient(),
@@ -433,6 +470,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       sessionId = sessionToResume;
       requestedSizeRef.current = sizeRef.current;
     } else {
+      await waitForMeasuredSize();
+      if (!mountedRef.current) return;
       const started = await client.startSession(nextRequestId('start'), {
         ...sizeRef.current,
         command: sessionCommand,
@@ -634,7 +673,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       setError('subscription_failed');
       deliverCommandFailure();
     }
-  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, handleSessionExited, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain]);
+  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, handleSessionExited, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain, waitForMeasuredSize]);
 
   /** Starts (or resumes) the session; [fresh] ignores the one to resume. */
   const start = React.useCallback(async (fresh = false) => {
@@ -960,7 +999,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               cellWidth={cellWidth}
               running={running}
               onNativeScreenChange={setNativeScreen}
-              onCellWidth={setCellWidth}
+              onCellWidth={measureCellWidth}
               onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
               onSwipe={handleOutputSwipe}

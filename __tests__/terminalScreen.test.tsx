@@ -4,7 +4,13 @@ import {ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, 
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
-import {TerminalScreen} from '../src/terminal/TerminalScreen';
+import {TerminalScreen as MeasuredTerminalScreen, type TerminalScreenProps} from '../src/terminal/TerminalScreen';
+
+// The test renderer never lays anything out, so most tests start sessions
+// at once instead of waiting for a measured size.
+function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
+  return <MeasuredTerminalScreen sizeWaitMs={0} {...props} />;
+}
 import {decodeTestBase64, encodeTestBase64} from '../src/testSupport/base64';
 
 function terminalRows(renderer: ReactTestRenderer.ReactTestRenderer) {
@@ -1270,6 +1276,41 @@ describe('TerminalScreen', () => {
     expect(openURL).toHaveBeenCalledWith(url);
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
     expect(runtime.listeners).toHaveLength(0);
+  });
+
+  test('starts a new session at the measured size so apps draw for the real width', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.startSession = jest.fn(runtime.spec.startSession);
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<MeasuredTerminalScreen client={new TerminalSessionClient(runtime.spec)} runtime={runtime.spec} runtimeReady />);
+    });
+    // Nothing starts at the 80-column default while layout is pending.
+    await ReactTestRenderer.act(async () => {
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    expect(runtime.spec.startSession).not.toHaveBeenCalled();
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-font-measure'}).props.onTextLayout({nativeEvent: {lines: [{width: 200}]}});
+      renderer.root.findByProps({testID: 'terminal-output'}).props.onLayout({nativeEvent: {layout: {width: 400, height: 190}}});
+    });
+    await ReactTestRenderer.act(flushAsync);
+    expect(runtime.spec.startSession).toHaveBeenCalledTimes(1);
+    expect(runtime.spec.startSession).toHaveBeenCalledWith(expect.objectContaining({rows: 10, columns: 40}));
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('starts at the default size if the terminal is never measured', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.startSession = jest.fn(runtime.spec.startSession);
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<MeasuredTerminalScreen client={new TerminalSessionClient(runtime.spec)} runtime={runtime.spec} runtimeReady />);
+    });
+    await ReactTestRenderer.act(flushAsync);
+    expect(runtime.spec.startSession).toHaveBeenCalledWith(expect.objectContaining({rows: 24, columns: 80}));
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
   test('uses measured glyph width and viewport height for PTY/grid resize including the keyboard', async () => {
