@@ -28,10 +28,21 @@ export function lastInstallStage(text: string): string | undefined {
   return stage;
 }
 
+const DOWNLOAD_PATTERN = /Downloading [^\r\n]*… (\d+) MB/g;
+
+/** The latest download size the provisioning script reported in [text], e.g. "84 MB". */
+export function lastDownloadProgress(text: string): string | undefined {
+  let size: string | undefined;
+  for (const match of text.matchAll(DOWNLOAD_PATTERN)) size = `${match[1]} MB`;
+  return size;
+}
+
 type InstallProgressOverlayProps = Readonly<{
   /** Undefined for an app that is already installed and only starting. */
   step?: number;
   toolchain: TerminalToolchainTarget;
+  /** How much the active step has downloaded so far, e.g. "84 MB". */
+  download?: string;
 }>;
 
 /**
@@ -39,7 +50,7 @@ type InstallProgressOverlayProps = Readonly<{
  * line). The screen draws the SHOW LOG / SHOW PROGRESS toggle above it, so
  * both labels sit in the same spot.
  */
-export function InstallProgressOverlay({step, toolchain}: InstallProgressOverlayProps): React.JSX.Element {
+export function InstallProgressOverlay({download, step, toolchain}: InstallProgressOverlayProps): React.JSX.Element {
   const label = toolchainInstallLabel(toolchain);
   const steps = ['Preparing workspace', 'Installing system packages', `Installing ${label}`, `Starting ${label}`];
   if (step === undefined) {
@@ -68,7 +79,12 @@ export function InstallProgressOverlay({step, toolchain}: InstallProgressOverlay
                 <View style={[styles.marker, done && styles.markerDone, active && styles.markerActive]}>
                   {done ? <View style={styles.check} /> : active ? <ActivityIndicator color={uiColors.accent} size="small" /> : null}
                 </View>
-                <Text style={[styles.stepText, done && styles.stepTextDone, active && styles.stepTextActive]}>{text}</Text>
+                <View>
+                  <Text style={[styles.stepText, done && styles.stepTextDone, active && styles.stepTextActive]}>{text}</Text>
+                  {active && download !== undefined ? (
+                    <Text style={styles.stepDetail} testID="terminal-install-download">{download} downloaded</Text>
+                  ) : null}
+                </View>
               </View>
             );
           })}
@@ -93,5 +109,6 @@ const styles = StyleSheet.create({
   stepText: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 12},
   stepTextDone: {color: uiColors.muted},
   stepTextActive: {color: uiColors.ink, fontWeight: '800'},
+  stepDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 2},
   spinner: {marginTop: 18},
 });

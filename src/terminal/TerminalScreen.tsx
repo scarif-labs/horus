@@ -40,7 +40,7 @@ import {toolchainInstallLabel} from './toolchainLabels';
 import {nextRequestId} from './terminalRequestId';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {uiColors} from './palette';
-import {InstallProgressOverlay, installStepForStage, lastInstallStage} from './InstallProgressOverlay';
+import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastInstallStage} from './InstallProgressOverlay';
 import {SessionLimitOverlay} from './SessionLimitOverlay';
 
 export type TerminalScreenProps = Readonly<{
@@ -319,6 +319,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // when the app was already installed.
   const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
   const installStageRef = React.useRef<string | undefined>(undefined);
+  const [installDownload, setInstallDownload] = React.useState<string | undefined>(undefined);
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
   const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
@@ -622,7 +623,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             if (stage !== undefined && stage !== installStageRef.current) {
               installStageRef.current = stage;
               setInstallStage(stage);
+              setInstallDownload(undefined);
             }
+            const download = lastDownloadProgress(outputText);
+            if (download !== undefined) setInstallDownload(download);
             if (hasToolchainReadyMarker(appendToOutputTail(installOutputTailRef, outputText, 512))) {
               readyMarkerSeenRef.current = true;
               installReadyRef.current = true;
@@ -747,6 +751,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setHarnessFrameReady(false);
     installStageRef.current = undefined;
     setInstallStage(undefined);
+    setInstallDownload(undefined);
     setInstallLogVisible(false);
     setNativeScreen({hasContent: false, alternate: false});
     displayBufferRef.current?.dispose();
@@ -1041,6 +1046,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             />
             {showInstallProgress && installStage !== undefined ? (
               <InstallProgressOverlay
+                download={installDownload}
                 step={Math.max(installStepForStage(installStage, toolchain), readyMarkerSeenRef.current ? 3 : 0)}
                 toolchain={toolchain}
               />

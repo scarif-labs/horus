@@ -1124,6 +1124,36 @@ class ProotSessionLauncher(
         fi
         return "${'$'}command_status"
       }
+      # The installers download silently (curl -s, npm --no-progress), so
+      # report how much has landed in their download directories instead.
+      download_mb() {
+        du -sm "${'$'}@" 2>/dev/null | awk '{ total += ${'$'}1 } END { print total + 0 }'
+      }
+      watch_download() {
+        watch_label=${'$'}1
+        shift
+        watch_base=${'$'}(download_mb "${'$'}@")
+        watch_last=0
+        while sleep 3; do
+          watch_mb=${'$'}(( ${'$'}(download_mb "${'$'}@") - watch_base ))
+          if [ "${'$'}watch_mb" -gt "${'$'}watch_last" ]; then
+            printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_mb} MB"
+            watch_last=${'$'}watch_mb
+          fi
+        done
+      }
+      run_downloading() {
+        download_label=${'$'}1
+        download_dirs=${'$'}2
+        shift 2
+        # Word splitting on download_dirs is intended: it lists directories.
+        watch_download "${'$'}download_label" ${'$'}download_dirs &
+        watch_pid=${'$'}!
+        if run_logged "${'$'}@"; then download_status=0; else download_status=${'$'}?; fi
+        kill "${'$'}watch_pid" 2>/dev/null || true
+        wait "${'$'}watch_pid" 2>/dev/null || true
+        return "${'$'}download_status"
+      }
       mark_provision_stage start
 
       if [ "${'$'}target" = shell ]; then
@@ -1185,7 +1215,7 @@ class ProotSessionLauncher(
           bash /root/.cache/horus/claude-install.sh
           test -x /root/.local/bin/claude
         }
-        if ! run_logged /root/.cache/horus/claude-install.log install_claude; then
+        if ! run_downloading 'Claude Code' /root/.claude/downloads /root/.cache/horus/claude-install.log install_claude; then
           mark_provision_stage claude_failed
           exit 22
         fi
@@ -1197,7 +1227,7 @@ class ProotSessionLauncher(
         [ "${'$'}(head -n 1 "${'$'}codex_entry" 2>/dev/null || true)" != '#!/usr/bin/env node' ];
       }; then
         mark_provision_stage codex
-        if ! run_logged /root/.cache/horus/codex-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex; then
+        if ! run_downloading Codex '/root/.npm /root/.local/lib/node_modules' /root/.cache/horus/codex-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex; then
           mark_provision_stage codex_failed
           exit 23
         fi
@@ -1225,7 +1255,7 @@ class ProotSessionLauncher(
         [ ! -f "${'$'}target_marker" ] || [ "${'$'}opencode_payload_valid" != true ];
       }; then
         mark_provision_stage opencode
-        if ! run_logged /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
+        if ! run_downloading OpenCode '/root/.npm /root/.local/lib/node_modules' /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
           mark_provision_stage opencode_failed
           exit 24
         fi
@@ -1364,6 +1394,9 @@ EOF
       else
         printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
       fi
+      # The install log has done its job; start the app on a clean screen
+      # with no scrollback, as apps like Claude Code draw inline below it.
+      printf '\033[H\033[2J\033[3J'
       # Markers stay exact output lines for the app's scanners; the trailing
       # cursor-up + erase-line keeps them off the user's screen.
       printf '%s\n\033[1A\033[2K' "HORUS_INSTALL_HANDOFF=${'$'}session_username"
