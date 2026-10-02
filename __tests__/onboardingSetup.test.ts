@@ -57,4 +57,15 @@ describe('setupOnboardingProfile', () => {
 
     expect(result).toEqual({kind: 'error', stage: 'profile'});
   });
+
+  test('saves the profile without tools when asked to skip them', async () => {
+    save.mockResolvedValue(true);
+    const onToolsReady = jest.fn();
+
+    const result = await setupOnboardingProfile('test-password', 'setup-shell-4', {onToolsReady, skipTools: true});
+
+    expect(result).toEqual({kind: 'success'});
+    expect(provision).not.toHaveBeenCalled();
+    expect(onToolsReady).toHaveBeenCalledTimes(1);
+  });
 });

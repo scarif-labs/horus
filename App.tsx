@@ -15,7 +15,7 @@ import {lockedOutMessage, readUserProfile, verifyUserPassword, type UserProfile}
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {LoadingScreen} from './src/ui/LoadingScreen';
 import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
-import {OnboardingScreen} from './src/ui/OnboardingScreen';
+import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
 import {ProjectHubScreen} from './src/ui/ProjectHubScreen';
 import {LoginScreen} from './src/ui/LoginScreen';
 import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
@@ -140,6 +140,11 @@ function App(): React.JSX.Element {
         setBootError(runtime.errorCode);
         return;
       }
+      if (runtime.runtimeState === 'not_installed' && existingProfile === null && !__DEV__) {
+        // First run: onboarding downloads Alpine as one of its steps.
+        setRoute('onboarding');
+        return;
+      }
       if (runtime.runtimeState === 'not_installed') {
         setBootState('installing');
         const installed = await installRootfs(BOOT_REQUEST_ID);
@@ -175,27 +180,33 @@ function App(): React.JSX.Element {
     };
   }, [retryCount]);
 
-  const completeOnboarding = React.useCallback(async (password: string, onToolsReady: () => void) => {
-    const setup = await setupOnboardingProfile(
-      password,
-      nextSessionRequestId('onboarding-shell'),
-      onToolsReady,
-    );
-    if (setup.kind !== 'success') {
-      setProfileError(
-        setup.stage === 'alpine-tools'
-          ? 'Could not prepare Alpine command-line tools. Check the connection and tap Continue to retry.'
-          : 'Could not save the local profile. Please try again.',
-      );
-      return;
-    }
-    const nextProfile: UserProfile = {hasPassword: true};
-    void updateUnlockGrant('grant');
-    setProfileError(undefined);
-    setLockNotice(undefined);
-    setProfile(nextProfile);
-    setRoute('home');
+  // Onboarding's rootfs step; on success the runtime is ready like after boot.
+  const finishOnboardingRootfs = React.useCallback(async (installed: Awaited<ReturnType<typeof installRootfs>>): Promise<RootfsSetupResult> => {
+    if (installed.kind !== 'success') return {kind: 'error', errorCode: installed.errorCode};
+    const runtime = await readTerminalRuntimeStatus();
+    if (runtime.kind === 'error') return {kind: 'error', errorCode: runtime.errorCode};
+    if (!runtime.prootAvailable) return {kind: 'error', errorCode: 'proot_unavailable'};
+    setRuntimeReady(true);
+    return {kind: 'success'};
   }, []);
+
+  const onboardingActions = React.useMemo<OnboardingActions>(() => ({
+    installRootfs: async () => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID)),
+    importRootfs: async () => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID)),
+    saveProfile: async (password, {skipTools, onToolsReady}) => {
+      const setup = await setupOnboardingProfile(password, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
+      if (setup.kind === 'success') {
+        void updateUnlockGrant('grant');
+        setLockNotice(undefined);
+        setProfile({hasPassword: true});
+      }
+      return setup;
+    },
+    done: () => {
+      setProfileError(undefined);
+      setRoute('home');
+    },
+  }), [finishOnboardingRootfs]);
 
   const login = React.useCallback(async (password: string) => {
     if (profile === null) {
@@ -546,7 +557,7 @@ function App(): React.JSX.Element {
     return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} />;
   }
   if ((profile === null && !__DEV__) || (!__DEV__ && route === 'onboarding')) {
-    return <OnboardingScreen error={profileError} onComplete={completeOnboarding} runtimeReady={bootState !== 'error'} />;
+    return <OnboardingScreen actions={onboardingActions} rootfsInstalled={runtimeReady} />;
   }
   if (route === 'home') {
     return (
