@@ -974,6 +974,14 @@ describe('TerminalScreen', () => {
       returnPressTarget[0].props.onPressIn({} as never);
     });
     expect(vibrate).toHaveBeenCalledWith(8);
+    // Either half lights the whole key.
+    const halfColor = (testID: string) => StyleSheet.flatten(renderer.root.findByProps({testID}).props.style).backgroundColor;
+    expect(halfColor('terminal-key-return-upper')).toBe(halfColor('terminal-key-return'));
+    expect(halfColor('terminal-key-return-upper')).not.toBe('#090C0D');
+    await ReactTestRenderer.act(async () => {
+      returnPressTarget[0].props.onPressOut({} as never);
+    });
+    expect(halfColor('terminal-key-return-upper')).toBe('#090C0D');
     await ReactTestRenderer.act(async () => {
       returnKey.props.onPress();
       await flushAsync();

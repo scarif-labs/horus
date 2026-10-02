@@ -1,5 +1,5 @@
 import React from 'react';
-import {Image, StyleSheet, Text, View} from 'react-native';
+import {Image, Pressable as RNPressable, StyleSheet, Text, Vibration, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
@@ -35,37 +35,60 @@ function TerminalToolbarButton({active = false, accessibilityLabel, disabled, la
   );
 }
 
-type TerminalReturnButtonProps = Readonly<{
+type TerminalReturnHalfProps = Readonly<{
   disabled: boolean;
   onPress: () => void;
+  pressed: boolean;
+  setPressed: (pressed: boolean) => void;
 }>;
 
-function TerminalReturnUpperButton({disabled, onPress}: TerminalReturnButtonProps): React.JSX.Element {
+/**
+ * The Return key is one L-shaped key drawn as two halves, one per row. Both
+ * halves share a pressed state so a touch on either lights the whole key,
+ * and both send the same single Return.
+ */
+function useReturnKeyPress(): [boolean, (pressed: boolean) => void] {
+  const [pressed, setPressedState] = React.useState(false);
+  const setPressed = React.useCallback((next: boolean) => {
+    if (next) Vibration.vibrate(RETURN_HAPTIC_DURATION_MS);
+    setPressedState(next);
+  }, []);
+  return [pressed, setPressed];
+}
+
+const RETURN_HAPTIC_DURATION_MS = 8;
+
+function TerminalReturnUpperHalf({disabled, onPress, pressed, setPressed}: TerminalReturnHalfProps): React.JSX.Element {
   return (
-    <Pressable
-      accessibilityLabel="Return"
-      accessibilityRole="button"
+    <RNPressable
+      // Screen readers get the lower half alone, so Return is one key.
+      accessibilityElementsHidden
       disabled={disabled}
+      importantForAccessibility="no-hide-descendants"
       onPress={onPress}
-      style={styles.returnKeyUpper}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      style={[styles.returnKeyUpper, pressed && styles.returnKeyPressed]}
       testID="terminal-key-return-upper" />
   );
 }
 
-function TerminalReturnLowerButton({disabled, onPress}: TerminalReturnButtonProps): React.JSX.Element {
+function TerminalReturnLowerHalf({disabled, onPress, pressed, setPressed}: TerminalReturnHalfProps): React.JSX.Element {
   return (
-    <Pressable
+    <RNPressable
       accessibilityLabel="Return"
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
-      style={styles.returnKeyLower}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      style={[styles.returnKeyLower, pressed && styles.returnKeyPressed]}
       testID="terminal-key-return">
       <View pointerEvents="none" style={styles.returnKeyNotch} testID="terminal-key-return-notch" />
       {/* An image, not ↵: the UI font draws that glyph below the baseline. */}
       <Image source={RETURN_ICON} style={styles.returnKeyIcon} />
       <Text style={styles.returnKeyText}>RETURN</Text>
-    </Pressable>
+    </RNPressable>
   );
 }
 
@@ -88,6 +111,7 @@ export type TerminalControlsProps = Readonly<{
 }>;
 
 export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
+  const [returnPressed, setReturnPressed] = useReturnKeyPress();
   return (
     <View style={styles.controls}>
       <View style={styles.controlRows}>
@@ -109,7 +133,7 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
               />
             ) : null}
           </View>
-          <TerminalReturnUpperButton disabled={!running} onPress={onReturn} />
+          <TerminalReturnUpperHalf disabled={!running} onPress={onReturn} pressed={returnPressed} setPressed={setReturnPressed} />
         </View>
         <View style={styles.controlRow}>
           <View style={styles.controlRowMain}>
@@ -120,7 +144,7 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
             <TerminalToolbarButton accessibilityLabel="Arrow down" disabled={!running} label="↓" onPress={() => onArrow('B')} testID="terminal-key-arrow-down" />
             <TerminalToolbarButton accessibilityLabel="Arrow right" disabled={!running} label="→" onPress={() => onArrow('C')} testID="terminal-key-arrow-right" />
           </View>
-          <TerminalReturnLowerButton disabled={!running} onPress={onReturn} />
+          <TerminalReturnLowerHalf disabled={!running} onPress={onReturn} pressed={returnPressed} setPressed={setReturnPressed} />
         </View>
       </View>
     </View>
@@ -138,6 +162,7 @@ const styles = StyleSheet.create({
   modifierButtonTextActive: {color: TERMINAL_BACKGROUND},
   returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},
   returnKeyLower: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderBottomColor: uiColors.border, borderBottomWidth: 1, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopColor: TERMINAL_BACKGROUND, borderTopWidth: 1, flexDirection: 'row', height: 42, justifyContent: 'center', position: 'relative', width: 96},
+  returnKeyPressed: {backgroundColor: uiColors.accentSurface},
   returnKeyNotch: {backgroundColor: uiColors.border, height: 1, left: 0, position: 'absolute', top: 0, width: 24},
   returnKeyIcon: {height: 18, tintColor: uiColors.accent, width: 18},
   returnKeyText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', includeFontPadding: false, letterSpacing: 0.3, marginLeft: 6},
