@@ -1,7 +1,14 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
+import {ActivityIndicator, FlatList, Pressable, ScrollView, Text, View} from 'react-native';
 import {nativeKeyboardRestoreOffset, nativeTailOffset, TerminalGrid, TERMINAL_CELL_HEIGHT} from '../src/terminal/TerminalGrid';
 import type {TerminalFrame} from '../src/terminal/terminalBuffer';
+
+// react-native exports these through lazy getters, so the first render would
+// transform and evaluate them (and VirtualizedList) inside one test's 5s
+// timeout. A loaded machine with a cold transform cache exceeds it; load them
+// with the file instead, which is not bounded by a test timeout.
+void [ActivityIndicator, FlatList, Pressable, ScrollView, Text, View];
 
 const frame: TerminalFrame = {
   rows: 24, columns: 80, alternate: true, mouseTrackingMode: 'none', mouseEncoding: 'default', lines: [],
