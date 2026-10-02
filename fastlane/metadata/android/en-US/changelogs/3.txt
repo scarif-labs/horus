@@ -1,0 +1,6 @@
+- New setup: welcome, password, permissions, Linux install, and a guide to the terminal keys
+- Download mirrors for Alpine and npm (Tsinghua, USTC, Aliyun, or your own), and import the Alpine archive from a file
+- A screen that explains why an app quit, with a link to report it
+- PASTE key, single RETURN key, and tappable links that wrap across lines
+- Codex resume, layout and keyboard fixes
+- Up to two apps run at once by default
