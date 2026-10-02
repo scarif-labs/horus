@@ -2,10 +2,10 @@ import React from 'react';
 import {ActivityIndicator, StyleSheet, Text, TextInput, View} from 'react-native';
 import {AuthScreenLayout, authStyles} from './AuthScreenLayout';
 import {uiColors} from './brand';
+import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {UI_FONT_FAMILY} from './typography';
 import {
-  BackgroundPermissionRows,
   DEFAULT_BACKGROUND_PERMISSION_ACTIONS,
   useBackgroundPermissions,
   type BackgroundPermissionActions,
@@ -39,18 +39,53 @@ type PermissionsStepProps = Readonly<{
  */
 function PermissionsStep({permissions, onContinue}: PermissionsStepProps): React.JSX.Element {
   const state = useBackgroundPermissions(permissions);
+  const notificationsAllowed = state.granted?.notifications === true;
+  const batteryAllowed = state.granted?.batteryUnrestricted === true;
+  // One button walks through whatever is still missing, then continues.
+  const primary = state.allGranted
+    ? onContinue
+    : !notificationsAllowed ? state.requestNotifications : state.requestBattery;
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-permissions">
-      <View style={authStyles.card}>
-        <Text style={styles.stepTitle}>Keep your agents running</Text>
-        <Text style={styles.stepDetail}>Sessions keep working while the screen is off or you use other apps. Android needs two permissions for that.</Text>
-        <BackgroundPermissionRows state={state} />
-        <Pressable accessibilityRole="button" onPress={onContinue} style={authStyles.button} testID="permissions-continue">
-          <Text style={authStyles.buttonText}>{state.allGranted ? 'CONTINUE  →' : 'SKIP FOR NOW  →'}</Text>
+      <View style={styles.permissionsStep}>
+        <Text style={styles.permissionsTitle}>Keep your agents running</Text>
+        <Text style={styles.permissionsDetail}>Two permissions let sessions continue while the screen is off.</Text>
+        <View style={styles.checklist}>
+          <PermissionCheck allowed={notificationsAllowed} icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
+          <PermissionCheck allowed={batteryAllowed} icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
+        </View>
+        <Pressable accessibilityRole="button" onPress={primary} style={authStyles.button} testID="permissions-continue">
+          <Text style={authStyles.buttonText}>{state.allGranted ? 'CONTINUE  →' : 'ALLOW'}</Text>
         </Pressable>
-        {state.allGranted ? null : <Text style={styles.stepHint}>You can allow these later in Horus Settings.</Text>}
+        {state.allGranted ? null : (
+          <Pressable accessibilityRole="button" onPress={onContinue} style={styles.skip} testID="permissions-skip">
+            <Text style={styles.skipText}>Not now</Text>
+          </Pressable>
+        )}
       </View>
     </AuthScreenLayout>
+  );
+}
+
+type PermissionCheckProps = Readonly<{allowed: boolean; icon: 'bell' | 'battery'; label: string; onPress: () => void; testID: string}>;
+
+/** One permission: icon, name, and a check once Android reports it allowed. */
+function PermissionCheck({allowed, icon, label, onPress, testID}: PermissionCheckProps): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityLabel={allowed ? `${label}, allowed` : `Allow ${label.toLowerCase()}`}
+      accessibilityRole="button"
+      accessibilityState={{checked: allowed, disabled: allowed}}
+      disabled={allowed}
+      onPress={onPress}
+      style={styles.check}
+      testID={allowed ? `${testID}-granted` : `${testID}-allow`}>
+      <EntryIcon kind={icon} size={20} tint={allowed ? uiColors.accent : uiColors.ink} />
+      <Text style={styles.checkLabel}>{label}</Text>
+      <View style={[styles.checkMark, allowed && styles.checkMarkOn]}>
+        {allowed ? <Text style={styles.checkMarkText}>✓</Text> : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -127,7 +162,15 @@ const styles = StyleSheet.create({
   progressCopy: {flex: 1},
   progressTitle: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '700', letterSpacing: 0.4},
   progressDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 4},
-  stepTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 16, fontWeight: '800'},
-  stepDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8},
-  stepHint: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 10, textAlign: 'center'},
+  permissionsStep: {alignSelf: 'center', maxWidth: 360, width: '100%'},
+  permissionsTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
+  permissionsDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 8, textAlign: 'center'},
+  checklist: {borderBottomColor: uiColors.borderSoft, borderBottomWidth: 1, marginTop: 24},
+  check: {alignItems: 'center', borderTopColor: uiColors.borderSoft, borderTopWidth: 1, flexDirection: 'row', minHeight: 56},
+  checkLabel: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 13},
+  checkMark: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 11, borderWidth: 1.5, height: 22, justifyContent: 'center', width: 22},
+  checkMarkOn: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
+  checkMarkText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '900', includeFontPadding: false},
+  skip: {alignItems: 'center', justifyContent: 'center', marginTop: 6, minHeight: 44},
+  skipText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11},
 });

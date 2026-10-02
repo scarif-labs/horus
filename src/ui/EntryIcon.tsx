@@ -11,14 +11,17 @@ import {uiColors} from './brand';
  * - folder-outline: a GitHub repository that has not been cloned yet
  * - file: a regular file
  * - refresh: the reload action on a list
+ * - bell, battery: the background permissions
  */
-export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh';
+export type EntryIconKind = 'folder' | 'folder-outline' | 'file' | 'refresh' | 'bell' | 'battery';
 
 const SOURCES = {
   folder: require('../../assets/ui/folder.png'),
   'folder-outline': require('../../assets/ui/folder-outline.png'),
   file: require('../../assets/ui/file.png'),
   refresh: require('../../assets/ui/refresh.png'),
+  bell: require('../../assets/ui/bell.png'),
+  battery: require('../../assets/ui/battery.png'),
 } as const;
 
 const DEFAULT_TINT: Record<EntryIconKind, string> = {
@@ -26,6 +29,8 @@ const DEFAULT_TINT: Record<EntryIconKind, string> = {
   'folder-outline': uiColors.muted,
   file: uiColors.muted,
   refresh: uiColors.accent,
+  bell: uiColors.ink,
+  battery: uiColors.ink,
 };
 
 type EntryIconProps = Readonly<{kind: EntryIconKind; size?: number; tint?: string; style?: StyleProp<ImageStyle>}>;

@@ -26,14 +26,17 @@ describe('OnboardingScreen', () => {
     });
     expect(renderer?.root.findAllByProps({testID: 'profile-password'}).length).toBe(0);
     const continueText = () => renderer?.root.findByProps({testID: 'permissions-continue'}).findByType(Text).props.children;
-    expect(continueText()).toBe('SKIP FOR NOW  →');
+    expect(continueText()).toBe('ALLOW');
+    expect(renderer?.root.findAllByProps({testID: 'permissions-skip'}).length).toBeGreaterThan(0);
 
+    // The primary button asks for the first missing permission.
     await ReactTestRenderer.act(async () => {
-      renderer?.root.findByProps({testID: 'permission-notifications-allow'}).props.onPress();
+      renderer?.root.findByProps({testID: 'permissions-continue'}).props.onPress();
       await Promise.resolve();
     });
     expect(permissions.requestNotifications).toHaveBeenCalledTimes(1);
     expect(renderer?.root.findAllByProps({testID: 'permission-notifications-granted'}).length).toBeGreaterThan(0);
+    expect(continueText()).toBe('ALLOW');
 
     await ReactTestRenderer.act(async () => {
       renderer?.root.findByProps({testID: 'permission-battery-allow'}).props.onPress();
@@ -41,10 +44,27 @@ describe('OnboardingScreen', () => {
     });
     expect(permissions.requestBattery).toHaveBeenCalledTimes(1);
     expect(continueText()).toBe('CONTINUE  →');
+    expect(renderer?.root.findAllByProps({testID: 'permissions-skip'})).toHaveLength(0);
 
     await ReactTestRenderer.act(async () => {
       renderer?.root.findByProps({testID: 'permissions-continue'}).props.onPress();
     });
+    expect(renderer?.root.findAllByProps({testID: 'profile-password'}).length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+  });
+
+  test('lets the user skip both permissions with Not now', async () => {
+    const {permissions} = fakePermissions({notifications: false, batteryUnrestricted: false});
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <OnboardingScreen onComplete={jest.fn(async () => undefined)} permissions={permissions} runtimeReady />,
+      );
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'permissions-skip'}).props.onPress();
+    });
+    expect(permissions.requestNotifications).not.toHaveBeenCalled();
     expect(renderer?.root.findAllByProps({testID: 'profile-password'}).length).toBeGreaterThan(0);
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
