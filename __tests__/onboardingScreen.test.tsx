@@ -87,9 +87,9 @@ describe('OnboardingScreen', () => {
     await press('welcome-continue');
 
     await enterPassword('123');
-    expect(renderer.root.findByProps({testID: 'profile-error'}).props.children).toBe('Choose a password with at least 4 characters.');
+    expect(renderer.root.findByProps({testID: 'profile-error'}).props.children).toBe('Use at least 4 characters.');
     await enterPassword('1234', '1235');
-    expect(renderer.root.findByProps({testID: 'profile-error'}).props.children).toBe('The two passwords don’t match.');
+    expect(renderer.root.findByProps({testID: 'profile-error'}).props.children).toBe('Passwords don’t match.');
     expect(has('onboarding-permissions')).toBe(false);
     await enterPassword('1234');
     expect(has('onboarding-permissions')).toBe(true);

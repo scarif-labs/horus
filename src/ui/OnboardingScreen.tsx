@@ -142,10 +142,10 @@ function SecondaryButton({label, onPress, testID}: Readonly<{label: string; onPr
 }
 
 const WELCOME_POINTS: readonly Readonly<{title: string; detail: string}>[] = [
-  {title: 'Coding agents in your pocket', detail: 'Run Claude Code, Codex and OpenCode on this phone, no computer needed.'},
-  {title: 'A real Linux terminal', detail: 'Horus runs Alpine Linux with git, zsh and the tools agents expect.'},
-  {title: 'Your projects, here', detail: 'Clone your GitHub repositories and work on them where you are.'},
-  {title: 'Keeps going in the background', detail: 'Agents keep working while the screen is off, and Horus tells you when they need you.'},
+  {title: 'Coding agents in your pocket', detail: 'Claude Code, Codex and OpenCode. No computer needed.'},
+  {title: 'A real Linux terminal', detail: 'Alpine Linux with git and zsh.'},
+  {title: 'Your GitHub projects', detail: 'Clone and work on them anywhere.'},
+  {title: 'Runs in the background', detail: 'Get notified when an agent needs you.'},
 ];
 
 function WelcomeStep({onContinue}: Readonly<{onContinue: () => void}>): React.JSX.Element {
@@ -180,9 +180,9 @@ function PasswordStep({step, onContinue}: Readonly<{step: number; onContinue: (p
 
   const submit = () => {
     if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Choose a password with at least ${MIN_PASSWORD_LENGTH} characters.`);
+      setError(`Use at least ${MIN_PASSWORD_LENGTH} characters.`);
     } else if (password !== confirmation) {
-      setError('The two passwords don’t match.');
+      setError('Passwords don’t match.');
     } else {
       setError(undefined);
       onContinue(password);
@@ -193,12 +193,12 @@ function PasswordStep({step, onContinue}: Readonly<{step: number; onContinue: (p
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-password">
       <View style={styles.step}>
         <StepHeader
-          detail="Agents in Horus can read your code and act with your GitHub and AI accounts. The password keeps anyone who picks up your phone out of them. Horus asks for it when you open the app, and after 15 minutes in the background."
+          detail="Agents can use your code and accounts. This keeps them safe if someone picks up your phone."
           step={step}
           title="Create a password" />
         <TextInput accessibilityLabel="Create password" autoCapitalize="none" autoCorrect={false} onChangeText={setPassword} onSubmitEditing={() => confirmRef.current?.focus()} placeholder="Create password" placeholderTextColor={uiColors.subdued} returnKeyType="next" secureTextEntry style={[authStyles.input, styles.field]} submitBehavior="submit" testID="profile-password" value={password} />
         <TextInput accessibilityLabel="Repeat password" autoCapitalize="none" autoCorrect={false} onChangeText={setConfirmation} onSubmitEditing={submit} placeholder="Repeat password" placeholderTextColor={uiColors.subdued} ref={confirmRef} returnKeyType="done" secureTextEntry style={[authStyles.input, styles.field]} testID="profile-password-confirm" value={confirmation} />
-        <Text style={styles.note}>It stays on this phone. Horus can’t recover it, so pick one you’ll remember.</Text>
+        <Text style={styles.note}>Stored only on this phone. It can’t be recovered.</Text>
         {error === undefined ? null : <Text style={authStyles.error} testID="profile-error">{error}</Text>}
         <PrimaryButton label="CONTINUE  →" onPress={submit} testID="profile-continue" />
       </View>
@@ -224,10 +224,10 @@ function PermissionsStep({step, permissions, onContinue}: PermissionsStepProps):
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-permissions">
       <View style={styles.step}>
-        <StepHeader detail="Two permissions let sessions continue while the screen is off." step={step} title="Keep your agents running" />
+        <StepHeader detail="So agents keep running with the screen off." step={step} title="Keep your agents running" />
         <View style={styles.checklist}>
-          <PermissionCheck allowed={notificationsAllowed} detail="Know when an agent finishes or needs an answer." icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
-          <PermissionCheck allowed={batteryAllowed} detail="Stop Android from pausing agents to save battery." icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
+          <PermissionCheck allowed={notificationsAllowed} detail="When an agent finishes or needs you." icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
+          <PermissionCheck allowed={batteryAllowed} detail="So Android doesn’t pause agents." icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
         </View>
         <PrimaryButton label={state.allGranted ? 'CONTINUE  →' : 'ALLOW'} onPress={primary} testID="permissions-continue" />
         {state.allGranted ? null : (
@@ -314,22 +314,22 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
     : profile.kind === 'failed' && profile.stage === 'alpine-tools' ? 'failed' : 'done';
   const saveStatus: TaskStatus = profile.kind === 'saving' ? 'working'
     : profile.kind === 'failed' && profile.stage === 'profile' ? 'failed' : 'waiting';
-  const linuxLabel = rootfs.kind === 'working' && rootfs.source === 'import' ? 'Installing Alpine Linux from your file' : 'Downloading Alpine Linux';
+  const linuxLabel = rootfs.kind === 'working' && rootfs.source === 'import' ? 'Installing Linux from your file' : 'Downloading Linux';
 
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-setup">
       <View style={styles.step}>
-        <StepHeader detail="Horus is setting up Linux on this phone. This can take a few minutes on a slow connection." step={step} title="Installing Linux" />
+        <StepHeader detail="This can take a few minutes." step={step} title="Installing Linux" />
         <View accessibilityLiveRegion="polite" style={styles.tasks}>
           <SetupTask label={linuxLabel} status={linuxStatus} testID="setup-task-linux" />
-          <SetupTask label="Installing command-line tools" status={toolsStatus} testID="setup-task-tools" />
+          <SetupTask label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
           <SetupTask label="Saving your password" status={saveStatus} testID="setup-task-profile" />
         </View>
         {rootfs.kind === 'failed' ? <RootfsFailure errorCode={rootfs.errorCode} onImport={() => onRootfs('import')} onRetry={() => onRootfs('download')} /> : null}
         {profile.kind === 'failed' && profile.stage === 'alpine-tools' ? (
           <View style={styles.problem} testID="setup-tools-failed">
-            <Text style={styles.problemTitle}>The tools need the internet</Text>
-            <Text style={styles.problemDetail}>Alpine is installed, but git, zsh and the other tools couldn’t be downloaded. Try again once you’re online, or skip for now and they’ll install the first time you open a terminal.</Text>
+            <Text style={styles.problemTitle}>Tools need the internet</Text>
+            <Text style={styles.problemDetail}>Skip for now and they’ll install when you first open a terminal.</Text>
             <PrimaryButton label="TRY AGAIN" onPress={() => saveProfile(false)} testID="setup-tools-retry" />
             <SecondaryButton label="SKIP FOR NOW" onPress={() => saveProfile(true)} testID="setup-tools-skip" />
           </View>
@@ -337,7 +337,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
         {profile.kind === 'failed' && profile.stage === 'profile' ? (
           <View style={styles.problem} testID="setup-profile-failed">
             <Text style={styles.problemTitle}>Your password couldn’t be saved</Text>
-            <Text style={styles.problemDetail}>Something went wrong storing it on this phone.</Text>
+            <Text style={styles.problemDetail}>Please try again.</Text>
             <PrimaryButton label="TRY AGAIN" onPress={() => saveProfile(true)} testID="setup-profile-retry" />
           </View>
         ) : null}
@@ -367,13 +367,13 @@ function RootfsFailure({errorCode, onRetry, onImport}: Readonly<{errorCode: stri
   const offline = errorCode === 'download_failed' || errorCode === 'import_cancelled';
   return (
     <View style={styles.problem} testID="setup-linux-failed">
-      <Text style={styles.problemTitle}>{badFile ? 'That file isn’t the right one' : offline ? 'Can’t reach the internet' : 'Linux couldn’t be installed'}</Text>
+      <Text style={styles.problemTitle}>{badFile ? 'Wrong file' : offline ? 'Can’t reach the internet' : 'Linux couldn’t be installed'}</Text>
       <Text style={styles.problemDetail}>
         {badFile
-          ? 'Horus checks the file’s SHA-256 and it didn’t match. Download it again from the link below, then choose it here.'
+          ? 'Its checksum didn’t match. Download it again from the link below.'
           : offline
-            ? 'Connect to Wi-Fi or mobile data and try again. If you already have the Alpine file, or can download it on another connection, choose it from your phone instead.'
-            : `Something went wrong (${errorCode}). Try again, or choose the Alpine file from your phone.`}
+            ? 'Connect and try again, or choose the Alpine file if you have it.'
+            : `Something went wrong (${errorCode}).`}
       </Text>
       <Text selectable style={styles.url} testID="setup-rootfs-url">{PINNED_ROOTFS_URL}</Text>
       <PrimaryButton label="TRY AGAIN" onPress={onRetry} testID="setup-linux-retry" />
@@ -386,19 +386,19 @@ function RootfsFailure({errorCode, onRetry, onImport}: Readonly<{errorCode: stri
 type KeyTip = Readonly<{keys: readonly string[]; detail: string}>;
 
 const KEY_TIPS: readonly KeyTip[] = [
-  {keys: ['ESC'], detail: 'Interrupts an agent, or closes a menu.'},
-  {keys: ['↑', '↓', '←', '→'], detail: 'Move through an agent’s menus. ↑ brings back earlier commands.'},
-  {keys: ['CTRL', 'ALT'], detail: 'Tap one, then a key. CTRL then C stops a running command.'},
-  {keys: ['TAB'], detail: 'Completes file and command names.'},
-  {keys: ['PASTE'], detail: 'Pastes what you copied, like a sign-in code.'},
-  {keys: ['SHOW'], detail: 'Shows or hides the keyboard.'},
-  {keys: ['RETURN'], detail: 'Sends what you typed.'},
+  {keys: ['ESC'], detail: 'Interrupt an agent or close a menu'},
+  {keys: ['↑', '↓', '←', '→'], detail: 'Move through menus and history'},
+  {keys: ['CTRL', 'ALT'], detail: 'Tap, then a key. CTRL C stops a command'},
+  {keys: ['TAB'], detail: 'Complete names'},
+  {keys: ['PASTE'], detail: 'Paste from the clipboard'},
+  {keys: ['SHOW'], detail: 'Show or hide the keyboard'},
+  {keys: ['RETURN'], detail: 'Send'},
 ];
 
 const GESTURE_TIPS: readonly string[] = [
-  'Swipe up or down on the terminal to scroll back.',
-  'Tap a link to open it in your browser.',
-  'Back leaves an agent running. Find it again on the home screen.',
+  'Swipe to scroll',
+  'Tap a link to open it',
+  'Back keeps the agent running',
 ];
 
 /** A cheat sheet for the terminal's key row, shown once before home. */
@@ -406,7 +406,7 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
   return (
     <AuthScreenLayout brandTestID="setup" screenTestID="onboarding-keys">
       <View style={styles.step}>
-        <StepHeader detail="Phones have no Esc, Ctrl or arrow keys, so Horus puts them in a row above the keyboard." step={step} title="Using the terminal" />
+        <StepHeader detail="The keys your phone is missing sit above the keyboard." step={step} title="Using the terminal" />
         <View style={authStyles.card} testID="onboarding-key-card">
           {KEY_TIPS.map(tip => (
             <View key={tip.keys.join()} style={styles.keyTip}>
