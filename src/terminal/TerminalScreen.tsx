@@ -467,8 +467,14 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const startPtySession = React.useCallback(async (sessionToResume?: string) => {
     let sessionId: string;
     if (sessionToResume !== undefined) {
+      // The running session's terminal size is not known here: it may have
+      // been sized with the keyboard hidden, or by another screen. Leave it
+      // unknown so the first measured size resizes the session and its
+      // native parser together, and the app redraws at the size shown.
+      await waitForMeasuredSize();
+      if (!mountedRef.current) return;
       sessionId = sessionToResume;
-      requestedSizeRef.current = sizeRef.current;
+      requestedSizeRef.current = nativeHarness ? undefined : sizeRef.current;
     } else {
       await waitForMeasuredSize();
       if (!mountedRef.current) return;
@@ -504,7 +510,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setTerminalInputSessionId(nativeTerminalInput ? sessionId : undefined);
     setNativeSessionId(nativeHarness ? sessionId : undefined);
     setNativeHarnessReady(nativeHarness && sessionToResume !== undefined);
-    displayBufferRef.current = nativeHarness ? undefined : new TerminalCellBuffer(requestedSizeRef.current, {
+    displayBufferRef.current = nativeHarness ? undefined : new TerminalCellBuffer(requestedSizeRef.current ?? sizeRef.current, {
       onChange: nextFrame => {
         if (!mountedRef.current) return;
         if (toolchain !== 'shell' && installReadyRef.current && nextFrame.alternate && hasVisibleTerminalContent(nextFrame)) {

@@ -1301,6 +1301,26 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('waits for the measured size before reattaching to a running session', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.subscribeSessionEvents = jest.fn(runtime.spec.subscribeSessionEvents);
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<MeasuredTerminalScreen client={new TerminalSessionClient(runtime.spec)} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />);
+    });
+    await ReactTestRenderer.act(async () => {
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    expect(runtime.spec.subscribeSessionEvents).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-font-measure'}).props.onTextLayout({nativeEvent: {lines: [{width: 200}]}});
+      renderer.root.findByProps({testID: 'terminal-output'}).props.onLayout({nativeEvent: {layout: {width: 400, height: 190}}});
+    });
+    await ReactTestRenderer.act(flushAsync);
+    expect(runtime.spec.subscribeSessionEvents).toHaveBeenCalledWith(expect.objectContaining({sessionId: 's-1-1'}));
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('starts at the default size if the terminal is never measured', async () => {
     const runtime = fakeRuntime();
     runtime.spec.startSession = jest.fn(runtime.spec.startSession);
