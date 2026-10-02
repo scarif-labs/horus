@@ -24,7 +24,7 @@ import {
   type TerminalSessionAttachment,
 } from './session/sessionClient';
 import {TerminalCellBuffer, terminalSize, TERMINAL_BACKGROUND, TERMINAL_FOREGROUND, type TerminalFrame, type TerminalSize} from './terminalBuffer';
-import {TerminalGrid, TERMINAL_CELL_HEIGHT} from './TerminalGrid';
+import {TerminalGrid, TERMINAL_CELL_HEIGHT, type NativeScreenState} from './TerminalGrid';
 import {terminalMouseWheelSequence, type TerminalMouseWheel} from './terminalMouse';
 import {
   installRootfs,
@@ -320,7 +320,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
   const installStageRef = React.useRef<string | undefined>(undefined);
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
-  const [nativeHasContent, setNativeHasContent] = React.useState(false);
+  const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
   const [error, setError] = React.useState<string | undefined>(undefined);
   const sessionLimitReached = error === 'session_limit_reached';
@@ -748,7 +748,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     installStageRef.current = undefined;
     setInstallStage(undefined);
     setInstallLogVisible(false);
-    setNativeHasContent(false);
+    setNativeScreen({hasContent: false, alternate: false});
     displayBufferRef.current?.dispose();
     displayBufferRef.current = undefined;
     setNativeSessionId(undefined);
@@ -1002,14 +1002,17 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // An install stage on the wire means first-run provisioning is running:
   // show the step-by-step screen instead of the apk transcript until the app
   // paints. A failed stage hands the screen back to the log and its error.
+  // A native session draws its own frame. OpenCode counts as painted once
+  // its full-screen (alternate) view has text; the others at any text.
+  const nativePainted = nativeScreen.hasContent && (!nativeOpenCode || nativeScreen.alternate);
+  const appStarting = startupOverlay !== undefined && (nativeSessionId === undefined || !nativePainted);
   const installFailed = installStage?.endsWith('_failed') === true;
   const installActive = installStage !== undefined && !installFailed &&
     toolchain !== 'shell' && (state === 'starting' || state === 'running') &&
-    (!readyMarkerSeenRef.current || startupOverlay !== undefined);
+    (!readyMarkerSeenRef.current || appStarting);
   const showInstallProgress = installActive && !installLogVisible;
-  // An app that is already installed gets the short "Starting …" screen. A
-  // native session paints its own frame, so the cover lifts at first text.
-  const showStartup = !installActive && startupOverlay !== undefined && (nativeSessionId === undefined || !nativeHasContent);
+  // An app that is already installed gets the short "Starting …" screen.
+  const showStartup = !installActive && appStarting;
 
   return (
     <>
@@ -1026,7 +1029,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
               cellWidth={cellWidth}
               running={running}
-              onNativeContentChange={setNativeHasContent}
+              onNativeScreenChange={setNativeScreen}
               onCellWidth={setCellWidth}
               onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}

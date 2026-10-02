@@ -86,6 +86,8 @@ type TerminalTouch = Pick<NativeTouchEvent, 'identifier' | 'pageX' | 'pageY'> & 
   mouseEncoding: TerminalFrame['mouseEncoding'];
 };
 
+export type NativeScreenState = Readonly<{hasContent: boolean; alternate: boolean}>;
+
 type Props = Readonly<{
   frame: TerminalFrame | undefined;
   nativeSessionId?: string;
@@ -94,8 +96,8 @@ type Props = Readonly<{
   cellWidth: number;
   running: boolean;
   placeholder?: string;
-  /** Native sessions only: whether the screen shows any visible text yet. */
-  onNativeContentChange?: (hasContent: boolean) => void;
+  /** Native sessions only: whether the screen shows text, and on which screen. */
+  onNativeScreenChange?: (screen: NativeScreenState) => void;
   onCellWidth: (width: number) => void;
   onLayout: (event: LayoutChangeEvent) => void;
   onLinkPress: (url: string) => void;
@@ -297,7 +299,7 @@ const TerminalRowView = React.memo(({row, rowKey, columns, cellWidth, links, onL
 });
 
 /** Each glyph occupies the parser's columns, never Android's wrapped prose. */
-export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', onNativeContentChange, onCellWidth, onLayout, onLinkPress, onTap, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
+export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', onNativeScreenChange, onCellWidth, onLayout, onLinkPress, onTap, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
   const list = React.useRef<FlatList<TerminalRow>>(null);
   const nativeScroll = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const rowKeyState = React.useRef<TerminalRowKeyState>({keys: new WeakMap(), next: 0});
@@ -307,7 +309,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const [displayFrame, setDisplayFrame] = React.useState(frame);
   const [nativeFrameMeta, setNativeFrameMeta] = React.useState<NativeTerminalFrameMeta>({alternate: false, contentRows: nativeRows, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
   const nativeFrameMetaRef = React.useRef(nativeFrameMeta);
-  const nativeHasContent = React.useRef(false);
+  const nativeScreen = React.useRef<NativeScreenState>({hasContent: false, alternate: false});
   nativeFrameMetaRef.current = nativeFrameMeta;
   const touchStart = React.useRef<TerminalTouch | null>(null);
   const nativeScrollOffset = React.useRef(0);
@@ -454,16 +456,16 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     const lastContentRow = Number.isInteger(event.nativeEvent.lastContentRow) ? event.nativeEvent.lastContentRow : contentRows - 1;
     nativeCursorRow.current = cursorRow;
     const hasContent = lastContentRow >= 0;
-    if (hasContent !== nativeHasContent.current) {
-      nativeHasContent.current = hasContent;
-      onNativeContentChange?.(hasContent);
+    if (hasContent !== nativeScreen.current.hasContent || nextAlternate !== nativeScreen.current.alternate) {
+      nativeScreen.current = {hasContent, alternate: nextAlternate};
+      onNativeScreenChange?.(nativeScreen.current);
     }
     setNativeFrameMeta(current => current.alternate === nextAlternate && current.contentRows === contentRows &&
       current.lastContentRow === lastContentRow &&
       current.mouseTracking === mouseTracking && current.mouseSgr === mouseSgr
       ? current
       : {alternate: nextAlternate, contentRows, cursorRow, lastContentRow, mouseTracking, mouseSgr});
-  }, [onNativeContentChange]);
+  }, [onNativeScreenChange]);
 
   const handleTouchStart = React.useCallback((event: GestureResponderEvent) => {
     if (event.nativeEvent.touches.length > 1) {
