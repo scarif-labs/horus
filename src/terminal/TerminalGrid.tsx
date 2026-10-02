@@ -454,7 +454,26 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (!Number.isInteger(contentRows) || contentRows < 1) return;
     if (!Number.isInteger(cursorRow)) return;
     const lastContentRow = Number.isInteger(event.nativeEvent.lastContentRow) ? event.nativeEvent.lastContentRow : contentRows - 1;
+    const cursorMoved = nativeCursorRow.current !== cursorRow;
     nativeCursorRow.current = cursorRow;
+    // A full-screen app taller than the visible area (the keyboard is open
+    // but the PTY keeps its full height) may move its prompt after the
+    // keyboard opened, e.g. Codex drawing its composer at the bottom once it
+    // starts. Scroll just far enough to keep the cursor in view. The user
+  // cannot scroll this view themselves, so there is no position to keep.
+    const viewportHeight = nativeViewportHeight.current;
+    if (nextAlternate && cursorMoved && !nativeRestorePending.current && viewportHeight > 0) {
+      const target = nativeKeyboardRestoreOffset({
+        previousOffset: nativeScrollOffset.current,
+        contentRows,
+        viewportHeight,
+        cursorRow,
+      });
+      if (target !== nativeScrollOffset.current) {
+        nativeScrollOffset.current = target;
+        requestAnimationFrame(() => nativeScroll.current?.scrollTo({y: target, animated: false}));
+      }
+    }
     const hasContent = lastContentRow >= 0;
     if (hasContent !== nativeScreen.current.hasContent || nextAlternate !== nativeScreen.current.alternate) {
       nativeScreen.current = {hasContent, alternate: nextAlternate};
