@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import {UI_FONT_FAMILY} from '../ui/typography';
 
-import type {Spec} from '../native/NativeTerminalRuntime';
+import nativeTerminalRuntime, {type Spec} from '../native/NativeTerminalRuntime';
 import {NativeTerminalInput} from '../native/NativeTerminalInput';
 import {
   TERMINAL_SESSION_DEFAULT_COLUMNS,
@@ -44,6 +44,7 @@ import {uiColors} from './palette';
 import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastInstallStage} from './InstallProgressOverlay';
 import {SessionLimitOverlay} from './SessionLimitOverlay';
 import {readTerminalPaste} from './terminalPaste';
+import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
 
 export type TerminalScreenProps = Readonly<{
   client?: TerminalSessionClient;
@@ -317,6 +318,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
   const installStageRef = React.useRef<string | undefined>(undefined);
   const [installDownload, setInstallDownload] = React.useState<string | undefined>(undefined);
+  // Set when an app quits on its own, to show why and offer a restart.
+  const [appExit, setAppExit] = React.useState<AppExit | undefined>(undefined);
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
   const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
@@ -673,6 +676,24 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           deliverCommandFailure();
           return;
         }
+        if (toolchain !== 'shell' && exit.reason === 'process_exit') {
+          // Read the last screen before the buffer is reused; a native
+          // session's lives in the native engine until taken once.
+          const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
+            .map(line => line.text.trimEnd()).join('\n').trim();
+          const exitInfo: AppExit = {
+            ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
+            ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
+          };
+          const screen = nativeHarness && nativeTerminalRuntime !== null
+            ? nativeTerminalRuntime.takeExitScreen(exit.sessionId).catch(() => null)
+            : Promise.resolve(localScreen);
+          void screen.then(output => {
+            if (!mountedRef.current) return;
+            Keyboard.dismiss();
+            setAppExit(output ? {...exitInfo, output} : exitInfo);
+          });
+        }
         handleSessionExited(exit.signal);
       },
       onProtocolError: protocolError => {
@@ -731,11 +752,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     }
   }, [client, completionMarker, deliverCommandFailure, disposeAttachment, handleSessionExited, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain]);
 
-  const start = React.useCallback(async () => {
+  /** Starts (or resumes) the session; [fresh] ignores the one to resume. */
+  const start = React.useCallback(async (fresh = false) => {
     if (activeSessionRef.current !== undefined || startingRef.current) return;
     startingRef.current = true;
     setState('starting');
     setError(undefined);
+    setAppExit(undefined);
     setOutputHistoryGap(false);
     githubLoginOutputTailRef.current = '';
     openedGithubLoginUrlsRef.current.clear();
@@ -758,7 +781,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setNativeHarnessReady(false);
     setFrame(undefined);
     try {
-      if (existingSessionId !== undefined) {
+      if (existingSessionId !== undefined && !fresh) {
         installReadyRef.current = true;
         await startPtySession(existingSessionId);
         return;
@@ -908,6 +931,24 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       if (sequence !== undefined && mountedRef.current) await write(sequence);
     })();
   }, [nativeSessionId, write]);
+
+  const restartApp = React.useCallback(() => {
+    void start(true);
+  }, [start]);
+
+  const reportAppExit = React.useCallback(() => {
+    if (appExit === undefined) return;
+    void (async () => {
+      const status = await readRuntimeStatus().catch(() => undefined);
+      const url = appExitIssueUrl(toolchain, appExit, {
+        ...(status !== undefined && status.kind !== 'error' ? {appVersion: status.appVersion} : {}),
+        androidVersion: String(Platform.Version),
+      });
+      await openTrustedTerminalLink(url).catch(() => {
+        if (mountedRef.current) setError('link_unavailable');
+      });
+    })();
+  }, [appExit, readRuntimeStatus, toolchain]);
 
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
     const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
@@ -1064,6 +1105,15 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
                   <Text style={styles.logToggleText}>{installLogVisible ? 'SHOW PROGRESS' : 'SHOW LOG'}</Text>
                 </Pressable>
               </View>
+            ) : null}
+            {appExit !== undefined && state === 'stopped' ? (
+              <AppExitedOverlay
+                exit={appExit}
+                onBack={onHome ?? onBack}
+                onReport={reportAppExit}
+                onRestart={restartApp}
+                toolchain={toolchain}
+              />
             ) : null}
             <SessionLimitOverlay
               client={client}

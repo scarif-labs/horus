@@ -526,6 +526,8 @@ export interface Spec extends TurboModule {
    * native session's current frame, or null. Call only on a tap.
    */
   terminalLinkAt(sessionId: string, row: number, column: number): Promise<string | null>;
+  /** The text of an exited native session's last screen, once; or null. */
+  takeExitScreen(sessionId: string): Promise<string | null>;
   /** The clipboard's text, or null when it holds none (or too much). */
   readClipboardText(): Promise<string | null>;
   /** Whether the app in a native session turned on bracketed paste. */

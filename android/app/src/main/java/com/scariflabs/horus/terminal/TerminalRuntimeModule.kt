@@ -130,6 +130,8 @@ class TerminalRuntimeModule(
 
   private val redrawNudgeCounter = AtomicLong(0)
   private val lastRedrawNudgeAt = ConcurrentHashMap<String, Long>()
+  // Insertion-ordered so the oldest screen goes first.
+  private val exitScreens = LinkedHashMap<String, String>()
 
   private val visibilityListener = object : LifecycleEventListener {
     override fun onHostResume() = sessionServiceClient.reportUiVisibility(true)
@@ -250,6 +252,7 @@ class TerminalRuntimeModule(
       TerminalSessionServiceProtocol.EVENT_EXIT -> {
         val reason = event.getString(TerminalSessionServiceProtocol.KEY_EXIT_REASON) ?: return
         if (!TerminalSessionContract.isValidStopReason(reason)) return
+        rememberExitScreen(sessionId)
         NativeTerminalEngineRegistry.close(sessionId)
         nativeAckBatcher.clear(sessionId)
         lastRedrawNudgeAt.remove(sessionId)
@@ -1181,6 +1184,30 @@ class TerminalRuntimeModule(
     promise.resolve(frame?.let { NativeTerminalLinks.urlAt(it.lines, rowIndex, column.toInt()) })
   }
 
+  /**
+   * Keeps the text of a native session's last screen once it exits, so the
+   * app can show why it quit. Held in memory only, for a few sessions, until
+   * the screen takes it.
+   */
+  private fun rememberExitScreen(sessionId: String) {
+    val lines = NativeTerminalEngineRegistry.get(sessionId)?.currentFrame()?.lines ?: return
+    val text = lines.map { row -> row.text.joinToString("").trimEnd() }
+      .dropLastWhile(String::isEmpty)
+      .takeLast(MAX_EXIT_SCREEN_LINES)
+      .joinToString("\n")
+      .trim('\n')
+    if (text.isEmpty()) return
+    synchronized(exitScreens) {
+      exitScreens[sessionId] = text
+      while (exitScreens.size > MAX_EXIT_SCREENS) exitScreens.remove(exitScreens.keys.first())
+    }
+  }
+
+  /** The last screen of a native session that exited, once; or null. */
+  override fun takeExitScreen(sessionId: String, promise: Promise) {
+    promise.resolve(synchronized(exitScreens) { exitScreens.remove(sessionId) })
+  }
+
   /** The clipboard's text for the PASTE key, or null when it holds none. */
   override fun readClipboardText(promise: Promise) {
     if (isInvalidated()) {
@@ -1404,6 +1431,8 @@ class TerminalRuntimeModule(
     const val NATIVE_READY_SCAN_CHARS = 64
     const val MAX_CLIPBOARD_BASE64_CHARS = 65_536
     const val MAX_PASTE_CHARS = 262_144
+    const val MAX_EXIT_SCREEN_LINES = 40
+    const val MAX_EXIT_SCREENS = 4
     const val LOG_TAG = "HorusTerminal"
     const val GUEST_FILE_IDLE_SECONDS = 30L
     const val GUEST_FILE_QUEUE_CAPACITY = 8

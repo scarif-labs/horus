@@ -369,6 +369,84 @@ describe('TerminalScreen', () => {
     expect(runtime.listeners).toHaveLength(0);
   });
 
+  test('shows why an app quit, with its last screen, a restart, and a prefilled issue link', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    runtime.spec.startSession = jest.fn(runtime.spec.startSession);
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const onHome = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+      );
+      await flushAsync();
+    });
+    const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_TOOLCHAIN_READY\nError: failed to read start time\n')});
+      await flushAsync();
+    });
+    expect(has('terminal-app-exited')).toBe(false);
+
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 1});
+      await flushAsync();
+    });
+    expect(has('terminal-app-exited')).toBe(true);
+    expect(renderer.root.findByProps({testID: 'terminal-app-exited-detail'}).props.children).toBe('Exit code 1');
+    expect(renderer.root.findByProps({testID: 'terminal-app-exited-output'}).props.children).toContain('Error: failed to read start time');
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-app-report'}).props.onPress();
+      await flushAsync();
+    });
+    expect(openURL).toHaveBeenCalledTimes(1);
+    const issueUrl = String(openURL.mock.calls[0][0]);
+    expect(issueUrl.startsWith('https://github.com/scarif-labs/horus/issues/new?title=Codex%20quit%20unexpectedly&body=')).toBe(true);
+    expect(decodeURIComponent(issueUrl)).toContain('Error: failed to read start time');
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-app-back'}).props.onPress();
+    });
+    expect(onHome).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-app-restart'}).props.onPress();
+      await flushAsync();
+    });
+    expect(runtime.spec.startSession).toHaveBeenCalledTimes(2);
+    expect(has('terminal-app-exited')).toBe(false);
+
+    openURL.mockRestore();
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('says an app closed, without an issue link, when it exits cleanly', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="claude" toolchain="claude" />);
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_TOOLCHAIN_READY\nbye\n')});
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 0});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-exited'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-report'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-exited-detail'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('shows install progress instead of the apk transcript on first launch, with the log one tap away', async () => {
     const runtime = fakeRuntime();
     const client = new TerminalSessionClient(runtime.spec, handler => {
