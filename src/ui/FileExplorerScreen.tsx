@@ -246,7 +246,7 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
                 <Text numberOfLines={2} style={styles.pathText} testID="file-current-path">{pathLabel(root, path)}</Text>
               </View>
               <Pressable accessibilityLabel="Refresh folder" accessibilityRole="button" disabled={loading} onPress={() => { void refresh(root, path); }} style={styles.refreshButton} testID="file-refresh">
-                <Text style={styles.refreshText}>{loading ? '…' : '↻'}</Text>
+                {loading ? <Text style={styles.refreshText}>…</Text> : <EntryIcon kind="refresh" size={20} style={styles.refreshIcon} />}
               </Pressable>
             </View>
             {exportConfirming ? (
@@ -339,6 +339,7 @@ const styles = StyleSheet.create({
   pathText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '700', marginTop: 5},
   refreshButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 7, borderWidth: 1, height: 38, justifyContent: 'center', marginLeft: 10, width: 42},
   refreshText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800'},
+  refreshIcon: {marginRight: 0},
   exportButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', marginBottom: 9, minHeight: 42, paddingHorizontal: 12},
   exportButtonText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.4},
   exportPanel: {backgroundColor: uiColors.panel, borderColor: uiColors.accent, borderRadius: 8, borderWidth: 1, marginBottom: 9, padding: 12},
