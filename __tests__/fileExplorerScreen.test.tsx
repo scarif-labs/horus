@@ -1,4 +1,5 @@
 import React from 'react';
+import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import {BackHandler} from 'react-native';
 import {FileExplorerScreen} from '../src/ui/FileExplorerScreen';
@@ -41,11 +42,11 @@ describe('FileExplorerScreen', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
 
-    const backButton = renderer?.root.findByProps({testID: 'file-explorer-back'});
+    const backButton = renderer?.root.findAll(node => node.props.testID === 'file-explorer-back' && node.props.accessibilityLabel !== undefined)[0];
     const headerAction = renderer?.root.findByType(BrandHeader).props.action as React.ReactElement<{testID?: string}>;
     expect(headerAction.props.testID).toBe('file-explorer-back');
     expect(backButton?.props.accessibilityLabel).toBe('Back to home');
-    expect(backButton?.props.children.props.children).toBe('menu ^');
+    expect(backButton?.findByType(Text).props.children).toBe('BACK');
     await ReactTestRenderer.act(async () => {
       backButton?.props.onPress();
     });

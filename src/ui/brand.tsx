@@ -2,6 +2,7 @@ import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 import {BrandMark} from '../terminal/BrandMark';
 import {uiColors} from '../terminal/palette';
+import {InteractivePressable as Pressable} from './InteractivePressable';
 import {HORUS_WORDMARK_FONT_FAMILY, UI_FONT_FAMILY} from './typography';
 
 export {uiColors};
@@ -34,7 +35,24 @@ export function BrandHeader({title, eyebrow = 'HORUS', meta = 'v0.1', action}: B
   );
 }
 
+type BrandBackButtonProps = Readonly<{
+  onPress: () => void;
+  testID: string;
+  accessibilityLabel?: string;
+}>;
+
+/** The BACK button in a screen header; every screen uses this one. */
+export function BrandBackButton({onPress, testID, accessibilityLabel = 'Back to home'}: BrandBackButtonProps): React.JSX.Element {
+  return (
+    <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" onPress={onPress} style={styles.back} testID={testID}>
+      <Text style={styles.backText}>BACK</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  back: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 9, borderWidth: 1, height: 38, justifyContent: 'center', marginLeft: 8, minWidth: 68, paddingHorizontal: 10},
+  backText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.6},
   header: {marginBottom: 12, paddingTop: 8},
   headerRow: {alignItems: 'center', flexDirection: 'row', height: 60},
   divider: {backgroundColor: uiColors.border, height: 44, marginRight: 10, width: 1},

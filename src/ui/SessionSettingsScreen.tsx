@@ -2,7 +2,7 @@ import React from 'react';
 import {Linking, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BackgroundPermissionsPanel} from './BackgroundPermissions';
-import {BrandHeader, uiColors} from './brand';
+import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {DownloadSourcesPanel} from './DownloadSourcesPanel';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {RemoteAccessPanel} from './RemoteAccessPanel';
@@ -89,14 +89,7 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
           title="Settings"
           meta={null}
           action={(
-            <Pressable
-              accessibilityLabel="Back"
-              accessibilityRole="button"
-              onPress={onBack}
-              style={styles.backButton}
-              testID="settings-back">
-              <Text style={styles.backText}>BACK</Text>
-            </Pressable>
+            <BrandBackButton onPress={onBack} testID="settings-back" />
           )}
         />
 
@@ -169,6 +162,4 @@ const styles = StyleSheet.create({
   footer: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 14, marginHorizontal: 4, marginTop: 8},
   errorRow: {alignItems: 'center', flexDirection: 'row', marginHorizontal: 4, marginTop: 8},
   error: {color: uiColors.danger, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 14},
-  backButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 7, borderWidth: 1, justifyContent: 'center', minHeight: 32, minWidth: 58, paddingHorizontal: 8},
-  backText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800'},
 });

@@ -47,11 +47,11 @@ describe('ProjectHubScreen', () => {
     const onBack = jest.fn();
     const renderer = await renderHub({onBack, toolName: 'Claude Code'});
 
-    const menuButton = renderer.root.findByProps({testID: 'project-hub-back'});
+    const menuButton = renderer.root.findAll(node => node.props.testID === 'project-hub-back' && node.props.accessibilityLabel !== undefined)[0];
     const header = renderer.root.findByType(BrandHeader);
     expect((header.props.action as React.ReactElement<{testID?: string}>).props.testID).toBe('project-hub-back');
     expect(menuButton.props.accessibilityLabel).toBe('Back to home');
-    expect(menuButton.props.children.props.children).toBe('menu ^');
+    expect(menuButton.findByType(Text).props.children).toBe('BACK');
     expect(header.props.title).toBe('Choose project');
     expect(header.props.eyebrow).toBe('OPEN IN CLAUDE CODE');
     await press(renderer, 'project-hub-back');

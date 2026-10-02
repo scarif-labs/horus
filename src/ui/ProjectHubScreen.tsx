@@ -2,7 +2,7 @@ import React from 'react';
 import {ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
 import {ScreenShell} from '../screen/ScreenShell';
-import {BrandHeader, uiColors} from './brand';
+import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import type {ProjectSummary} from '../projects/projectTypes';
 import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
@@ -90,14 +90,7 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
           title="Choose project"
           meta={null}
           action={(
-            <Pressable
-              accessibilityLabel="Back to home"
-              accessibilityRole="button"
-              onPress={onBack}
-              style={styles.menuButton}
-              testID="project-hub-back">
-              <Text style={styles.menuButtonText}>menu ^</Text>
-            </Pressable>
+            <BrandBackButton onPress={onBack} testID="project-hub-back" />
           )}
         />
 
@@ -259,8 +252,6 @@ function ProjectRow({accessibilityLabel, detail, first, glyph, name, onPress, tr
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 30, paddingTop: 2},
-  menuButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 9, borderWidth: 1, height: 38, justifyContent: 'center', marginLeft: 8, paddingHorizontal: 10},
-  menuButtonText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '800'},
   tabs: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, flexDirection: 'row', gap: 4, marginTop: 4, padding: 4},
   tab: {alignItems: 'center', borderRadius: 7, flex: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: 6},
   tabActive: {backgroundColor: uiColors.accent},

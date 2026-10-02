@@ -3,7 +3,7 @@ import {Image, Linking, ScrollView, StyleSheet, Text, View} from 'react-native';
 import type {GithubAccount} from '../projects/githubRepositories';
 import {ScreenShell} from '../screen/ScreenShell';
 import {InteractivePressable as Pressable} from './InteractivePressable';
-import {BrandHeader, uiColors} from './brand';
+import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {UI_FONT_FAMILY} from './typography';
 
 export type GithubAccountScreenProps = Readonly<{
@@ -31,9 +31,7 @@ export function GithubAccountScreen({account, onBack, onLogout, error}: GithubAc
           title="GitHub"
           meta={null}
           action={(
-            <Pressable accessibilityLabel="Back to home" accessibilityRole="button" onPress={onBack} style={styles.backButton} testID="github-account-back">
-              <Text style={styles.backText}>← BACK</Text>
-            </Pressable>
+            <BrandBackButton onPress={onBack} testID="github-account-back" />
           )}
         />
 
@@ -60,8 +58,6 @@ export function GithubAccountScreen({account, onBack, onLogout, error}: GithubAc
 
 const styles = StyleSheet.create({
   content: {flexGrow: 1, paddingHorizontal: 18, paddingBottom: 24},
-  backButton: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 9, borderWidth: 1, height: 38, justifyContent: 'center', paddingHorizontal: 9},
-  backText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.3},
   accountCard: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, marginTop: 4, padding: 18},
   avatarFrame: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 9, height: 88, justifyContent: 'center', width: 88},
   avatar: {height: 70, width: 70},

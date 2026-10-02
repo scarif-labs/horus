@@ -13,7 +13,7 @@ import {
   type GuestFileRoot,
 } from '../files/fileExplorer';
 import {ScreenShell} from '../screen/ScreenShell';
-import {BrandHeader, uiColors} from './brand';
+import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {EntryIcon} from './EntryIcon';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 
@@ -216,14 +216,7 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
           title="Workspace"
           meta={null}
           action={(
-            <Pressable
-              accessibilityLabel="Back to home"
-              accessibilityRole="button"
-              onPress={onBack}
-              style={styles.menuArrow}
-              testID="file-explorer-back">
-              <Text style={styles.menuArrowText}>menu ^</Text>
-            </Pressable>
+            <BrandBackButton onPress={onBack} testID="file-explorer-back" />
           )}
         />
 
@@ -324,8 +317,6 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 26},
-  menuArrow: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 9, borderWidth: 1, height: 38, justifyContent: 'center', marginLeft: 8, paddingHorizontal: 10},
-  menuArrowText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '800'},
   backText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.4},
   rootSelector: {flexDirection: 'row', gap: 8, marginBottom: 16},
   rootButton: {alignItems: 'flex-start', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 9, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 56, paddingHorizontal: 12},

@@ -151,6 +151,6 @@ const styles = StyleSheet.create({
   closeDisabled: {opacity: 0.5},
   closeText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.5},
   error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 12, textAlign: 'center'},
-  back: {alignItems: 'center', alignSelf: 'stretch', borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, justifyContent: 'center', marginTop: 20, minHeight: 46},
+  back: {alignItems: 'center', alignSelf: 'stretch', borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, justifyContent: 'center', marginTop: 20, minHeight: 42},
   backText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
 });
