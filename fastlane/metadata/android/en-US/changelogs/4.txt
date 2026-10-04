@@ -1,0 +1,1 @@
+- Description fix: Codex is free software (Apache-2.0); only Claude Code is proprietary
