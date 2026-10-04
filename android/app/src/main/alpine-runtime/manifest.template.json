@@ -9,7 +9,7 @@
         "path": "native/proot",
         "repository": "https://github.com/termux/proot",
         "revision": "7266fb3e8516535682f5a9c8f3a7e70f6506eddb",
-        "license": "GPL-2.0-only"
+        "license": "GPL-2.0-or-later"
       },
       {
         "name": "libtalloc",

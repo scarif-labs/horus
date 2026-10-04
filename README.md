@@ -53,15 +53,15 @@ build recipe (`metadata/com.scariflabs.horus.yml`) is in
 - **NonFreeNet.** Horus downloads Alpine Linux, its packages, and the coding
   agents from their upstream servers. Claude Code and Codex need accounts with
   their providers.
-- **NonFreeAdd.** Horus offers to install Claude Code and Codex, which are
-  proprietary. OpenCode and the plain shell are free software. Horus never
-  handles provider credentials; sign-in happens inside each CLI.
+- **NonFreeAdd.** Horus offers to install Claude Code, which is proprietary.
+  Codex (Apache-2.0), OpenCode, and the plain shell are free software. Horus
+  never handles provider credentials; sign-in happens inside each CLI.
 
 ### What is built from source
 
 - **PRoot, talloc, and libandroid-shmem** are compiled during the Gradle build
   by [`scripts/native/build-proot-runtime.sh`](scripts/native/build-proot-runtime.sh):
-  - `native/proot`: submodule, [termux/proot](https://github.com/termux/proot) v5.1.107.92, GPL-2.0;
+  - `native/proot`: submodule, [termux/proot](https://github.com/termux/proot) v5.1.107.92, GPL-2.0-or-later;
   - `native/libandroid-shmem`: submodule, [termux/libandroid-shmem](https://github.com/termux/libandroid-shmem) v0.7, BSD-3-Clause;
   - `native/talloc`: talloc 2.4.3 core sources, vendored, LGPL-3.0-or-later.
 

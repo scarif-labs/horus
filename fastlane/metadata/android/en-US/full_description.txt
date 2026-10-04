@@ -15,6 +15,6 @@
 <p><b>Things to know</b></p>
 <ul>
 <li>Requires an ARM64 (arm64-v8a) device.</li>
-<li>The Alpine system, its packages, and the coding agents are downloaded from their upstream sources at runtime. Claude Code and Codex are proprietary tools that need accounts with their providers.</li>
+<li>The Alpine system, its packages, and the coding agents are downloaded from their upstream sources at runtime. Claude Code and Codex need accounts with their providers, and Claude Code is proprietary.</li>
 <li>Android's app sandbox is the only security boundary. PRoot emulates user IDs but provides no kernel isolation, so do not run code you do not trust.</li>
 </ul>
