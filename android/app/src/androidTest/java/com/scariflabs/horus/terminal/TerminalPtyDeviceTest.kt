@@ -200,10 +200,13 @@ class TerminalPtyDeviceTest {
       val rootfsDir = store.activeRootfsDir()
       assertTrue(rootfsDir != null && rootfsDir.isDirectory)
 
+      // This byte/CPR gate expects the minirootfs BusyBox shell prompt.
+      // Select it explicitly; the app's default zsh needs provisioning and
+      // performs different prompt negotiation.
       // Session 1: the full interactive gate.
       val sessionId = supervisor.nextSessionId()
       listener.currentSessionId = sessionId
-      val start = supervisor.start(sessionId, launcher.interactiveShellLaunchSpec(rootfsDir!!, paths.home).let {
+      val start = supervisor.start(sessionId, launcher.interactiveShellLaunchSpec(rootfsDir!!, paths.home, sessionCommand = "exec /bin/sh -l").let {
         TerminalSessionSupervisor.StartSpec(
           argv = it.argv,
           environment = it.environment,
@@ -412,7 +415,7 @@ class TerminalPtyDeviceTest {
       val secondId = supervisor.nextSessionId()
       sink.seqs.clear()
       listener.currentSessionId = secondId
-      val second = supervisor.start(secondId, launcher.interactiveShellLaunchSpec(rootfsDir, paths.home).let {
+      val second = supervisor.start(secondId, launcher.interactiveShellLaunchSpec(rootfsDir, paths.home, sessionCommand = "exec /bin/sh -l").let {
         TerminalSessionSupervisor.StartSpec(
           argv = it.argv,
           environment = it.environment,

@@ -113,6 +113,8 @@ class TerminalSessionService : Service() {
   private var clientBinder: IBinder? = null
   private var clientDeathRecipient: IBinder.DeathRecipient? = null
   @Volatile private var stopping = false
+  private val startedForWork = AtomicBoolean(false)
+  private val recoveryQueued = AtomicBoolean(false)
 
   private val sessionEventListener = object : TerminalSessionSupervisor.EventListener {
     override fun onSessionOutput(sessionId: String, seq: Long, chunk: ByteArray) {
@@ -173,11 +175,11 @@ class TerminalSessionService : Service() {
       )
       // Journal I/O must not block the supervisor's reaper thread.
       enqueueWorker {
-        refreshSessionNotifications()
         sessionRecords.remove(info.sessionId)
         runCatching { journal.remove(info.sessionId) }
         histories.remove(info.sessionId)
         clearSessionTimings(info.sessionId)
+        refreshSessionNotifications()
         maybeStopIfIdle()
       }
     }
@@ -231,35 +233,66 @@ class TerminalSessionService : Service() {
     android.util.Log.i(LOG_TAG, "service_created")
     TerminalDebugLog.record(this, "service_created")
     createNotificationChannel()
-    startForeground(NOTIFICATION_ID, buildNotification())
     journal.read().forEach { record -> sessionRecords[record.sessionId] = record }
-    enqueueWorker { restorePersistedSessions() }
-    // Remote access is opt-in; bring it back after Android restarts the service.
-    if (remoteStore.isEnabled()) enqueueWorker { remoteServer.start() }
-    android.util.Log.i(LOG_TAG, "service_restore_queued records=${sessionRecords.size}")
-    TerminalDebugLog.record(this, "service_restore_queued records=${sessionRecords.size}")
+    // Creation alone (including a bound-only client or an idle sticky restart)
+    // does not justify foreground work. Promotion follows an explicit start
+    // or a request that actually owns work.
+  }
+
+  private fun lifecycleWork() = TerminalServiceLifecycle.Work(
+    sessions = sessionRecords.isNotEmpty() ||
+      (supervisorDelegate.isInitialized() && supervisor.activeSessionIds().isNotEmpty()),
+    provisioning = provisionInProgress.get(),
+    remoteAccess = remoteStore.isEnabled() || isRemoteActive(),
+  )
+
+  private fun queueRecovery() {
+    if (!recoveryQueued.compareAndSet(false, true)) return
+    enqueueWorker {
+      if (lifecycleWork().durable) retainForWork()
+      restorePersistedSessions()
+      if (remoteStore.isEnabled()) remoteServer.start()
+      refreshSessionNotifications()
+    }
+  }
+
+  /** Give bound-only work a started lifetime before the UI can disappear. */
+  private fun retainForWork() {
+    if (!lifecycleWork().durable) return
+    startForeground(NOTIFICATION_ID, buildNotification())
+    if (startedForWork.compareAndSet(false, true)) {
+      startService(Intent(this, TerminalSessionService::class.java).setAction(TerminalSessionServiceProtocol.ACTION))
+    }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    when (intent?.action) {
-      ACTION_STOP -> {
-        enqueueWorker { stopServicePermanently() }
-        return START_NOT_STICKY
-      }
-      RemoteAccess.ACTION_START -> {
-        // Started with startForegroundService: promote before any async work.
-        startForeground(NOTIFICATION_ID, buildRemoteNotification(installing = false))
-        enqueueWorker {
-          if (remoteStore.isEnabled()) remoteServer.start()
-          refreshSessionNotifications()
-        }
-      }
-      RemoteAccess.ACTION_STOP -> enqueueWorker {
-        remoteStore.setEnabled(false)
+    if (intent?.action == ACTION_STOP) {
+      enqueueWorker { stopServicePermanently() }
+      return START_NOT_STICKY
+    }
+    if (intent?.action == RemoteAccess.ACTION_STOP) {
+      remoteStore.setEnabled(false)
+      enqueueWorker {
         if (remoteServerDelegate.isInitialized()) remoteServer.stop()
         refreshSessionNotifications()
         maybeStopIfIdle()
       }
+    }
+    val work = lifecycleWork()
+    android.util.Log.i(LOG_TAG, "service_start null_intent=${intent == null} durable=${work.durable}")
+    if (!work.durable) {
+      // In particular, a null-intent restart with an empty journal must never
+      // attempt startForeground from the background.
+      startedForWork.set(false)
+      stopSelf(startId)
+      return START_NOT_STICKY
+    }
+    startedForWork.set(true)
+    startForeground(NOTIFICATION_ID, buildNotification())
+    queueRecovery()
+    if (intent?.action == RemoteAccess.ACTION_START) enqueueWorker {
+      if (remoteStore.isEnabled()) remoteServer.start()
+      refreshSessionNotifications()
     }
     return START_STICKY
   }
@@ -267,6 +300,7 @@ class TerminalSessionService : Service() {
   override fun onBind(intent: Intent?): IBinder {
     android.util.Log.i(LOG_TAG, "service_bound")
     TerminalDebugLog.record(this, "service_bound")
+    queueRecovery()
     return messenger.binder
   }
 
@@ -428,6 +462,8 @@ class TerminalSessionService : Service() {
         reply,
         errorResponse(requestId(data), "internal_error"),
       )
+    } finally {
+      maybeStopIfIdle()
     }
   }
 
@@ -540,6 +576,7 @@ class TerminalSessionService : Service() {
     sessionRecords[sessionId] = record
     if (!spec.countsAgainstSessionLimit) nonCountingSessionIds.add(sessionId)
     sessionStartElapsedMs[sessionId] = startRequestElapsedMs
+    retainForWork()
     when (val outcome = supervisor.start(sessionId, spec)) {
       is TerminalSessionSupervisor.StartOutcome.Success -> {
         TerminalDebugLog.record(
@@ -589,6 +626,7 @@ class TerminalSessionService : Service() {
           sendResponse(reply, errorResponse(requestId, "install_in_progress"))
           return
         }
+        retainForWork()
         syncWakeLock(true)
         try {
           provisionExecutor.execute {
@@ -1054,17 +1092,23 @@ class TerminalSessionService : Service() {
   }
 
   private fun maybeStopIfIdle() {
-    if (stopping || provisionInProgress.get()) return
-    // A bound RN client may submit the next visible harness immediately after
-    // a hidden command exits. Keep the service alive until that client is
-    // actually disconnected; otherwise the next message can arrive after
-    // stopping is set and be dropped by enqueueWorker.
-    if (hasClient()) return
-    if (isRemoteActive()) return
-    if (sessionRecords.isNotEmpty()) return
-    if (supervisorDelegate.isInitialized() && supervisor.activeSessionIds().isNotEmpty()) return
-    TerminalDebugLog.record(this, "service_stop_idle")
-    stopForegroundAndSelf()
+    if (stopping || lifecycleWork().durable) return
+    // stopSelf clears the started lifetime even while RN remains bound. The
+    // binding keeps this instance available for the next request; do not set
+    // stopping or shut down its executor until Android calls onDestroy.
+    if (startedForWork.getAndSet(false)) {
+      TerminalDebugLog.record(this, "service_stop_idle")
+      android.util.Log.i(LOG_TAG, "service_stop_idle")
+    }
+    cancelSessionNotifications()
+    syncWakeLock(false)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+    } else {
+      @Suppress("DEPRECATION")
+      stopForeground(true)
+    }
+    stopSelf()
   }
 
   private fun stopForegroundAndSelf() {
@@ -1129,21 +1173,19 @@ class TerminalSessionService : Service() {
         .take(TerminalSessionContract.MAX_ACTIVE_SESSIONS)
     }
     val slots = notificationSlotIds()
-    val remoteActive = isRemoteActive()
-    syncWakeLock(running.isNotEmpty() || provisionInProgress.get() || remoteActive)
+    val remoteActive = remoteStore.isEnabled() || isRemoteActive()
+    val work = lifecycleWork()
+    syncWakeLock(work.durable)
     val remoteInstalling = remoteActive && remoteServer.state == RemoteAccess.STATE_INSTALLING
     if (running.isEmpty()) {
       cancelSessionNotifications()
       notificationManager.cancel(REMOTE_NOTIFICATION_ID)
-      if (provisionInProgress.get()) {
+      if (provisionInProgress.get() || work.sessions) {
         startForeground(NOTIFICATION_ID, buildNotification())
       } else if (remoteActive) {
         startForeground(NOTIFICATION_ID, buildRemoteNotification(remoteInstalling))
-      } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
       } else {
-        @Suppress("DEPRECATION")
-        stopForeground(true)
+        maybeStopIfIdle()
       }
       return
     }
