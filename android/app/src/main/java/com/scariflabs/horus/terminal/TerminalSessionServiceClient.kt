@@ -33,7 +33,6 @@ class TerminalSessionServiceClient(
   private val queued = ArrayDeque<Message>()
   private val pending = HashMap<String, Pending>()
   private var service: Messenger? = null
-  private var started = false
   private var bound = false
   private var bindingRequested = false
   private var closed = false
@@ -95,7 +94,6 @@ class TerminalSessionServiceClient(
         service = null
         bound = false
         bindingRequested = false
-        started = false
       }
       handler.post { ensureService() }
     }
@@ -396,35 +394,21 @@ class TerminalSessionServiceClient(
       if (service != null || bindingRequested) return
       bindingRequested = true
     }
-    var shouldStart = false
     try {
       val intent = Intent(context, TerminalSessionService::class.java).apply {
         action = TerminalSessionServiceProtocol.ACTION
       }
-      synchronized(lock) {
-        if (!started) {
-          started = true
-          shouldStart = true
-        }
-      }
-      if (shouldStart) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-          context.startForegroundService(intent)
-        } else {
-          @Suppress("DEPRECATION")
-          context.startService(intent)
-        }
-      }
+      // Bind without a started lifetime. The service starts/promotes itself
+      // only after a request or restored journal establishes durable work.
       val boundResult = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
       if (!boundResult) throw IllegalStateException("terminal service bind failed")
-      android.util.Log.i(LOG_TAG, "client_bind_requested started=$shouldStart")
-      TerminalDebugLog.record(context, "client_bind_requested started=$shouldStart")
+      android.util.Log.i(LOG_TAG, "client_bind_requested bound_only=true")
+      TerminalDebugLog.record(context, "client_bind_requested bound_only=true")
     } catch (_: Exception) {
       android.util.Log.e(LOG_TAG, "client_bind_failed")
       TerminalDebugLog.record(context, "client_bind_failed")
       synchronized(lock) {
         bindingRequested = false
-        if (shouldStart) started = false
       }
     }
   }
