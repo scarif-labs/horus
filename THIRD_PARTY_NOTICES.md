@@ -50,7 +50,7 @@ compiles into `libproot.so` and `libproot_loader.so` (see
 `scripts/native/build-proot-runtime.sh`). They are separate programs under
 their own licenses:
 
-- **PRoot** 5.1.107.92: GNU General Public License v2.0.
+- **PRoot** 5.1.107.92: GNU General Public License v2.0 or later (GPL-2.0-or-later).
   Source: `native/proot` (git submodule of <https://github.com/termux/proot>),
   modified by `native/patches/proot-android.patch`.
 - **talloc** 2.4.3: GNU Lesser General Public License v3.0 or later, see
