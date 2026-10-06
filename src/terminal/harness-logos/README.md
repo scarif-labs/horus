@@ -1,16 +1,15 @@
-# Harness marks
+# Original tool glyphs
 
-These launcher assets identify the external tools started by Horus. The
-product names and marks remain the property of their respective owners.
+These simple geometric glyphs are original Horus project artwork, distributed
+under the repository's MIT license (see `../../../LICENSE`). They do not use
+third-party logos, favicons, or brand marks.
 
-- `claude-code.svg` and `claude-code.png` use the Claude site favicon from
-  <https://claude.ai/favicon.svg>.
-- `openai-blossom.svg` and `openai-blossom.png` use OpenAI's 2025 Blossom mark
-  from <https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg>,
-  sourced there from OpenAI's <https://openai.com/brand/> guidelines. The Codex
-  tile uses the monochrome mark with the Codex label.
-- `opencode.svg` and `opencode.png` use the OpenCode site favicon from
-  <https://opencode.ai/favicon.svg>; see also <https://opencode.ai/brand>.
+- `dialog.svg` / `dialog.png`: a dialogue window for the Claude Code tile.
+- `code.svg` / `code.png`: code brackets for the Codex tile.
+- `blocks.svg` / `blocks.png`: modular blocks for the OpenCode tile.
 
-Each PNG is a 192 × 192 raster for Android. The vector sources are retained so
-the assets can be regenerated without changing the mark geometry.
+Product names identify the external tools and remain the property of their
+respective owners. The glyphs do not imply affiliation or endorsement.
+
+Each PNG is a transparent 192 × 192 raster rendered from the corresponding
+original SVG. The existing image size and UI source contracts are retained.
