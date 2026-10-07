@@ -162,10 +162,10 @@ class TerminalSessionService : Service() {
         startupRedraw.remove(info.sessionId)
       }
       notificationManager.cancel(turnNotificationId(info.sessionId))
-      TerminalDebugLog.record(
-        this@TerminalSessionService,
-        "session_exit session=${info.sessionId} reason=${info.reason} code=${info.exitCode ?: "none"} signal=${info.signal ?: "none"}",
-      )
+      val exitRecord =
+        "session_exit session=${info.sessionId} reason=${info.reason} code=${info.exitCode ?: "none"} signal=${info.signal ?: "none"}"
+      android.util.Log.i(LOG_TAG, exitRecord)
+      TerminalDebugLog.record(this@TerminalSessionService, exitRecord)
       sendEvent(
         Bundle().apply {
           putString(TerminalSessionServiceProtocol.KEY_EVENT_TYPE, TerminalSessionServiceProtocol.EVENT_EXIT)

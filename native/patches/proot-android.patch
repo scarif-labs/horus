@@ -1,5 +1,5 @@
 diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
-index 447d723..b5cd83b 100644
+index 447d723..f18f129 100644
 --- a/src/tracee/tracee.c
 +++ b/src/tracee/tracee.c
 @@ -23,6 +23,10 @@
@@ -13,7 +13,7 @@ index 447d723..b5cd83b 100644
  #include <assert.h>     /* assert(3), */
  #include <string.h>     /* bzero(3), */
  #include <stdbool.h>    /* bool, true, false, */
-@@ -207,6 +211,96 @@ no_mem:
+@@ -207,6 +211,112 @@ no_mem:
  
  static uint64_t next_vpid = 1;
  
@@ -40,11 +40,32 @@ index 447d723..b5cd83b 100644
 +}
 +
 +/*
-+ * Android may withhold GETEVENTMSG. Recover only a unique, uninitialized
-+ * child owned by this tracer, using host parent/thread-group relationships.
-+ * A child's SIGSTOP can precede the parent's event: its pending Tracee must
-+ * be reused so new_child() can inherit configuration and restart it.
-+ * PID order cannot identify the event child (PIDs wrap and threads race).
++ * True once new_child() has set up @pid. Do not use get_tracee(): even a
++ * lookup flushes the tracee's ctx.
++ */
++static bool is_initialized_child(pid_t pid)
++{
++	Tracee *known;
++
++	LIST_FOREACH(known, &tracees, link)
++		if (known->pid == pid)
++			break;
++	return known != NULL && (known->exe != NULL || known->parent != NULL
++		|| known->sigstop != SIGSTOP_PENDING || known->terminated);
++}
++
++/*
++ * Android may withhold GETEVENTMSG. Recover an uninitialized child owned by
++ * this tracer, using host parent/thread-group relationships. A child's
++ * SIGSTOP can precede the parent's event: its pending Tracee must be reused
++ * so new_child() can inherit configuration and restart it.
++ *
++ * PID order cannot identify the event child (PIDs wrap and threads race),
++ * so a fork needs a unique candidate. Threads are interchangeable: they
++ * share the parent's memory and inherit the same PRoot state, and each one
++ * brings its own clone event, so adopting any of them now still sets up
++ * every thread exactly once. A thread pool that starts several workers at
++ * once (x264, for one) would otherwise kill the whole session.
 + */
 +static pid_t find_uninitialized_child(const Tracee *parent, word_t clone_flags)
 +{
@@ -71,7 +92,6 @@ index 447d723..b5cd83b 100644
 +		char *end;
 +		long candidate;
 +		int tgid, ppid, tracer;
-+		Tracee *known;
 +
 +		errno = 0;
 +		candidate = strtol(entry->d_name, &end, 10);
@@ -80,12 +100,7 @@ index 447d723..b5cd83b 100644
 +		    || candidate == parent->pid)
 +			continue;
 +
-+		/* Do not use get_tracee(): even lookup flushes the tracee's ctx. */
-+		LIST_FOREACH(known, &tracees, link)
-+			if (known->pid == candidate)
-+				break;
-+		if (known != NULL && (known->exe != NULL || known->parent != NULL
-+		    || known->sigstop != SIGSTOP_PENDING || known->terminated))
++		if (is_initialized_child((pid_t) candidate))
 +			continue;
 +		if (!read_child_ids((pid_t) candidate, &tgid, &ppid, &tracer)
 +		    || tracer != getpid())
@@ -95,11 +110,12 @@ index 447d723..b5cd83b 100644
 +			? parent_ppid : parent_tgid)))
 +			continue;
 +
-+		if (found > 0) {
++		if (found > 0 && !thread) {
 +			found = -EAGAIN;
 +			break;
 +		}
-+		found = (pid_t) candidate;
++		if (found <= 0)
++			found = (pid_t) candidate;
 +	}
 +
 +	(void) closedir(proc);
@@ -110,7 +126,7 @@ index 447d723..b5cd83b 100644
  /**
   * Allocate a new entry for the tracee @pid, then set its destructor
   * and add it to the list of tracees.  This function returns NULL if
-@@ -383,7 +477,7 @@ void free_terminated_tracees()
+@@ -383,7 +493,7 @@ void free_terminated_tracees()
  int new_child(Tracee *parent, word_t clone_flags)
  {
  	int ptrace_options;
@@ -119,9 +135,15 @@ index 447d723..b5cd83b 100644
  	Tracee *child;
  	int status;
  
-@@ -408,8 +502,20 @@ int new_child(Tracee *parent, word_t clone_flags)
+@@ -407,9 +517,26 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 
  	/* Get the pid of the parent's new child.  */
  	status = ptrace(PTRACE_GETEVENTMSG, parent->pid, NULL, &pid);
++	/* An earlier recovery may already have adopted this thread in place of
++	 * a sibling; set up the sibling that is still waiting instead. */
++	if (status >= 0 && pid != 0 && (clone_flags & CLONE_THREAD) != 0
++	    && is_initialized_child((pid_t) pid))
++		pid = 0;
  	if (status < 0 || pid == 0) {
 -		note(parent, WARNING, SYSTEM, "ptrace(GETEVENTMSG)");
 -		return status;
