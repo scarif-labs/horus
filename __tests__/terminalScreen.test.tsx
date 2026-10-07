@@ -455,6 +455,28 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('says the shell closed after `exit` instead of falling back to the install placeholder', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />);
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_TOOLCHAIN_READY\n$ exit\n')});
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 0});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-exited'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-report'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-key-return'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('shows install progress instead of the apk transcript on first launch, with the log one tap away', async () => {
     const runtime = fakeRuntime();
     const client = new TerminalSessionClient(runtime.spec, handler => {
@@ -779,6 +801,8 @@ describe('TerminalScreen', () => {
     expect(renderer.root.findByProps({testID: 'session-limit-session-title-s-1-1'}).props.children).toBe('OpenCode');
     expect(renderer.root.findByProps({testID: 'session-limit-session-meta-s-1-1'}).props.children).toEqual(['Running ', '3 min']);
     expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Codex']);
+    // The key bar has nothing to type into while the limit screen covers the terminal.
+    expect(renderer.root.findAllByProps({testID: 'terminal-key-return'})).toHaveLength(0);
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'session-limit-terminate-s-1-1'}).props.onPress();
       await flushAsync();
@@ -786,6 +810,7 @@ describe('TerminalScreen', () => {
     expect(runtime.stopCalls).toContain('s-1-1');
     expect(runtime.spec.startSession).toHaveBeenCalledTimes(2);
     expect(renderer.root.findAllByProps({testID: 'session-limit-warning'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-key-return'}).length).toBeGreaterThan(0);
     expect(renderer.root.findByProps({testID: 'terminal-input'}).props.editable).toBe(true);
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });

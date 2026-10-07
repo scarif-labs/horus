@@ -610,7 +610,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           deliverCommandFailure();
           return;
         }
-        if (toolchain !== 'shell' && exit.reason === 'process_exit') {
+        // One-off shell commands (clones) report through their completion
+        // marker; an interactive shell gets the exit screen like an app, or
+        // `exit` would leave the install placeholder behind.
+        if ((toolchain !== 'shell' || completionMarker === undefined) && exit.reason === 'process_exit') {
           // Read the last screen before the buffer is reused; a native
           // session's lives in the native engine until taken once.
           const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
@@ -1012,6 +1015,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const showInstallProgress = installActive && !installLogVisible;
   // An app that is already installed gets the short "Starting …" screen.
   const showStartup = !installActive && appStarting;
+  const appExitVisible = appExit !== undefined && state === 'stopped';
 
   return (
     <>
@@ -1059,7 +1063,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
                 </Pressable>
               </View>
             ) : null}
-            {appExit !== undefined && state === 'stopped' ? (
+            {appExitVisible ? (
               <AppExitedOverlay
                 exit={appExit}
                 onBack={onHome ?? onBack}
@@ -1132,7 +1136,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             </Text>
           ) : null}
           {error !== undefined && !sessionLimitReached ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
-          <TerminalControls
+          {/* The limit and exit screens cover the terminal; nothing to type into. */}
+          {sessionLimitReached || appExitVisible ? null : <TerminalControls
             altActive={altActive}
             ctrlActive={ctrlActive}
             keyboardVisible={keyboardVisible}
@@ -1148,7 +1153,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             running={running}
             toolchain={toolchain}
             transcriptPagerOpen={transcriptPagerOpen}
-          />
+          />}
         </KeyboardAvoidingView>
       </View>
     </>
