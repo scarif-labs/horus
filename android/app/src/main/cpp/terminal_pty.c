@@ -23,10 +23,14 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Matches the Kotlin reader's chunk size; stack-allocated per call. */
 #define PTY_IO_CHUNK_BYTES 8192
+/* Coalescing window for bursts of small writes; see linger_read. */
+#define PTY_LINGER_GAP_MS 1
+#define PTY_LINGER_MAX_MS 4
 
 static char *copy_jstring(JNIEnv *env, jobject array, jsize index);
 static jint encode_wait_status(int status);
@@ -237,6 +241,36 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_closeFd(JNIEnv *env, jclass cl
   return close(fd) == 0 ? 0 : -(jint)errno;
 }
 
+static long elapsed_ms(const struct timespec *since) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (now.tv_sec - since->tv_sec) * 1000L + (now.tv_nsec - since->tv_nsec) / 1000000L;
+}
+
+/*
+ * Keeps reading while more output follows within PTY_LINGER_GAP_MS, for at
+ * most PTY_LINGER_MAX_MS or until [space] is full. Programs on a tty write a
+ * line at a time, and under PRoot each write is slow enough that a single
+ * read() returns one line; every chunk then costs a service hop, a binder
+ * transaction, and an acknowledgement, which capped a flood at ~45 KB/s.
+ * An interactive echo pays at most one gap of extra latency. Errors and EOF
+ * end the linger; the next read reports them.
+ */
+static size_t linger_read(int fd, char *into, size_t space) {
+  struct timespec started;
+  clock_gettime(CLOCK_MONOTONIC, &started);
+  size_t total = 0;
+  while (total < space && elapsed_ms(&started) < PTY_LINGER_MAX_MS) {
+    struct pollfd poll_fd = {.fd = fd, .events = POLLIN, .revents = 0};
+    const int ready = poll(&poll_fd, 1, PTY_LINGER_GAP_MS);
+    if (ready <= 0 || (poll_fd.revents & POLLIN) == 0) break;
+    const ssize_t more = read(fd, into + total, space - total);
+    if (more <= 0) break;
+    total += (size_t)more;
+  }
+  return total;
+}
+
 /*
  * Polls the pty master for at most 100ms, then reads. Returns the byte count
  * (>= 0), 0 on a poll timeout, -1 on EOF (EIO after every slave descriptor
@@ -272,6 +306,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_readMaster(JNIEnv *env, jclass
     if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
     return errno == EIO ? -1 : -(jint)errno;
   }
+  got += linger_read(fd, chunk + got, wanted - (size_t)got);
   (*env)->SetByteArrayRegion(env, buffer, 0, (jsize)got, (const jbyte *)chunk);
   return (jint)got;
 }

@@ -1343,7 +1343,8 @@ class TerminalSessionService : Service() {
   private fun sendMessage(target: Messenger, message: Message) {
     try {
       synchronized(clientSendLock) { target.send(message) }
-    } catch (_: RemoteException) {
+    } catch (error: RemoteException) {
+      android.util.Log.w(LOG_TAG, "service_send_failed type=${error::class.java.simpleName}")
       clearClient(target)
     }
   }
