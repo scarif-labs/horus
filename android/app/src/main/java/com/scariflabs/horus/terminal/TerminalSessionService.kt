@@ -621,6 +621,9 @@ class TerminalSessionService : Service() {
           "service_session_start_failed request=$requestId target=${toolchainTarget ?: "none"} reason=${outcome.reasonCode}",
         )
         discardRecord()
+        // retainForWork() posted the generic foreground notification over the
+        // first running session's; put the session notifications back.
+        refreshSessionNotifications()
         sendResponse(reply, errorResponse(requestId, mapSessionFailureCode(outcome.reasonCode)))
       }
     }
