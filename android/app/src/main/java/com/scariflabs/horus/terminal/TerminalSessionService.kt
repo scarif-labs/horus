@@ -114,6 +114,8 @@ class TerminalSessionService : Service() {
   private var clientDeathRecipient: IBinder.DeathRecipient? = null
   @Volatile private var stopping = false
   private val startedForWork = AtomicBoolean(false)
+  /** Latest onStartCommand id; 0 until the service is first started. */
+  @Volatile private var lastStartId = 0
   private val recoveryQueued = AtomicBoolean(false)
 
   private val sessionEventListener = object : TerminalSessionSupervisor.EventListener {
@@ -256,16 +258,31 @@ class TerminalSessionService : Service() {
     }
   }
 
-  /** Give bound-only work a started lifetime before the UI can disappear. */
-  private fun retainForWork() {
-    if (!lifecycleWork().durable) return
-    startForeground(NOTIFICATION_ID, buildNotification())
-    if (startedForWork.compareAndSet(false, true)) {
-      startService(Intent(this, TerminalSessionService::class.java).setAction(TerminalSessionServiceProtocol.ACTION))
+  /**
+   * Give bound-only work a started lifetime before the UI can disappear.
+   * Returns false when Android refuses promotion (a request that arrives
+   * after the app went to the background); the caller fails that request
+   * instead of letting the exception kill the process and every session.
+   */
+  private fun retainForWork(): Boolean {
+    if (!lifecycleWork().durable) return true
+    try {
+      startForeground(NOTIFICATION_ID, buildNotification())
+      if (startedForWork.compareAndSet(false, true)) {
+        startService(Intent(this, TerminalSessionService::class.java).setAction(TerminalSessionServiceProtocol.ACTION))
+      }
+    } catch (error: IllegalStateException) {
+      // ForegroundServiceStartNotAllowedException and background
+      // startService refusals are both IllegalStateExceptions.
+      android.util.Log.w(LOG_TAG, "service_retain_refused type=${error::class.java.simpleName}")
+      TerminalDebugLog.record(this, "service_retain_refused type=${error::class.java.simpleName}")
+      return false
     }
+    return true
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    lastStartId = startId
     if (intent?.action == ACTION_STOP) {
       enqueueWorker { stopServicePermanently() }
       return START_NOT_STICKY
@@ -576,7 +593,19 @@ class TerminalSessionService : Service() {
     sessionRecords[sessionId] = record
     if (!spec.countsAgainstSessionLimit) nonCountingSessionIds.add(sessionId)
     sessionStartElapsedMs[sessionId] = startRequestElapsedMs
-    retainForWork()
+    fun discardRecord() {
+      sessionStartElapsedMs.remove(sessionId)
+      if (!wasPendingRecord) {
+        sessionRecords.remove(sessionId)
+        if (persistsAcrossServiceRestart) runCatching { journal.remove(sessionId) }
+      }
+      nonCountingSessionIds.remove(sessionId)
+    }
+    if (!retainForWork()) {
+      discardRecord()
+      sendResponse(reply, errorResponse(requestId, "internal_error"))
+      return
+    }
     when (val outcome = supervisor.start(sessionId, spec)) {
       is TerminalSessionSupervisor.StartOutcome.Success -> {
         TerminalDebugLog.record(
@@ -587,16 +616,11 @@ class TerminalSessionService : Service() {
         sendResponse(reply, startSuccess(requestId, sessionId, outcome.handle.pid, rows, columns))
       }
       is TerminalSessionSupervisor.StartOutcome.Failure -> {
-        sessionStartElapsedMs.remove(sessionId)
         TerminalDebugLog.record(
           this,
           "service_session_start_failed request=$requestId target=${toolchainTarget ?: "none"} reason=${outcome.reasonCode}",
         )
-        if (!wasPendingRecord) {
-          sessionRecords.remove(sessionId)
-          if (persistsAcrossServiceRestart) runCatching { journal.remove(sessionId) }
-        }
-        nonCountingSessionIds.remove(sessionId)
+        discardRecord()
         sendResponse(reply, errorResponse(requestId, mapSessionFailureCode(outcome.reasonCode)))
       }
     }
@@ -626,7 +650,11 @@ class TerminalSessionService : Service() {
           sendResponse(reply, errorResponse(requestId, "install_in_progress"))
           return
         }
-        retainForWork()
+        if (!retainForWork()) {
+          provisionInProgress.set(false)
+          sendResponse(reply, errorResponse(requestId, "internal_error"))
+          return
+        }
         syncWakeLock(true)
         try {
           provisionExecutor.execute {
@@ -1108,7 +1136,10 @@ class TerminalSessionService : Service() {
       @Suppress("DEPRECATION")
       stopForeground(true)
     }
-    stopSelf()
+    // This runs on the worker while starts arrive on the main thread. Stopping
+    // by id leaves a start that raced in (remote access enabled a moment ago)
+    // alive; a bare stopSelf() would cancel it.
+    stopSelfResult(lastStartId)
   }
 
   private fun stopForegroundAndSelf() {
