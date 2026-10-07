@@ -11,7 +11,7 @@ SSH in, forward ports, and sync files over USB with the optional
 
 **[Website](https://scariflabs.com/horus)** ·
 **[Documentation](https://scariflabs.com/horus/docs)** ·
-**[F-Droid (in review)](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/50351)** ·
+**[F-Droid](https://f-droid.org/packages/com.scariflabs.horus/)** ·
 **[horus-cli on npm](https://www.npmjs.com/package/horus-cli)** ·
 **[Issues](https://github.com/scarif-labs/horus/issues)**
 
@@ -23,8 +23,9 @@ SSH in, forward ports, and sync files over USB with the optional
 
 ## Get Horus
 
-- **F-Droid:** the submission is
-  [in review](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/50351).
+- **F-Droid:** install from
+  [f-droid.org/packages/com.scariflabs.horus](https://f-droid.org/packages/com.scariflabs.horus/)
+  or search for Horus in the F-Droid app.
 - **From source:** see [Build from source](#build-from-source).
 
 You need an ARM64 (`arm64-v8a`) phone running Android 7.0 (API 24) or newer.
@@ -34,8 +35,9 @@ New to Horus? Start with the
 ## For F-Droid maintainers
 
 Everything needed to find, build, and verify the app is listed here. The
-build recipe (`metadata/com.scariflabs.horus.yml`) is in
-[fdroiddata!50351](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/50351).
+build recipe is
+[`metadata/com.scariflabs.horus.yml`](https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/com.scariflabs.horus.yml)
+in fdroiddata. New versions are picked up automatically from `vX.Y.Z` tags.
 
 | | |
 | :-- | :-- |
