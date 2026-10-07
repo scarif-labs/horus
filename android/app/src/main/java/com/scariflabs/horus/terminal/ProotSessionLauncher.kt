@@ -1058,6 +1058,10 @@ class ProotSessionLauncher(
       setopt prompt_subst
       setopt transient_rprompt
       umask 0002
+      # A stray ^S (XOFF) froze all output until ^Q, which a phone user has no
+      # reason to know. zsh re-enables flow control itself, so turn it off here.
+      unsetopt flow_control
+      stty -ixon 2>/dev/null || true
       export PATH="${'$'}HOME/.local/bin:/usr/local/bin:${'$'}{PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
       # Codex's Linux sandboxing and background app-server are unavailable
       # under Android PRoot (see the profile block).

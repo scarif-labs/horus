@@ -15,7 +15,11 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.content.Context
 import android.widget.EditText
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.UIManagerHelper
+import com.facebook.react.uimanager.events.Event
 import java.nio.charset.StandardCharsets
 
 internal fun applyTerminalInputModifiers(value: String, ctrlActive: Boolean, altActive: Boolean): String {
@@ -27,6 +31,27 @@ internal fun applyTerminalInputModifiers(value: String, ctrlActive: Boolean, alt
     output.appendCodePoint(modified)
   }
   return output.toString()
+}
+
+/**
+ * CTRL and ALT are one-shot, like Termux: they modify the first key of the
+ * next commit only. A latched CTRL turned the next command into control codes,
+ * and its ^S froze the terminal with no visible way out.
+ */
+internal fun applyOneShotTerminalModifiers(value: String, ctrlActive: Boolean, altActive: Boolean): String {
+  if ((!ctrlActive && !altActive) || value.isEmpty()) return value
+  val firstEnd = value.offsetByCodePoints(0, 1)
+  return applyTerminalInputModifiers(value.substring(0, firstEnd), ctrlActive, altActive) + value.substring(firstEnd)
+}
+
+private class ModifiersConsumedEvent(surfaceId: Int, viewTag: Int) : Event<ModifiersConsumedEvent>(surfaceId, viewTag) {
+  override fun getEventName(): String = EVENT_NAME
+
+  override fun getEventData(): WritableMap = Arguments.createMap()
+
+  companion object {
+    const val EVENT_NAME = "topModifiersConsumed"
+  }
 }
 
 private fun controlCodePoint(codePoint: Int): Int = when {
@@ -216,8 +241,21 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
   private fun send(value: String, applyModifiers: Boolean = true) {
     val id = sessionId ?: return
     if (value.isEmpty()) return
-    val output = if (applyModifiers) applyTerminalInputModifiers(value, ctrlActive, altActive) else value
+    val modified = applyModifiers && (ctrlActive || altActive)
+    val output = if (modified) applyOneShotTerminalModifiers(value, ctrlActive, altActive) else value
     NativeTerminalEngineRegistry.writeInput(id, output.toByteArray(StandardCharsets.UTF_8))
+    if (modified) releaseModifiers()
+  }
+
+  /** Clears CTRL/ALT here at once and tells React Native to clear its buttons. */
+  private fun releaseModifiers() {
+    ctrlActive = false
+    altActive = false
+    if (id == NO_ID) return
+    val reactContext = context as? ThemedReactContext ?: return
+    UIManagerHelper.getEventDispatcher(reactContext)?.dispatchEvent(
+      ModifiersConsumedEvent(UIManagerHelper.getSurfaceId(this), id),
+    )
   }
 
   private fun clearSilently() {

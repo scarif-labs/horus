@@ -6,6 +6,8 @@ export type NativeTerminalInputProps = ViewProps & Readonly<{
   terminalAutoFocus: boolean;
   ctrlActive: boolean;
   altActive: boolean;
+  /** The native view applied CTRL/ALT to a key and released them (one-shot). */
+  onModifiersConsumed?: () => void;
   keyboardShowRequest: number;
   keyboardHideRequest: number;
 }>;

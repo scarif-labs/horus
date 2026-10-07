@@ -13,11 +13,21 @@ import java.lang.reflect.Proxy
 class TerminalInputViewTest {
 
   @Test
-  fun `native input applies sticky control and alt modifiers`() {
+  fun `native input maps control and alt modifiers`() {
     assertEquals("\u0018", applyTerminalInputModifiers("x", ctrlActive = true, altActive = false))
     assertEquals("\u001bm", applyTerminalInputModifiers("m", ctrlActive = false, altActive = true))
     assertEquals("\u001b\u0000", applyTerminalInputModifiers(" ", ctrlActive = true, altActive = true))
     assertEquals("\u007f", applyTerminalInputModifiers("?", ctrlActive = true, altActive = false))
+  }
+
+  @Test
+  fun `one-shot modifiers apply to the first key of a commit only`() {
+    assertEquals("\u0003", applyOneShotTerminalModifiers("c", ctrlActive = true, altActive = false))
+    assertEquals("\u000cs", applyOneShotTerminalModifiers("ls", ctrlActive = true, altActive = false))
+    assertEquals("\u001bb.", applyOneShotTerminalModifiers("b.", ctrlActive = false, altActive = true))
+    assertEquals("🙂x", applyOneShotTerminalModifiers("🙂x", ctrlActive = true, altActive = false))
+    assertEquals("ls", applyOneShotTerminalModifiers("ls", ctrlActive = false, altActive = false))
+    assertEquals("", applyOneShotTerminalModifiers("", ctrlActive = true, altActive = true))
   }
 
   @Test

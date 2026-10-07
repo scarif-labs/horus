@@ -108,6 +108,17 @@ function applyTerminalModifiers(value: string, ctrl: boolean, alt: boolean): str
   }).join('');
 }
 
+/**
+ * CTRL and ALT are one-shot, like Termux: they modify the next key only. A
+ * latched CTRL turned the next command into control codes, and its ^S froze
+ * the terminal with no visible way out.
+ */
+function applyOneShotModifiers(value: string, ctrl: boolean, alt: boolean): string {
+  if (!ctrl && !alt) return value;
+  const [first = '', ...rest] = Array.from(value);
+  return applyTerminalModifiers(first, ctrl, alt) + rest.join('');
+}
+
 function arrowSequence(direction: TerminalArrow, ctrl: boolean, alt: boolean): string {
   const modifier = (ctrl ? 4 : 0) + (alt ? 2 : 0);
   return modifier === 0 ? `\u001b[${direction}` : `\u001b[1;${modifier + 1}${direction}`;
@@ -772,6 +783,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     }
   }, [client]);
 
+  const releaseModifiers = React.useCallback(() => {
+    setCtrlActive(false);
+    setAltActive(false);
+  }, []);
+
   const clearKeyboardInput = React.useCallback(() => {
     keyboardInputValueRef.current = '';
     terminalInputRef.current?.clear();
@@ -787,11 +803,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     const after = Array.from(text);
     let common = 0;
     while (common < before.length && common < after.length && before[common] === after[common]) common += 1;
-    void write(
-      '\u007f'.repeat(before.length - common) +
-      applyTerminalModifiers(after.slice(common).join(''), ctrlActive, altActive),
-    );
-  }, [altActive, ctrlActive, write]);
+    const typed = after.slice(common).join('');
+    void write('\u007f'.repeat(before.length - common) + applyOneShotModifiers(typed, ctrlActive, altActive));
+    if (typed.length > 0) releaseModifiers();
+  }, [altActive, ctrlActive, releaseModifiers, write]);
 
   const handleTerminalKeyPress = React.useCallback((event: {nativeEvent: {key: string}}) => {
     // RN emits soft-key Backspace before the corresponding text change.
@@ -831,8 +846,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [keyboardVisible, nativeTerminalInput, running]);
 
   const sendTerminalKey = React.useCallback((value: string) => {
-    void write(applyTerminalModifiers(value, ctrlActive, altActive));
-  }, [altActive, ctrlActive, write]);
+    void write(applyOneShotModifiers(value, ctrlActive, altActive));
+    releaseModifiers();
+  }, [altActive, ctrlActive, releaseModifiers, write]);
 
   const sendEscape = React.useCallback(() => {
     if (toolchain === 'codex' && transcriptPagerOpen) {
@@ -845,7 +861,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const sendArrow = React.useCallback((direction: TerminalArrow) => {
     void write(arrowSequence(direction, ctrlActive, altActive));
-  }, [altActive, ctrlActive, write]);
+    releaseModifiers();
+  }, [altActive, ctrlActive, releaseModifiers, write]);
 
   const pasteClipboard = React.useCallback(() => {
     void (async () => {
@@ -922,8 +939,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const submitTerminalInput = React.useCallback(() => {
     clearKeyboardInput();
-    void write(applyTerminalModifiers('\r', ctrlActive, altActive));
-  }, [altActive, clearKeyboardInput, ctrlActive, write]);
+    void write(applyOneShotModifiers('\r', ctrlActive, altActive));
+    releaseModifiers();
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
   const toggleCtrl = React.useCallback(() => setCtrlActive(value => !value), []);
   const toggleAlt = React.useCallback(() => setAltActive(value => !value), []);
 
@@ -1056,6 +1074,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               terminalAutoFocus
               ctrlActive={ctrlActive}
               altActive={altActive}
+              onModifiersConsumed={releaseModifiers}
               keyboardShowRequest={keyboardShowRequest}
               keyboardHideRequest={keyboardHideRequest}
               onLayout={() => {

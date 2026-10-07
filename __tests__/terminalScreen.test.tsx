@@ -990,7 +990,7 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
-  test('sends arrows, escape, and tab, with sticky Ctrl and Alt modifiers', async () => {
+  test('sends arrows, escape, and tab, with one-shot Ctrl and Alt modifiers', async () => {
     const runtime = fakeRuntime();
     runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
     const client = new TerminalSessionClient(runtime.spec, handler => {
@@ -1010,30 +1010,40 @@ describe('TerminalScreen', () => {
     };
     const input = () => renderer.root.findByProps({testID: 'terminal-input'});
 
+    const keyColor = (label: string) => StyleSheet.flatten(renderer.root.findByProps({children: label}).props.style).color;
+    const type = async (value: string) => {
+      await ReactTestRenderer.act(async () => {
+        input().props.onChangeText(value);
+        await flushAsync();
+      });
+    };
+
     await press('terminal-key-arrow-up');
     await press('terminal-key-ctrl');
-    expect(StyleSheet.flatten(renderer.root.findByProps({children: 'CTRL'}).props.style)).toMatchObject({color: '#090C0D'});
+    expect(keyColor('CTRL')).toBe('#090C0D');
+    // One-shot: CTRL modifies the next key only, then releases.
     await press('terminal-key-arrow-left');
-    await ReactTestRenderer.act(async () => {
-      input().props.onChangeText('c');
-      await flushAsync();
-    });
+    expect(keyColor('CTRL')).toBe('#F2F4F5');
+    await type('c');
     await press('terminal-key-alt');
-    expect(StyleSheet.flatten(renderer.root.findByProps({children: 'ALT'}).props.style)).toMatchObject({color: '#090C0D'});
-    await press('terminal-key-arrow-down');
     await press('terminal-key-ctrl');
-    await ReactTestRenderer.act(async () => {
-      input().props.onChangeText('ca');
-      await flushAsync();
-    });
+    await press('terminal-key-arrow-down');
+    expect(keyColor('ALT')).toBe('#F2F4F5');
+    expect(keyColor('CTRL')).toBe('#F2F4F5');
+    await press('terminal-key-ctrl');
+    await type('ca');
+    expect(keyColor('CTRL')).toBe('#F2F4F5');
+    await type('cab');
+    await press('terminal-key-alt');
     await press('terminal-key-tab');
     await press('terminal-key-esc');
-    await press('terminal-key-alt');
-    expect(StyleSheet.flatten(renderer.root.findByProps({children: 'ALT'}).props.style)).toMatchObject({color: '#F2F4F5'});
+    // Tapping a modifier twice still turns it off without sending anything.
+    await press('terminal-key-ctrl');
+    await press('terminal-key-ctrl');
     await press('terminal-key-arrow-right');
 
     const writes = (runtime.spec.writeSessionInput as jest.Mock).mock.calls.map(call => new TextDecoder().decode(decodeTestBase64(call[0].base64)));
-    expect(writes).toEqual(['\u001b[A', '\u001b[1;5D', '\u0003', '\u001b[1;7B', '\u001b' + 'a', '\u001b\t', '\u001b\u001b', '\u001b[C']);
+    expect(writes).toEqual(['\u001b[A', '\u001b[1;5D', 'c', '\u001b[1;7B', '\u0001', 'b', '\u001b\t', '\u001b', '\u001b[C']);
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 

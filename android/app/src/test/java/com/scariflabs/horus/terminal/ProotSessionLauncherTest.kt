@@ -90,6 +90,8 @@ class ProotSessionLauncherTest {
       assertTrue(zshrc.readText().contains("PROMPT=$'%{\\e[0;34m%}%B┌─["))
       assertTrue(zshrc.readText().contains("export PATH=\"\$HOME/.local/bin:/usr/local/bin:"))
       assertTrue(zshrc.readText().contains("umask 0002"))
+      // A stray ^S must not freeze the terminal.
+      assertTrue(zshrc.readText().contains("unsetopt flow_control\nstty -ixon"))
       assertFalse(zshrc.readText().contains("RPROMPT"))
       assertTrue(zshrc.readText().contains("duellj theme"))
       assertFalse(zshrc.readText().contains("vcs_info"))

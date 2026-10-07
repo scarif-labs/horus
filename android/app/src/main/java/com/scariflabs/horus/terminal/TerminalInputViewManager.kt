@@ -1,5 +1,6 @@
 package com.scariflabs.horus.terminal
 
+import com.facebook.react.common.MapBuilder
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.annotations.ReactProp
@@ -43,6 +44,12 @@ class TerminalInputViewManager : SimpleViewManager<TerminalInputView>() {
   fun setKeyboardHideRequest(view: TerminalInputView, value: Int) {
     view.setKeyboardHideRequest(value)
   }
+
+  override fun getExportedCustomDirectEventTypeConstants(): MutableMap<String, Any> =
+    MapBuilder.builder<String, Any>()
+      .put("topModifiersConsumed", MapBuilder.of("registrationName", "onModifiersConsumed"))
+      .build()
+      .toMutableMap()
 
   companion object {
     const val REACT_CLASS = "HorusTerminalInput"
