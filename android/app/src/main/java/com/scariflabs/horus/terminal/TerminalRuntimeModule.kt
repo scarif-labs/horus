@@ -1236,11 +1236,7 @@ class TerminalRuntimeModule(
    */
   private fun rememberExitScreen(sessionId: String) {
     val lines = NativeTerminalEngineRegistry.get(sessionId)?.currentFrame()?.lines ?: return
-    val text = lines.map { row -> row.text.joinToString("").trimEnd() }
-      .dropLastWhile(String::isEmpty)
-      .takeLast(MAX_EXIT_SCREEN_LINES)
-      .joinToString("\n")
-      .trim('\n')
+    val text = exitScreenText(lines.map { it.text }, MAX_EXIT_SCREEN_LINES)
     if (text.isEmpty()) return
     synchronized(exitScreens) {
       exitScreens[sessionId] = text
@@ -1485,3 +1481,33 @@ class TerminalRuntimeModule(
     val NATIVE_READY_MARKER_PATTERN = Regex("(?:^|[\\r\\n])HORUS_TOOLCHAIN_READY(?:[\\r\\n]|$)")
   }
 }
+
+/**
+ * Plain text of a native screen for the "last screen" box, from each row's
+ * cells. The engine does not record soft wraps, so a row joins the next when
+ * text runs through the edge: the row's last cell and the next row's first
+ * cell are both visible characters that are not box drawing. That keeps
+ * "Login w|ith" whole without gluing a full-width border to the next line.
+ */
+internal fun exitScreenText(rows: List<Array<String>>, maxLines: Int): String {
+  val lines = ArrayList<String>()
+  val current = StringBuilder()
+  rows.forEachIndexed { index, cells ->
+    current.append(cells.joinToString(""))
+    val next = rows.getOrNull(index + 1)
+    if (next != null && runsOntoNextRow(cells, next)) return@forEachIndexed
+    lines.add(current.toString().trimEnd())
+    current.setLength(0)
+  }
+  return lines.dropLastWhile(String::isEmpty).takeLast(maxLines).joinToString("\n").trim('\n')
+}
+
+private fun runsOntoNextRow(row: Array<String>, next: Array<String>): Boolean {
+  // A wide character's second cell is "", so look past it to its lead cell.
+  val last = row.lastOrNull(String::isNotEmpty) ?: return false
+  val first = next.firstOrNull() ?: return false
+  return isWrappableCell(last) && isWrappableCell(first)
+}
+
+private fun isWrappableCell(cell: String): Boolean =
+  cell.isNotBlank() && cell.codePointAt(0) !in 0x2500..0x259F

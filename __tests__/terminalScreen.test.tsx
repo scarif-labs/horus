@@ -393,7 +393,7 @@ describe('TerminalScreen', () => {
     });
     const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
     await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_TOOLCHAIN_READY\nError: failed to read start time\n')});
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64(`HORUS_TOOLCHAIN_READY\nError: failed to read start time\nsee https://example.com/${'x'.repeat(300)}/end\n`)});
       await flushAsync();
     });
     expect(has('terminal-app-exited')).toBe(false);
@@ -405,6 +405,8 @@ describe('TerminalScreen', () => {
     expect(has('terminal-app-exited')).toBe(true);
     expect(renderer.root.findByProps({testID: 'terminal-app-exited-detail'}).props.children).toBe('Exit code 1');
     expect(renderer.root.findByProps({testID: 'terminal-app-exited-output'}).props.children).toContain('Error: failed to read start time');
+    // A line the terminal soft-wrapped is shown whole, not broken mid-word.
+    expect(renderer.root.findByProps({testID: 'terminal-app-exited-output'}).props.children).toContain(`see https://example.com/${'x'.repeat(300)}/end`);
 
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'terminal-app-report'}).props.onPress();

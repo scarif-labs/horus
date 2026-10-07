@@ -613,7 +613,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           // Read the last screen before the buffer is reused; a native
           // session's lives in the native engine until taken once.
           const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
-            .map(line => line.text.trimEnd()).join('\n').trim();
+            // A wrapped row continues the one above (soft wrap), not a new line.
+            .map((line, index) => (index > 0 && line.wrapped ? '' : '\n') + line.text)
+            .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
           const exitInfo: AppExit = {
             ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
             ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
