@@ -49,6 +49,32 @@ class TerminalInputViewTest {
   }
 
   @Test
+  fun `line edits send only what changed`() {
+    assertEquals(TerminalLineEdit(0, "git"), terminalLineEdit("", "git"))
+    // A swiped word after an auto-space.
+    assertEquals(TerminalLineEdit(0, " status"), terminalLineEdit("git", "git status"))
+    // A tapped suggestion replaces the composing word.
+    assertEquals(TerminalLineEdit(3, "ull"), terminalLineEdit("git pish", "git pull"))
+    assertEquals(TerminalLineEdit(1, ""), terminalLineEdit("ls", "l"))
+    assertEquals(TerminalLineEdit(0, ""), terminalLineEdit("ls", "ls"))
+  }
+
+  @Test
+  fun `line edits count deleted code points, not chars`() {
+    assertEquals(TerminalLineEdit(1, ""), terminalLineEdit("a🙂", "a"))
+    // Same high surrogate, different emoji: the shared prefix stops before it.
+    assertEquals(TerminalLineEdit(1, "😀"), terminalLineEdit("🙂", "😀"))
+  }
+
+  @Test
+  fun `long lines are trimmed from the front without splitting a surrogate pair`() {
+    assertEquals(0, terminalLineTrimStart("short", max = 8, keep = 4))
+    assertEquals(6, terminalLineTrimStart("0123456789", max = 8, keep = 4))
+    val emoji = "123456🙂9"
+    assertEquals(8, terminalLineTrimStart(emoji, max = 8, keep = 2))
+  }
+
+  @Test
   fun `clearing committed text empties the same buffer instead of replacing it`() {
     val buffer = StringBuilder("ls")
     val calls = mutableListOf<String>()

@@ -45,6 +45,11 @@ class TerminalInputViewManager : SimpleViewManager<TerminalInputView>() {
     view.setKeyboardHideRequest(value)
   }
 
+  @ReactProp(name = "lineResetRequest", defaultInt = 0)
+  fun setLineResetRequest(view: TerminalInputView, value: Int) {
+    view.setLineResetRequest(value)
+  }
+
   override fun getExportedCustomDirectEventTypeConstants(): MutableMap<String, Any> =
     MapBuilder.builder<String, Any>()
       .put("topModifiersConsumed", MapBuilder.of("registrationName", "onModifiersConsumed"))

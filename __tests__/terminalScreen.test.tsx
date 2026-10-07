@@ -1032,10 +1032,11 @@ describe('TerminalScreen', () => {
     await press('terminal-key-arrow-down');
     expect(keyColor('ALT')).toBe('#F2F4F5');
     expect(keyColor('CTRL')).toBe('#F2F4F5');
+    // The arrow cleared the typed line, so the editor starts over.
     await press('terminal-key-ctrl');
-    await type('ca');
+    await type('a');
     expect(keyColor('CTRL')).toBe('#F2F4F5');
-    await type('cab');
+    await type('ab');
     await press('terminal-key-alt');
     await press('terminal-key-tab');
     await press('terminal-key-esc');

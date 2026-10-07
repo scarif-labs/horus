@@ -10,6 +10,8 @@ export type NativeTerminalInputProps = ViewProps & Readonly<{
   onModifiersConsumed?: () => void;
   keyboardShowRequest: number;
   keyboardHideRequest: number;
+  /** Changing it empties the editor's copy of the typed line. */
+  lineResetRequest: number;
 }>;
 
 /** Android keyboard bridge that writes committed text directly to the PTY. */

@@ -237,6 +237,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [nativeHarnessReady, setNativeHarnessReady] = React.useState(false);
   const [keyboardShowRequest, setKeyboardShowRequest] = React.useState(0);
   const [keyboardHideRequest, setKeyboardHideRequest] = React.useState(0);
+  const [keyboardLineResetRequest, setKeyboardLineResetRequest] = React.useState(0);
   const [harnessFrameReady, setHarnessFrameReady] = React.useState(false);
   // Last HORUS_INSTALL_STAGE seen while first-run provisioning runs; undefined
   // when the app was already installed.
@@ -790,9 +791,13 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setAltActive(false);
   }, []);
 
+  // The keyboard editor mirrors the line typed so far. Keys sent from the
+  // controls (Tab, arrows, paste) change the shell line behind its back, so
+  // it starts over; otherwise a later correction would erase the wrong text.
   const clearKeyboardInput = React.useCallback(() => {
     keyboardInputValueRef.current = '';
     terminalInputRef.current?.clear();
+    setKeyboardLineResetRequest(value => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1);
   }, []);
 
   const handleTerminalText = React.useCallback((text: string) => {
@@ -848,30 +853,34 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [keyboardVisible, nativeTerminalInput, running]);
 
   const sendTerminalKey = React.useCallback((value: string) => {
+    clearKeyboardInput();
     void write(applyOneShotModifiers(value, ctrlActive, altActive));
     releaseModifiers();
-  }, [altActive, ctrlActive, releaseModifiers, write]);
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
 
   const sendEscape = React.useCallback(() => {
     if (toolchain === 'codex' && transcriptPagerOpen) {
+      clearKeyboardInput();
       setTranscriptPagerOpen(false);
       void write('\u001b');
       return;
     }
     sendTerminalKey('\u001b');
-  }, [sendTerminalKey, toolchain, transcriptPagerOpen, write]);
+  }, [clearKeyboardInput, sendTerminalKey, toolchain, transcriptPagerOpen, write]);
 
   const sendArrow = React.useCallback((direction: TerminalArrow) => {
+    clearKeyboardInput();
     void write(arrowSequence(direction, ctrlActive, altActive));
     releaseModifiers();
-  }, [altActive, ctrlActive, releaseModifiers, write]);
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
 
   const pasteClipboard = React.useCallback(() => {
+    clearKeyboardInput();
     void (async () => {
       const sequence = await readTerminalPaste(nativeSessionId, displayBufferRef.current?.bracketedPaste ?? false);
       if (sequence !== undefined && mountedRef.current) await write(sequence);
     })();
-  }, [nativeSessionId, write]);
+  }, [clearKeyboardInput, nativeSessionId, write]);
 
   const restartApp = React.useCallback(() => {
     void start(true);
@@ -1079,6 +1088,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               onModifiersConsumed={releaseModifiers}
               keyboardShowRequest={keyboardShowRequest}
               keyboardHideRequest={keyboardHideRequest}
+              lineResetRequest={keyboardLineResetRequest}
               onLayout={() => {
                 const wasLayoutReady = inputLayoutReadyRef.current;
                 inputLayoutReadyRef.current = true;
