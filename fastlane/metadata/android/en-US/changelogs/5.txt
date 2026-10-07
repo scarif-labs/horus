@@ -1,0 +1,7 @@
+- Swipe typing and keyboard suggestions in the terminal
+- CTRL and ALT apply to one key, so ^S can no longer freeze the shell
+- Multi-threaded programs such as ffmpeg no longer end the session
+- Faster output, and the view keeps up with the newest lines
+- Agent installs show download progress as a percentage
+- Fixes for the background service on Android 16 and a crash when Android refuses it
+- New screenshots and description
