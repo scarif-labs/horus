@@ -54,6 +54,20 @@ test('anchors the normal-buffer tail on the last written row, not the blank grid
   expect(nativeTailOffset({contentRows: 45, lastContentRow: 44, cursorRow: 44, viewportHeight})).toBe(21 * row);
 });
 
+test('shows a cleared screen from its top row instead of pulling scrollback back into view', () => {
+  const row = TERMINAL_CELL_HEIGHT;
+  // 100 rows of scrollback above a 45-row screen; `clear` left the prompt on screen row 0.
+  const cleared = {contentRows: 145, screenRows: 45, lastContentRow: 100, cursorRow: 100};
+  // Keyboard hidden: the whole screen fits, so it starts at the screen's top.
+  expect(nativeTailOffset({...cleared, viewportHeight: 45 * row})).toBe(100 * row);
+  // Keyboard open: the prompt is still on the viewport's first row, not its last.
+  expect(nativeTailOffset({...cleared, viewportHeight: 24 * row})).toBe(100 * row);
+  // Output below the viewport still wins over the screen's top.
+  expect(nativeTailOffset({...cleared, lastContentRow: 140, cursorRow: 140, viewportHeight: 24 * row})).toBe(117 * row);
+  // A viewport taller than the screen clamps to the end of the content.
+  expect(nativeTailOffset({...cleared, viewportHeight: 50 * row})).toBe(95 * row);
+});
+
 async function createGrid(alternate = true, mouseTrackingMode: TerminalFrame['mouseTrackingMode'] = 'none', mouseEncoding: TerminalFrame['mouseEncoding'] = 'default') {
   const onSwipe = jest.fn();
   const onMouseWheel = jest.fn();

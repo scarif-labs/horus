@@ -10,6 +10,8 @@ export type NativeTerminalLinkRange = Readonly<{
 export type NativeTerminalFrameMeta = Readonly<{
   alternate: boolean;
   contentRows: number;
+  /** Rows of the active screen; the last [rows] of [contentRows]. */
+  rows?: number;
   cursorRow: number;
   /** Last row with visible text, or -1 when every row is blank. */
   lastContentRow: number;

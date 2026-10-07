@@ -33,6 +33,7 @@ private class NativeFrameMetaEvent(
   override fun getEventData(): WritableMap = Arguments.createMap().apply {
     putBoolean("alternate", frame.alternate)
     putInt("contentRows", frame.contentRows)
+    putInt("rows", frame.rows)
     putInt("cursorRow", frame.cursorRow)
     putInt("lastContentRow", frame.lastContentRow)
     putBoolean("mouseTracking", frame.mouseTracking)
@@ -121,6 +122,7 @@ class TerminalCanvasView(context: Context) : View(context) {
   private var nativeLoadingText: String? = null
   private var lastNativeFrameAlternate: Boolean? = null
   private var lastNativeFrameContentRows = -1
+  private var lastNativeFrameRows = -1
   private var lastNativeFrameCursorRow = -1
   private var lastNativeFrameLastContentRow = -1
   private var lastNativeFrameMouseTracking: Boolean? = null
@@ -146,6 +148,7 @@ class TerminalCanvasView(context: Context) : View(context) {
     nativeSessionId = value?.takeIf(String::isNotEmpty)
     lastNativeFrameAlternate = null
     lastNativeFrameContentRows = -1
+    lastNativeFrameRows = -1
     lastNativeFrameCursorRow = -1
     lastNativeFrameLastContentRow = -1
     lastNativeFrameMouseTracking = null
@@ -564,10 +567,12 @@ class TerminalCanvasView(context: Context) : View(context) {
 
   private fun notifyNativeFrameMeta(frame: NativeTerminalEngine.Frame) {
     if (lastNativeFrameAlternate == frame.alternate && lastNativeFrameContentRows == frame.contentRows &&
+      lastNativeFrameRows == frame.rows &&
       lastNativeFrameCursorRow == frame.cursorRow && lastNativeFrameLastContentRow == frame.lastContentRow &&
       lastNativeFrameMouseTracking == frame.mouseTracking && lastNativeFrameMouseSgr == frame.mouseSgr) return
     lastNativeFrameAlternate = frame.alternate
     lastNativeFrameContentRows = frame.contentRows
+    lastNativeFrameRows = frame.rows
     lastNativeFrameCursorRow = frame.cursorRow
     lastNativeFrameLastContentRow = frame.lastContentRow
     lastNativeFrameMouseTracking = frame.mouseTracking

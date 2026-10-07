@@ -27,10 +27,14 @@ const ASCII_CELL_TEXT = /^[\x20-\x7e]+$/;
  * Scroll offset that shows the end of the normal-buffer output. The grid keeps
  * the hidden-keyboard row count, so while the IME is open its bottom rows are
  * often blank; anchor on the last written row (or the cursor, if lower)
- * instead of the grid's bottom edge.
+ * instead of the grid's bottom edge. Never scroll above the screen's top row
+ * when the screen fits: after `clear` the prompt sits on row 0 with blank rows
+ * below, and anchoring on it alone would pull scrollback back into view.
  */
-export function nativeTailOffset({contentRows, lastContentRow, cursorRow, viewportHeight}: Readonly<{
+export function nativeTailOffset({contentRows, screenRows, lastContentRow, cursorRow, viewportHeight}: Readonly<{
   contentRows: number;
+  /** Rows of the active screen, the last [screenRows] of [contentRows]. */
+  screenRows?: number;
   lastContentRow: number;
   cursorRow: number;
   viewportHeight: number;
@@ -42,7 +46,15 @@ export function nativeTailOffset({contentRows, lastContentRow, cursorRow, viewpo
     Number.isInteger(cursorRow) ? cursorRow : 0,
   );
   const anchorRows = Math.min(safeContentRows, Math.max(1, lastRow + 1));
-  return Math.max(0, anchorRows * TERMINAL_CELL_HEIGHT - safeViewportHeight);
+  const anchorOffset = anchorRows * TERMINAL_CELL_HEIGHT - safeViewportHeight;
+  const safeScreenRows = screenRows !== undefined && Number.isInteger(screenRows) && screenRows > 0
+    ? Math.min(screenRows, safeContentRows)
+    : safeContentRows;
+  const screenTopOffset = Math.min(
+    (safeContentRows - safeScreenRows) * TERMINAL_CELL_HEIGHT,
+    safeContentRows * TERMINAL_CELL_HEIGHT - safeViewportHeight,
+  );
+  return Math.max(0, anchorOffset, screenTopOffset);
 }
 
 /**
@@ -377,6 +389,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (viewportHeight <= 0) return;
     const tailOffset = nativeTailOffset({
       contentRows: nativeFrameMeta.contentRows,
+      screenRows: nativeFrameMeta.rows,
       lastContentRow: nativeFrameMeta.lastContentRow,
       cursorRow: nativeCursorRow.current,
       viewportHeight,
@@ -386,7 +399,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       if (!followTail.current || nativeRestorePending.current) return;
       nativeScroll.current?.scrollTo({y: tailOffset, animated: false});
     });
-  }, [nativeFrameMeta.alternate, nativeFrameMeta.contentRows, nativeFrameMeta.lastContentRow, nativeSession]);
+  }, [nativeFrameMeta.alternate, nativeFrameMeta.contentRows, nativeFrameMeta.lastContentRow, nativeFrameMeta.rows, nativeSession]);
 
   const notifyScrollState = React.useCallback((isScrolling: boolean) => {
     if (scrolling.current === isScrolling) return;
@@ -423,6 +436,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     const atTail = nativeSession && !meta.alternate
       ? contentOffset.y >= nativeTailOffset({
         contentRows: meta.contentRows,
+        screenRows: meta.rows,
         lastContentRow: meta.lastContentRow,
         cursorRow: nativeCursorRow.current,
         viewportHeight: layoutMeasurement.height,
@@ -451,6 +465,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       })
       : nativeTailOffset({
         contentRows: nativeFrameMeta.contentRows,
+        screenRows: nativeFrameMeta.rows,
         lastContentRow: nativeFrameMeta.lastContentRow,
         cursorRow: nativeCursorRow.current,
         viewportHeight: height,
@@ -464,7 +479,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   }, [nativeFrameMeta]);
 
   const handleNativeFrameMeta = React.useCallback((event: {nativeEvent: NativeTerminalFrameMeta}) => {
-    const {alternate: nextAlternate, contentRows, cursorRow, mouseTracking, mouseSgr} = event.nativeEvent;
+    const {alternate: nextAlternate, contentRows, rows, cursorRow, mouseTracking, mouseSgr} = event.nativeEvent;
     if (!Number.isInteger(contentRows) || contentRows < 1) return;
     if (!Number.isInteger(cursorRow)) return;
     const lastContentRow = Number.isInteger(event.nativeEvent.lastContentRow) ? event.nativeEvent.lastContentRow : contentRows - 1;
@@ -493,11 +508,11 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       nativeScreen.current = {hasContent, alternate: nextAlternate};
       onNativeScreenChange?.(nativeScreen.current);
     }
-    setNativeFrameMeta(current => current.alternate === nextAlternate && current.contentRows === contentRows &&
+    setNativeFrameMeta(current => current.alternate === nextAlternate && current.contentRows === contentRows && current.rows === rows &&
       current.lastContentRow === lastContentRow &&
       current.mouseTracking === mouseTracking && current.mouseSgr === mouseSgr
       ? current
-      : {alternate: nextAlternate, contentRows, cursorRow, lastContentRow, mouseTracking, mouseSgr});
+      : {alternate: nextAlternate, contentRows, rows, cursorRow, lastContentRow, mouseTracking, mouseSgr});
   }, [onNativeScreenChange]);
 
   const handleTouchStart = React.useCallback((event: GestureResponderEvent) => {
