@@ -5,3 +5,4 @@
 - Agent installs show download progress as a percentage
 - Fixes for the background service on Android 16 and a crash when Android refuses it
 - New screenshots and description
+- clear and exit work as expected in the bare terminal
