@@ -1,1 +1,1 @@
-Alpine Linux workspace for Claude Code, Codex, OpenCode, and a zsh shell
+Run Claude Code, Codex, and OpenCode in a real Linux terminal on your phone

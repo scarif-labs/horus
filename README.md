@@ -18,7 +18,7 @@ SSH in, forward ports, and sync files over USB with the optional
 <p align="center">
   <img src="docs/screenshots/launcher.png" width="260" alt="Horus launcher">
   <img src="docs/screenshots/claude.png" width="260" alt="Claude Code running in Horus">
-  <img src="docs/screenshots/bare.png" width="260" alt="Alpine shell in Horus">
+  <img src="docs/screenshots/ffmpeg.png" width="260" alt="ffmpeg encoding 1080p video in the Horus shell">
 </p>
 
 ## Get Horus
