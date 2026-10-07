@@ -28,20 +28,21 @@ export function lastInstallStage(text: string): string | undefined {
   return stage;
 }
 
-const DOWNLOAD_PATTERN = /Downloading [^\r\n]*… (\d+) MB/g;
+// "… 37% (90 of 243 MB)" when the script knows the download size, else "… 84 MB".
+const DOWNLOAD_PATTERN = /Downloading [^\r\n]*… (?:(\d+)%|(\d+) MB)/g;
 
-/** The latest download size the provisioning script reported in [text], e.g. "84 MB". */
+/** The latest download progress the provisioning script reported in [text], e.g. "37%" or "84 MB". */
 export function lastDownloadProgress(text: string): string | undefined {
-  let size: string | undefined;
-  for (const match of text.matchAll(DOWNLOAD_PATTERN)) size = `${match[1]} MB`;
-  return size;
+  let progress: string | undefined;
+  for (const match of text.matchAll(DOWNLOAD_PATTERN)) progress = match[1] !== undefined ? `${match[1]}%` : `${match[2]} MB`;
+  return progress;
 }
 
 type InstallProgressOverlayProps = Readonly<{
   /** Undefined for an app that is already installed and only starting. */
   step?: number;
   toolchain: TerminalToolchainTarget;
-  /** How much the active step has downloaded so far, e.g. "84 MB". */
+  /** How much the active step has downloaded so far, e.g. "37%" or "84 MB". */
   download?: string;
 }>;
 

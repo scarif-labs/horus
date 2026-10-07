@@ -18,9 +18,11 @@ describe('install progress stages', () => {
     expect(lastInstallStage('noise HORUS_INSTALL_STAGE=opencode_failed\n')).toBe('opencode_failed');
   });
 
-  test('reads the latest download size in a chunk', () => {
+  test('reads the latest download progress in a chunk', () => {
     expect(lastDownloadProgress('HORUS_INSTALL_STAGE=claude\n')).toBeUndefined();
     expect(lastDownloadProgress('Downloading Claude Code… 12 MB\nDownloading Claude Code… 84 MB\n')).toBe('84 MB');
     expect(lastDownloadProgress('Downloading OpenCode… 7 MB\r\n')).toBe('7 MB');
+    expect(lastDownloadProgress('Downloading Codex… 4% (6 of 148 MB)\nDownloading Codex… 37% (55 of 148 MB)\n')).toBe('37%');
+    expect(lastDownloadProgress('Downloading Claude Code… 12 MB\nDownloading Claude Code… 100% (231 of 231 MB)\r\n')).toBe('100%');
   });
 });

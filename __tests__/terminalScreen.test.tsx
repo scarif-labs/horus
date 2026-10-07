@@ -494,9 +494,9 @@ describe('TerminalScreen', () => {
     await emitText(2, 'HORUS_INSTALL_STAGE=base_ready\nHORUS_INSTALL_STAGE=codex\n');
     expect(stepIsActive(2)).toBe(true);
     expect(has('terminal-install-download')).toBe(false);
-    await emitText(3, 'Downloading Codex… 84 MB\n');
+    await emitText(3, 'Downloading Codex… 37% (55 of 148 MB)\n');
     const download = renderer.root.findAllByProps({testID: 'terminal-install-download'})[0];
-    expect(download.props.children).toEqual(['84 MB', ' downloaded']);
+    expect(download.props.children).toEqual(['37%', ' downloaded']);
 
     // A failed stage hands the screen back to the transcript and its error.
     await emitText(4, 'HORUS_INSTALL_STAGE=codex_failed\n');

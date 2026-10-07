@@ -1153,29 +1153,90 @@ class ProotSessionLauncher(
         return "${'$'}command_status"
       }
       # The installers download silently (curl -s, npm --no-progress), so
-      # report how much has landed in their download directories instead.
-      download_mb() {
-        du -sm "${'$'}@" 2>/dev/null | awk '{ total += ${'$'}1 } END { print total + 0 }'
+      # report how much has landed in their download directories instead,
+      # as a percentage when the expected size is known.
+      download_kb() {
+        du -sk "${'$'}@" 2>/dev/null | awk '{ total += ${'$'}1 } END { print total + 0 }'
+      }
+      # Size of the Claude Code binary install.sh is about to fetch, from the
+      # same manifest it reads. Prints nothing when the manifest is unreachable.
+      claude_download_kb() {
+        claude_base=https://downloads.claude.ai/claude-code-releases
+        claude_arch=${'$'}(uname -m)
+        if [ "${'$'}claude_arch" = aarch64 ]; then claude_arch=arm64; fi
+        claude_version=${'$'}(curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/latest" 2>/dev/null) || return 0
+        curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/${'$'}claude_version/manifest.json" 2>/dev/null |
+          tr -d ' \n' |
+          sed -n "s/.*\"linux-${'$'}claude_arch-musl\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
+          awk '${'$'}1 > 0 { printf "%d\n", (${'$'}1 + 1023) / 1024 }' || true
+      }
+      # Compressed size of every tarball `npm install <package>` downloads:
+      # the package plus the optional platform packages npm keeps on this
+      # os/cpu/libc. Prints nothing when the registry does not say.
+      npm_download_kb() {
+        node -e '
+          const registry = (process.env.npm_config_registry || "https://registry.npmjs.org").replace(/\/+${'$'}/, "");
+          const libc = process.report.getReport().header.glibcVersionRuntime ? "glibc" : "musl";
+          const fits = (list, value) => !list || list.length === 0 || list.includes(value) ||
+            (list.every(entry => entry.startsWith("!")) && !list.includes("!" + value));
+          const timeout = () => AbortSignal.timeout(15000);
+          const manifest = async (name, version) => {
+            const response = await fetch(registry + "/" + name.replace("/", "%2f") + "/" + version, {signal: timeout()});
+            if (!response.ok) throw new Error("manifest " + response.status);
+            return response.json();
+          };
+          const tarballBytes = async url => {
+            const response = await fetch(url, {headers: {Range: "bytes=0-0"}, signal: timeout()});
+            const total = /\/(\d+)${'$'}/.exec(response.headers.get("content-range") || "");
+            await response.body?.cancel();
+            if (!total) throw new Error("no size for " + url);
+            return Number(total[1]);
+          };
+          (async () => {
+            const root = await manifest(process.argv[1], "latest");
+            const optional = await Promise.all(Object.entries(root.optionalDependencies || {}).map(([alias, spec]) => {
+              if (!spec.startsWith("npm:")) return manifest(alias, spec);
+              const at = spec.lastIndexOf("@");
+              return manifest(spec.slice(4, at), spec.slice(at + 1));
+            }));
+            const kept = [root, ...optional.filter(doc =>
+              fits(doc.os, process.platform) && fits(doc.cpu, process.arch) && fits(doc.libc, libc))];
+            const sizes = await Promise.all(kept.map(doc => tarballBytes(doc.dist.tarball)));
+            console.log(Math.ceil(sizes.reduce((sum, size) => sum + size, 0) / 1024));
+          })().catch(() => {});
+        ' "${'$'}1" 2>/dev/null || true
       }
       watch_download() {
         watch_label=${'$'}1
-        shift
-        watch_base=${'$'}(download_mb "${'$'}@")
+        watch_total_kb=${'$'}{2:-0}
+        shift 2
+        watch_base=${'$'}(download_kb "${'$'}@")
         watch_last=0
-        while sleep 3; do
-          watch_mb=${'$'}(( ${'$'}(download_mb "${'$'}@") - watch_base ))
-          if [ "${'$'}watch_mb" -gt "${'$'}watch_last" ]; then
-            printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_mb} MB"
-            watch_last=${'$'}watch_mb
+        while sleep 2; do
+          watch_kb=${'$'}(( ${'$'}(download_kb "${'$'}@") - watch_base ))
+          if [ "${'$'}watch_total_kb" -gt 0 ]; then
+            watch_percent=${'$'}(( watch_kb * 100 / watch_total_kb ))
+            if [ "${'$'}watch_percent" -gt 100 ]; then watch_percent=100; fi
+            if [ "${'$'}watch_percent" -gt "${'$'}watch_last" ]; then
+              printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_percent}% (${'$'}(( watch_kb / 1024 )) of ${'$'}(( watch_total_kb / 1024 )) MB)"
+              watch_last=${'$'}watch_percent
+            fi
+          else
+            watch_mb=${'$'}(( watch_kb / 1024 ))
+            if [ "${'$'}watch_mb" -gt "${'$'}watch_last" ]; then
+              printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_mb} MB"
+              watch_last=${'$'}watch_mb
+            fi
           fi
         done
       }
       run_downloading() {
         download_label=${'$'}1
-        download_dirs=${'$'}2
-        shift 2
+        download_total_kb=${'$'}2
+        download_dirs=${'$'}3
+        shift 3
         # Word splitting on download_dirs is intended: it lists directories.
-        watch_download "${'$'}download_label" ${'$'}download_dirs &
+        watch_download "${'$'}download_label" "${'$'}download_total_kb" ${'$'}download_dirs &
         watch_pid=${'$'}!
         if run_logged "${'$'}@"; then download_status=0; else download_status=${'$'}?; fi
         kill "${'$'}watch_pid" 2>/dev/null || true
@@ -1252,7 +1313,7 @@ class ProotSessionLauncher(
           bash /root/.cache/horus/claude-install.sh
           test -x /root/.local/bin/claude
         }
-        if ! run_downloading 'Claude Code' /root/.claude/downloads /root/.cache/horus/claude-install.log install_claude; then
+        if ! run_downloading 'Claude Code' "${'$'}(claude_download_kb)" /root/.claude/downloads /root/.cache/horus/claude-install.log install_claude; then
           mark_provision_stage claude_failed
           exit 22
         fi
@@ -1264,7 +1325,7 @@ class ProotSessionLauncher(
         [ "${'$'}(head -n 1 "${'$'}codex_entry" 2>/dev/null || true)" != '#!/usr/bin/env node' ];
       }; then
         mark_provision_stage codex
-        if ! run_downloading Codex '/root/.npm /root/.local/lib/node_modules' /root/.cache/horus/codex-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex; then
+        if ! run_downloading Codex "${'$'}(npm_download_kb @openai/codex)" /root/.npm /root/.cache/horus/codex-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex; then
           mark_provision_stage codex_failed
           exit 23
         fi
@@ -1292,7 +1353,7 @@ class ProotSessionLauncher(
         [ ! -f "${'$'}target_marker" ] || [ "${'$'}opencode_payload_valid" != true ];
       }; then
         mark_provision_stage opencode
-        if ! run_downloading OpenCode '/root/.npm /root/.local/lib/node_modules' /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
+        if ! run_downloading OpenCode "${'$'}(npm_download_kb opencode-ai)" /root/.npm /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
           mark_provision_stage opencode_failed
           exit 24
         fi
