@@ -326,3 +326,32 @@ test('captures vertical drags from child links while preserving taps, horizontal
   expect(capture()(touch(40, 500))).toBe(false);
   await grid.unmount();
 });
+
+test('only a drag stops following the tail; a scroll event during a flood does not', async () => {
+  const grid = await createGrid(false);
+  const onScrollStateChange = jest.fn();
+  await ReactTestRenderer.act(async () => {
+    grid.renderer.update(<TerminalGrid {...grid.props} frame={{...frame, alternate: false}} onScrollStateChange={onScrollStateChange} />);
+  });
+  const list = () => grid.renderer.root.findByProps({testID: 'terminal-output-grid'}).props;
+  const scrollTo = (y: number) => ({nativeEvent: {contentOffset: {y}, contentSize: {height: 100 * TERMINAL_CELL_HEIGHT}, layoutMeasurement: {height: 20 * TERMINAL_CELL_HEIGHT}}});
+  const startedScrolling = () => onScrollStateChange.mock.calls.some(([scrolling]) => scrolling === true);
+
+  // Output grew past the last programmatic scroll: the event lands above the
+  // tail, but nobody dragged, so the grid keeps following.
+  await ReactTestRenderer.act(async () => { list().onScroll(scrollTo(40 * TERMINAL_CELL_HEIGHT)); });
+  expect(startedScrolling()).toBe(false);
+
+  // A drag away from the tail does stop following.
+  await ReactTestRenderer.act(async () => {
+    list().onScrollBeginDrag();
+    list().onScroll(scrollTo(40 * TERMINAL_CELL_HEIGHT));
+    list().onScrollEndDrag();
+  });
+  expect(onScrollStateChange).toHaveBeenLastCalledWith(true);
+
+  // Coming back to the tail resumes following.
+  await ReactTestRenderer.act(async () => { list().onScroll(scrollTo(80 * TERMINAL_CELL_HEIGHT)); });
+  expect(onScrollStateChange).toHaveBeenLastCalledWith(false);
+  await grid.unmount();
+});

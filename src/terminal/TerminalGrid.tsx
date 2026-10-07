@@ -304,6 +304,10 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const nativeScroll = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const rowKeyState = React.useRef<TerminalRowKeyState>({keys: new WeakMap(), next: 0});
   const followTail = React.useRef(true);
+  // Only a drag may stop following the tail. During a flood the content grows
+  // between a programmatic scroll and its scroll event, so that event can look
+  // "above the tail" and would otherwise leave the newest output off screen.
+  const userDragging = React.useRef(false);
   const scrolling = React.useRef(false);
   const latestFrame = React.useRef(frame);
   const [displayFrame, setDisplayFrame] = React.useState(frame);
@@ -390,6 +394,15 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     onScrollStateChange?.(isScrolling);
   }, [onScrollStateChange]);
 
+  const handleScrollBeginDrag = React.useCallback(() => {
+    userDragging.current = true;
+    notifyScrollState(true);
+  }, [notifyScrollState]);
+
+  const handleScrollEndDrag = React.useCallback(() => {
+    userDragging.current = false;
+  }, []);
+
   const handleScroll = React.useCallback((event: {nativeEvent: {contentOffset: {y: number}; contentSize: {height: number}; layoutMeasurement: {height: number}}}) => {
     const {contentOffset, contentSize, layoutMeasurement} = event.nativeEvent;
     nativeScrollOffset.current = contentOffset.y;
@@ -416,6 +429,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       }) - TERMINAL_CELL_HEIGHT
       : contentOffset.y + layoutMeasurement.height >= contentSize.height - TERMINAL_CELL_HEIGHT;
     const wasFollowingTail = followTail.current;
+    if (wasFollowingTail && !atTail && !userDragging.current) return;
     followTail.current = atTail;
     notifyScrollState(!atTail);
     if (atTail && !wasFollowingTail) setDisplayFrame(latestFrame.current);
@@ -643,7 +657,8 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
               });
             }}
             onLayout={handleNativeScrollLayout}
-            onScrollBeginDrag={() => notifyScrollState(true)}
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEndDrag}
             onScroll={handleScroll}
             scrollEventThrottle={32}
             testID="terminal-output-grid">
@@ -691,7 +706,8 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
             onContentSizeChange={() => {
               if (!alternate && followTail.current) list.current?.scrollToEnd({animated: false});
             }}
-            onScrollBeginDrag={() => notifyScrollState(true)}
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEndDrag}
             onScroll={handleScroll}
             scrollEventThrottle={32}
             testID="terminal-output-grid"
