@@ -1,6 +1,7 @@
 import React from 'react';
 import {AppState} from 'react-native';
-import {importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {activateRootfs, importRootfs, installRootfs, readProvisionProgress, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {rootfsForDistro} from './src/terminal/distroContract';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
 import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
 import {TerminalSessionClient} from './src/terminal/session/sessionClient';
@@ -11,17 +12,19 @@ import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} fr
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
-import {lockedOutMessage, readUserProfile, verifyUserPassword, type UserProfile} from './src/profile/profileStore';
+import {DISTRO_NAMES, LINUX_DISTROS, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
 import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
 import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
+import {AddUserScreen} from './src/ui/AddUserScreen';
 import {ProjectHubScreen} from './src/ui/ProjectHubScreen';
 import {LoginScreen} from './src/ui/LoginScreen';
 import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
 import {GithubAccountScreen} from './src/ui/GithubAccountScreen';
 import {SessionSettingsScreen} from './src/ui/SessionSettingsScreen';
+import {UserAccountScreen} from './src/ui/UserAccountScreen';
 import {useHardwareBack} from './src/ui/useHardwareBack';
 import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
@@ -29,11 +32,19 @@ import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
 
-type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'github-account' | 'projects' | 'files' | 'terminal';
+type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
+const ACTIVATE_REQUEST_ID = 'horus-activate-1';
+
+/** The catalog rootfs id of a distribution; every distribution Horus offers has one. */
+function rootfsIdFor(distro: LinuxDistro): string {
+  const entry = rootfsForDistro(distro);
+  if (entry === undefined) throw new Error(`no rootfs for ${distro}`);
+  return entry.rootfsId;
+}
 const nextSessionRequestId = createRequestIdFactory('launcher');
 const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
 
@@ -57,6 +68,8 @@ function App(): React.JSX.Element {
   const [runtimeReady, setRuntimeReady] = React.useState(false);
   const [bootError, setBootError] = React.useState<string | undefined>();
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
+  // The distribution new sessions run in, which says who is signed in.
+  const [activeDistro, setActiveDistro] = React.useState<string | undefined>();
   const [profileError, setProfileError] = React.useState<string | undefined>();
   const [lockNotice, setLockNotice] = React.useState<string | undefined>();
   const [terminalTarget, setTerminalTarget] = React.useState<MetroLaunchTarget>({
@@ -173,6 +186,7 @@ function App(): React.JSX.Element {
       const stillUnlocked = !__DEV__ && existingProfile !== null && await updateUnlockGrant('resume');
       if (!mounted) return;
       setRuntimeReady(true);
+      setActiveDistro(runtime.activeDistro);
       setRoute(__DEV__ ? 'terminal' : existingProfile === null ? 'onboarding' : stillUnlocked ? 'home' : 'login');
     };
     void bootstrap();
@@ -192,14 +206,17 @@ function App(): React.JSX.Element {
   }, []);
 
   const onboardingActions = React.useMemo<OnboardingActions>(() => ({
-    installRootfs: async () => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID)),
-    importRootfs: async () => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID)),
-    saveProfile: async (password, {skipTools, onToolsReady}) => {
-      const setup = await setupOnboardingProfile(password, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
+    installRootfs: async distro => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    importRootfs: async distro => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    readToolsProgress: () => readProvisionProgress(),
+    saveProfile: async (newUser, {skipTools, onToolsReady}) => {
+      const setup = await setupOnboardingProfile(newUser, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
       if (setup.kind === 'success') {
         void updateUnlockGrant('grant');
         setLockNotice(undefined);
-        setProfile({hasPassword: true});
+        const user: ProfileUser = {distro: newUser.distro, username: newUser.username, avatar: newUser.avatar};
+        setProfile({users: [user]});
+        setActiveDistro(newUser.distro);
       }
       return setup;
     },
@@ -214,21 +231,40 @@ function App(): React.JSX.Element {
     },
   }), [finishOnboardingRootfs]);
 
-  const login = React.useCallback(async (password: string) => {
+  // Signing in as a user also points new sessions at that user's distribution.
+  const login = React.useCallback(async (user: ProfileUser, password: string) => {
     if (profile === null) {
       setProfileError('Incorrect password.');
       return;
     }
-    const check = await verifyUserPassword(password);
+    const check = await verifyUserPassword(user.distro, password);
     if (check.kind !== 'success') {
       setProfileError(check.kind === 'locked' ? lockedOutMessage(check.retryAfterMs) : 'Incorrect password.');
       return;
     }
+    // Sessions belong to whoever started them: switching user ends them, so
+    // the new user never sees or reattaches to the previous user's shells.
+    if (activeDistro !== undefined && activeDistro !== user.distro) {
+      const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('switch-user'), 'user_stop');
+      if (stopped.kind !== 'applied') {
+        setProfileError('Couldn’t stop the other user’s sessions. Try again.');
+        return;
+      }
+      setPendingCompletion(undefined);
+    }
+    const activated = await activateRootfs(ACTIVATE_REQUEST_ID, rootfsIdFor(user.distro));
+    if (activated.kind !== 'success') {
+      setProfileError(activated.errorCode === 'not_installed'
+        ? `${DISTRO_NAMES[user.distro]} isn’t installed anymore. Sign in as another user, or reinstall it from Settings.`
+        : `Couldn’t switch to ${DISTRO_NAMES[user.distro]} (${activated.errorCode}).`);
+      return;
+    }
     void updateUnlockGrant('grant');
+    setActiveDistro(user.distro);
     setProfileError(undefined);
     setLockNotice(undefined);
     setRoute('home');
-  }, [profile]);
+  }, [profile, activeDistro, sessionClient, setPendingCompletion]);
 
   // Locking only hides the workspace. Running harnesses and shells keep
   // working behind the password screen and are in Recents after unlock.
@@ -239,7 +275,22 @@ function App(): React.JSX.Element {
     setRoute('login');
   }, []);
 
-  const authenticated = route === 'home' || route === 'settings' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
+  // Logging out ends every session, unlike the background lock.
+  const [loginUser, setLoginUser] = React.useState<LinuxDistro | undefined>();
+  const logout = React.useCallback(async (next?: ProfileUser): Promise<boolean> => {
+    const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
+    if (stopped.kind !== 'applied') return false;
+    setPendingCompletion(undefined);
+    setProfileError(undefined);
+    setLockNotice(undefined);
+    // Switching to a user opens sign in on their password.
+    setLoginUser(next?.distro);
+    void updateUnlockGrant('revoke');
+    setRoute(__DEV__ ? 'home' : 'login');
+    return true;
+  }, [sessionClient, setPendingCompletion]);
+
+  const authenticated = route === 'home' || route === 'settings' || route === 'user' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
   useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
 
@@ -298,6 +349,8 @@ function App(): React.JSX.Element {
       eyebrow: 'RECENT SESSION',
       sessionId: session.sessionId,
       toolchain: session.toolchain,
+      // "Open again" after the app quits restarts this, not a plain shell.
+      ...(session.command !== undefined ? {command: session.command} : {}),
     });
   }, [openTarget]);
 
@@ -560,7 +613,7 @@ function App(): React.JSX.Element {
     return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
   }
   if (!__DEV__ && route === 'login' && profile !== null) {
-    return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} />;
+    return <LoginScreen error={profileError} initialUser={loginUser} notice={lockNotice} onLogin={login} users={profile.users} />;
   }
   if ((profile === null && !__DEV__) || (!__DEV__ && route === 'onboarding')) {
     return <OnboardingScreen actions={onboardingActions} rootfsInstalled={runtimeReady} />;
@@ -569,6 +622,27 @@ function App(): React.JSX.Element {
     return (
       <MetroHomeScreen
         githubAccount={githubAccount}
+        user={profile?.users.find(candidate => candidate.distro === activeDistro)}
+        onOpenUser={() => {
+          // Finding Account on their own counts as seeing the upgrade card.
+          if (profile?.accountIntro === true) {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          }
+          setRoute('user');
+        }}
+        accountIntro={profile?.accountIntro === true ? {
+          addableDistro: LINUX_DISTROS.find(distro => !profile.users.some(candidate => candidate.distro === distro)),
+          onOpen: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+            setRoute('user');
+          },
+          onDismiss: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          },
+        } : undefined}
         loadRecentSessions={loadRecentSessions}
         onOpenGithubLogin={openHomeGithubLogin}
         onOpenGithubAccount={openGithubAccount}
@@ -581,6 +655,38 @@ function App(): React.JSX.Element {
   }
   if (route === 'settings') {
     return <SessionSettingsScreen onBack={() => setRoute('home')} />;
+  }
+  const signedInUser = profile?.users.find(candidate => candidate.distro === activeDistro);
+  if (route === 'user' && profile !== null && signedInUser !== undefined) {
+    return (
+      <UserAccountScreen
+        onAddUser={() => setRoute('add-user')}
+        onBack={() => setRoute('home')}
+        onLogout={() => logout()}
+        onSwitchTo={next => logout(next)}
+        onUpdateUser={async updated => {
+          const result = await updateUserProfile(updated);
+          if (result.kind === 'success') {
+            setProfile({users: profile.users.map(candidate => candidate.distro === updated.distro ? updated : candidate)});
+          }
+          return result;
+        }}
+        user={signedInUser}
+        users={profile.users}
+      />
+    );
+  }
+  if (route === 'add-user' && profile !== null) {
+    return (
+      <AddUserScreen
+        existingUsers={profile.users}
+        onBack={() => setRoute('user')}
+        onCreated={user => {
+          setProfile({users: [...profile.users, user].sort((a, b) => a.distro.localeCompare(b.distro))});
+          setRoute('user');
+        }}
+      />
+    );
   }
   if (route === 'github-account' && githubAccount !== undefined) {
     return <GithubAccountScreen account={githubAccount} error={githubAccountError} onBack={leaveGithubAccount} onLogout={logoutGithubAccount} />;

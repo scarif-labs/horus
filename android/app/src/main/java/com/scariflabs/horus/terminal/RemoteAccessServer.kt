@@ -181,7 +181,7 @@ class RemoteAccessServer(
     // is hidden anyway.
     val cmdline = runCatching { File("/proc/$pid/cmdline").readText().replace('\u0000', ' ') }.getOrDefault("")
     if (cmdline.startsWith("dropbear ")) killServerTree(pid)
-    store.serverPidFile.delete()
+    store.deleteServerPidFiles()
   }
 
   private fun terminate(target: Process) {

@@ -35,33 +35,23 @@ class DistroStoreCoreTest {
 
   private class FakeExtractor(private val failWith: Exception? = null) : DistroStoreCore.RootfsExtractor {
     var calls = 0
-    override fun extract(archive: File, destinationRoot: File): SafeTarGzExtractor.Summary {
+    var lastFormat: ArchiveFormat? = null
+    override fun extract(archive: File, destinationRoot: File, format: ArchiveFormat): SafeTarExtractor.Summary {
       calls++
+      lastFormat = format
       failWith?.let { throw it }
       File(destinationRoot, "etc").mkdirs()
       File(destinationRoot, "etc/alpine-release").writeText("3.24.0\n")
-      return SafeTarGzExtractor.Summary(2, 1, 1, 0, 0, emptyList(), 12)
+      return SafeTarExtractor.Summary(2, 1, 1, 0, 0, emptyList(), 12)
     }
   }
 
   private class FakeProber(private val result: GuestProbeResult? = null) : GuestProber {
     var calls = 0
-    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult {
+    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult {
       calls++
       result?.let { return it }
-      return GuestProbeResult(
-        exitCode = 0,
-        output = listOf(
-          "alpine_probe_begin",
-          "aarch64",
-          "3.24.0",
-          "/root",
-          "/sbin/apk",
-          "/bin/sh",
-          "alpine_probe_end",
-        ).joinToString("\n"),
-        durationMs = 5,
-      )
+      return GuestProbeResult(exitCode = 0, output = entry.probeMarkers.joinToString("\n"), durationMs = 5)
     }
   }
 
@@ -174,12 +164,25 @@ class DistroStoreCoreTest {
     val store = newStore()
     assertTrue(store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong()) is DistroStoreCore.InstallOutcome.Success)
     val active = store.readActiveRecord()
-    java.nio.channels.FileChannel.open(File(store.storage.hardlinks, ".gc.lock").toPath(), java.nio.file.StandardOpenOption.READ).use { channel ->
+    // PRoot creates the lease file as it takes the shared lock.
+    java.nio.channels.FileChannel.open(
+      File(store.storage.hardlinks, ".gc.lock").toPath(),
+      java.nio.file.StandardOpenOption.READ, java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.CREATE,
+    ).use { channel ->
       channel.lock(0, Long.MAX_VALUE, true).use {
-        try { store.reset(deleteHome = true, deleteWorkspaces = true); throw AssertionError("live reset accepted") } catch (_: IOException) { }
+        try { store.reset(deleteHome = true, deleteWorkspaces = true); throw AssertionError("live reset accepted") } catch (_: DistroStoreCore.RuntimeBusyException) { }
+        File(store.storage.versionDir(AlpineRootfsCatalog.ROOTFS_ID), "replaced").writeText("")
+        store.storage.activeRecord.delete()
         val result = store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
-        assertEquals("storage_busy", (result as DistroStoreCore.InstallOutcome.Failure).reasonCode)
+        assertEquals("runtime_busy", (result as DistroStoreCore.InstallOutcome.Failure).reasonCode)
+        assertTrue(File(store.storage.versionDir(AlpineRootfsCatalog.ROOTFS_ID), "replaced").exists())
+        assertTrue(store.activate(AlpineRootfsCatalog.ROOTFS_ID))
         assertEquals(active, store.readActiveRecord())
+        // A new version cannot be in use, so it installs beside live sessions.
+        val beside = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong(), makeActive = false)
+        assertTrue(beside.toString(), beside is DistroStoreCore.InstallOutcome.Success)
+        // Reinstalling the active version replaces nothing and needs no lease.
+        assertTrue(store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong()) is DistroStoreCore.InstallOutcome.Success)
       }
     }
     store.reset()
@@ -199,7 +202,8 @@ class DistroStoreCoreTest {
     val active = store.readActiveRecord()
     assertNotNull(active)
     assertEquals(AlpineRootfsCatalog.ROOTFS_ID, active!!.rootfsId)
-    assertEquals("3.24.0", active.alpineRelease)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, active.distro)
+    assertEquals("3.24.0", active.release)
     assertEquals(archiveSha256, active.rootfsSha256)
     assertEquals(AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION, active.schemaVersion)
     assertTrue(active.probeMarkers.contains("aarch64"))
@@ -210,6 +214,21 @@ class DistroStoreCoreTest {
     assertFalse(store.storage.archiveInIncoming(AlpineRootfsCatalog.ROOTFS_ID).exists())
     // User data survived untouched.
     assertEquals("home data", sentinel.readText())
+  }
+
+  @Test
+  fun `the extractor decompresses with the catalog entry's archive format`() {
+    val gzip = FakeExtractor()
+    newStore(extractor = gzip).install(rootfsId = installParams().first, expectedSha256 = installParams().second, expectedBytes = installParams().third)
+    assertEquals(ArchiveFormat.TAR_GZ, gzip.lastFormat)
+
+    val xz = FakeExtractor()
+    newStore(extractor = xz).install(
+      entry = RootfsCatalog.ALPINE.copy(archiveFormat = ArchiveFormat.TAR_XZ),
+      expectedSha256 = installParams().second,
+      expectedBytes = installParams().third,
+    )
+    assertEquals(ArchiveFormat.TAR_XZ, xz.lastFormat)
   }
 
   @Test
@@ -302,6 +321,163 @@ class DistroStoreCoreTest {
     assertEquals(listOf(AlpineRootfsCatalog.ROOTFS_ID), store.installedVersionIds())
     assertEquals(1, store.installedVersionIds().size)
     assertNotNull(store.readActiveRecord())
+  }
+
+  @Test
+  fun `an alpine install keeps writing the v1 record an older horus can read`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    for (record in listOf(store.storage.activeRecord, store.storage.versionManifest(AlpineRootfsCatalog.ROOTFS_ID))) {
+      val json = org.json.JSONObject(record.readText())
+      assertEquals(1, json.getInt("schemaVersion"))
+      assertEquals("3.24.0", json.getString("alpineRelease"))
+      assertFalse(json.has("distro"))
+      assertFalse(json.has("release"))
+    }
+  }
+
+  @Test
+  fun `an active record written by horus 1_0_4 still reads as the active alpine rootfs`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    // The exact shape 1.0.4 wrote, so an upgrade never sees "not installed".
+    val legacy = """{"schemaVersion":1,"rootfsId":"alpine-3.24.0-aarch64","alpineRelease":"3.24.0",""" +
+      """"rootfsSha256":"$archiveSha256","installedAtIso":"2026-10-01T10:00:00Z","probeMarkers":""" +
+      """["alpine_probe_begin","aarch64","3.24.0","/root","/sbin/apk","/bin/sh","alpine_probe_end"]}"""
+    store.storage.activeRecord.writeText(legacy)
+    store.storage.versionManifest(AlpineRootfsCatalog.ROOTFS_ID).writeText(legacy)
+
+    val active = store.readActiveRecord()
+    assertNotNull(active)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, active!!.distro)
+    assertEquals("3.24.0", active.release)
+    assertEquals(listOf(AlpineRootfsCatalog.ROOTFS_ID), store.installedVersionIds())
+  }
+
+  @Test
+  fun `records that do not match their catalog entry read as not installed`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val markers = """["alpine_probe_begin","aarch64","3.24.0","/root","/sbin/apk","/bin/sh","alpine_probe_end"]"""
+    val base = """"rootfsId":"alpine-3.24.0-aarch64","rootfsSha256":"$archiveSha256",""" +
+      """"installedAtIso":"2026-10-01T10:00:00Z","probeMarkers":$markers"""
+    val mismatched = listOf(
+      // Alpine must stay on the v1 shape.
+      """{"schemaVersion":2,"distro":"alpine","release":"3.24.0",$base}""",
+      // A v1 record is always Alpine, so its release must be Alpine's.
+      """{"schemaVersion":1,"alpineRelease":"3.23.0",$base}""",
+      // An id the catalog does not know.
+      """{"schemaVersion":2,"distro":"debian","release":"13",""" + base.replace("alpine-3.24.0-aarch64", "debian-13-aarch64") + "}",
+    )
+    for (json in mismatched) {
+      store.storage.activeRecord.writeText(json)
+      assertNull(json, store.readActiveRecord())
+    }
+  }
+
+  @Test
+  fun `a debian install writes a v2 record and leaves alpine installed beside it`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val outcome = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    assertTrue(outcome.toString(), outcome is DistroStoreCore.InstallOutcome.Success)
+
+    val json = org.json.JSONObject(store.storage.activeRecord.readText())
+    assertEquals(RootfsCatalog.RECORD_SCHEMA, json.getInt("schemaVersion"))
+    assertEquals("debian", json.getString("distro"))
+    assertEquals("13.7", json.getString("release"))
+    assertFalse(json.has("alpineRelease"))
+
+    val active = store.readActiveRecord()
+    assertNotNull(active)
+    assertEquals(RootfsCatalog.DEBIAN.rootfsId, active!!.rootfsId)
+    assertEquals(RootfsCatalog.DISTRO_DEBIAN, active.distro)
+    assertEquals(RootfsCatalog.DEBIAN.probeMarkers, active.probeMarkers)
+    assertEquals(
+      setOf(AlpineRootfsCatalog.ROOTFS_ID, RootfsCatalog.DEBIAN.rootfsId),
+      store.installedVersionIds().toSet(),
+    )
+  }
+
+  @Test
+  fun `a debian rootfs that probes like alpine is never promoted`() {
+    val alpineProbe = GuestProbeResult(exitCode = 0, output = RootfsCatalog.ALPINE.probeMarkers.joinToString("\n"), durationMs = 5)
+    val store = newStore(prober = FakeProber(alpineProbe))
+    val outcome = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    assertTrue(outcome.toString(), outcome is DistroStoreCore.InstallOutcome.Failure)
+    assertNull(store.readActiveRecord())
+  }
+
+  @Test
+  fun `the catalog pins every entry to a distinct id digest and marker block`() {
+    val entries = RootfsCatalog.entries
+    assertEquals(RootfsCatalog.ALPINE, RootfsCatalog.DEFAULT)
+    assertEquals(entries.size, entries.map { it.rootfsId }.toSet().size)
+    assertEquals(entries.size, entries.map { it.sha256 }.toSet().size)
+    assertEquals(entries.size, entries.map { it.probeBegin }.toSet().size)
+    for (entry in entries) {
+      assertTrue(entry.rootfsId, AlpineRootfsCatalog.isValidRootfsId(entry.rootfsId))
+      assertTrue(entry.rootfsId, Regex("^[a-f0-9]{64}$").matches(entry.sha256))
+      assertTrue(entry.rootfsId, entry.url.startsWith("https://"))
+      assertEquals(entry, RootfsCatalog.byId(entry.rootfsId))
+    }
+    assertEquals(ArchiveFormat.TAR_XZ, RootfsCatalog.DEBIAN.archiveFormat)
+  }
+
+  @Test
+  fun `a second distribution installs beside the active one and switching never reinstalls`() {
+    val extractor = FakeExtractor()
+    val store = newStore(extractor = extractor)
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val beside = store.install(
+      entry = RootfsCatalog.DEBIAN,
+      expectedSha256 = archiveSha256,
+      expectedBytes = archiveBytes.size.toLong(),
+      makeActive = false,
+    )
+    assertTrue(beside.toString(), beside is DistroStoreCore.InstallOutcome.Success)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, store.readActiveRecord()!!.distro)
+    assertEquals(RootfsCatalog.DEBIAN.rootfsId, store.installedVersionFor(RootfsCatalog.DISTRO_DEBIAN))
+    assertEquals(AlpineRootfsCatalog.ROOTFS_ID, store.installedVersionFor(RootfsCatalog.DISTRO_ALPINE))
+
+    val installs = extractor.calls
+    assertTrue(store.activate(RootfsCatalog.DEBIAN.rootfsId))
+    assertEquals(RootfsCatalog.DISTRO_DEBIAN, store.readActiveRecord()!!.distro)
+    assertTrue(store.activate(AlpineRootfsCatalog.ROOTFS_ID))
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, store.readActiveRecord()!!.distro)
+    // Alpine's active record is still the v1 shape an older Horus reads.
+    assertEquals(1, org.json.JSONObject(store.storage.activeRecord.readText()).getInt("schemaVersion"))
+    assertEquals(installs, extractor.calls)
+  }
+
+  @Test
+  fun `activating a version that is not installed changes nothing`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val before = store.storage.activeRecord.readText()
+    assertFalse(store.activate(RootfsCatalog.DEBIAN.rootfsId))
+    assertFalse(store.activate("../escape"))
+    assertEquals(before, store.storage.activeRecord.readText())
+  }
+
+  @Test
+  fun `each distribution has its own home and a home reset clears them all`() {
+    val store = newStore()
+    val paths = store.storage
+    assertEquals(paths.home, paths.homeFor(RootfsCatalog.DISTRO_ALPINE))
+    assertEquals(File(paths.base, "homes/debian/home"), paths.homeFor(RootfsCatalog.DISTRO_DEBIAN))
+    assertEquals(paths.harnessHome("claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_ALPINE, "claude"))
+    assertEquals(File(paths.base, "homes/debian/harness-homes/claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_DEBIAN, "claude"))
+
+    store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    // The probe ran against Debian's home, which now exists.
+    assertTrue(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN).isDirectory)
+    File(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN), "notes.txt").writeText("debian")
+
+    assertFalse(store.reset().homeRemoved)
+    assertTrue(File(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN), "notes.txt").isFile)
+    assertTrue(store.reset(deleteHome = true).homeRemoved)
+    assertFalse(paths.distroHomes.exists())
   }
 
   @Test

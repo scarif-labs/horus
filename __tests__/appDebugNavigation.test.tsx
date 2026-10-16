@@ -63,9 +63,9 @@ jest.mock('../src/profile/sessionTimeout', () => ({
 }));
 
 jest.mock('../src/terminal/TerminalScreen', () => ({
-  TerminalScreen: ({runtimeReady, screenTitle, screenEyebrow, sessionCommand, toolchain, completionMarker, onCompletion, onCommandFailure, onBack, onHome, stopSessionOnUnmount}: {runtimeReady?: boolean; screenTitle?: string; screenEyebrow?: string; sessionCommand?: string; toolchain?: string; completionMarker?: string; onCompletion?: () => void; onCommandFailure?: () => void; onBack?: () => void; onHome?: () => void; stopSessionOnUnmount?: boolean}) => require('react').createElement(
+  TerminalScreen: ({runtimeReady, screenTitle, screenEyebrow, sessionCommand, existingSessionId, toolchain, completionMarker, onCompletion, onCommandFailure, onBack, onHome, stopSessionOnUnmount}: {runtimeReady?: boolean; screenTitle?: string; screenEyebrow?: string; sessionCommand?: string; existingSessionId?: string; toolchain?: string; completionMarker?: string; onCompletion?: () => void; onCommandFailure?: () => void; onBack?: () => void; onHome?: () => void; stopSessionOnUnmount?: boolean}) => require('react').createElement(
     require('react-native').View,
-    {testID: 'debug-terminal', runtimeReady, screenTitle, screenEyebrow, sessionCommand, toolchain, completionMarker, onBack, onHome, stopSessionOnUnmount},
+    {testID: 'debug-terminal', runtimeReady, screenTitle, screenEyebrow, sessionCommand, existingSessionId, toolchain, completionMarker, onBack, onHome, stopSessionOnUnmount},
     onCompletion === undefined ? null : require('react').createElement(
       require('react-native').Pressable,
       {testID: 'debug-terminal-completion', onPress: onCompletion},
@@ -78,7 +78,7 @@ jest.mock('../src/terminal/TerminalScreen', () => ({
 }));
 
 jest.mock('../src/ui/MetroHomeScreen', () => ({
-  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, githubAccount}: {onOpen: (target: {title: string; eyebrow: string; toolchain?: 'claude' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
+  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, onResumeSession, githubAccount}: {onOpen: (target: {title: string; eyebrow: string; toolchain?: 'claude' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; onResumeSession?: (session: {sessionId: string; toolchain: string; startedAtMs: number; command?: string}) => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
     require('react-native').View,
     {testID: 'metro-home'},
     require('react').createElement(
@@ -110,6 +110,10 @@ jest.mock('../src/ui/MetroHomeScreen', () => ({
     require('react').createElement(
       require('react-native').Pressable,
       {testID: 'metro-open-claude', onPress: () => onOpen({title: 'Claude Code', eyebrow: 'AI WORKBENCH', command: 'claude', toolchain: 'claude'})},
+    ),
+    require('react').createElement(
+      require('react-native').Pressable,
+      {testID: 'metro-resume-codex', onPress: () => onResumeSession?.({sessionId: 's-1-2', toolchain: 'codex', startedAtMs: 0, command: 'cd /workspace/projects/demo && exec codex'})},
     ),
   ),
 }));
@@ -261,6 +265,32 @@ describe('debug navigation', () => {
     expect(client.stopAllTerminalSessions).not.toHaveBeenCalled();
     expect(client.stopSession).not.toHaveBeenCalled();
 
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  test('reopens a recent session with the command it was started with', async () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<App />);
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      backHandler?.({} as never);
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'metro-resume-codex'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    // "Open again" after Codex quits starts this command, not a plain shell.
+    const terminal = renderer.root.findByProps({testID: 'debug-terminal'});
+    expect(terminal.props.existingSessionId).toBe('s-1-2');
+    expect(terminal.props.toolchain).toBe('codex');
+    expect(terminal.props.sessionCommand).toBe('cd /workspace/projects/demo && exec codex');
     await ReactTestRenderer.act(async () => {
       renderer.unmount();
       await Promise.resolve();

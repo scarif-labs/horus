@@ -15,6 +15,8 @@ object RemoteAccess {
   const val PORT = 8022
   const val ACTION_START = "com.scariflabs.horus.action.REMOTE_ACCESS_START"
   const val ACTION_STOP = "com.scariflabs.horus.action.REMOTE_ACCESS_STOP"
+  /** The active user changed; the server must run as the new one. */
+  const val ACTION_RESTART = "com.scariflabs.horus.action.REMOTE_ACCESS_RESTART"
   const val DIR_NAME = "remote-access"
   const val STATE_STOPPED = "stopped"
   const val STATE_STARTING = "starting"
@@ -26,6 +28,10 @@ object RemoteAccess {
   private const val MAX_KEY_BLOB_BYTES = 1_100
   private const val MAX_AUTHORIZED_KEYS_BYTES = 64 * 1024L
   private const val MAX_KEYS = 32
+  private const val MAX_HOST_KEY_BYTES = 4096L
+  const val HOST_KEY_NAME = "ssh_host_ed25519_key"
+  /** Where the SSH server's PRoot sees the host key directory; no other session binds it. */
+  const val GUEST_HOST_KEY_DIR = "/run/horus-hostkey"
   private val LABEL_PATTERN = Regex("[A-Za-z0-9._@-]{1,64}")
   private val ALLOWED_KEY_TYPES = setOf(
     "ssh-ed25519",
@@ -115,17 +121,28 @@ object RemoteAccess {
   class Store(storageRoot: File) {
     private val paths = DistroStorePaths(storageRoot)
     val dir = File(storageRoot, DIR_NAME)
+    // Alpine's home holds the canonical list. Every distribution's user home
+    // gets a copy, so a paired computer reaches whichever user is active.
     private val sshDir = File(paths.home, ".ssh")
     private val authorizedKeys = File(sshDir, "authorized_keys")
+    private val mirroredSshDirs = paths.userHomes().filter { it != paths.home }.map { File(it, ".ssh") }
     private val enabledFile = File(dir, "enabled")
     private val statusFile = File(dir, "status")
     val logFile = File(dir, "server.log")
-    /** Written by dropbear itself; survives the service being killed. */
-    val serverPidFile = File(paths.home, ".cache/horus/dropbear.pid")
+    private val hostKeyDir = File(dir, "hostkey")
+    private val hostKey = File(hostKeyDir, HOST_KEY_NAME)
+    /** Written by dropbear itself, in the home of the user it runs as; survives the service being killed. */
+    val serverPidFiles = paths.userHomes().map { File(it, ".cache/horus/dropbear.pid") }
 
-    fun readServerPid(): Long = runCatching {
-      if (serverPidFile.length() > 32) 0L else serverPidFile.readText(Charsets.US_ASCII).trim().toLong()
-    }.getOrDefault(0L)
+    fun readServerPid(): Long = serverPidFiles.firstNotNullOfOrNull { file ->
+      runCatching {
+        if (!file.isFile || file.length() > 32) null else file.readText(Charsets.US_ASCII).trim().toLong()
+      }.getOrNull()
+    } ?: 0L
+
+    fun deleteServerPidFiles() {
+      serverPidFiles.forEach(File::delete)
+    }
 
     fun keys(): List<AuthorizedKey> = synchronized(lock) { parseAuthorizedKeys(readAuthorizedKeys()) }
 
@@ -186,6 +203,82 @@ object RemoteAccess {
       sshDir.setWritable(false, false); sshDir.setWritable(true, true)
       sshDir.setExecutable(false, false); sshDir.setExecutable(true, true)
       atomicWrite(authorizedKeys, content)
+      for (mirror in mirroredSshDirs) {
+        // Only homes that exist: a distribution without a user has nothing to log in to.
+        if (!mirror.parentFile!!.isDirectory) continue
+        if (!mirror.isDirectory && !mirror.mkdirs()) throw IllegalStateException("cannot create .ssh")
+        mirror.setReadable(false, false); mirror.setReadable(true, true)
+        mirror.setWritable(false, false); mirror.setWritable(true, true)
+        mirror.setExecutable(false, false); mirror.setExecutable(true, true)
+        atomicWrite(File(mirror, "authorized_keys"), content)
+      }
+    }
+
+    /**
+     * The phone's one SSH host key, kept outside every guest home so the
+     * computer sees the same identity whichever user is active, and only the
+     * SSH server's PRoot can read it. Returns the directory to bind.
+     *
+     * Horus 1.0.4 kept a key per user home. The first start adopts the
+     * active user's, so computers paired with that user see no change, then
+     * removes every per-home copy.
+     */
+    fun prepareHostKey(activeHome: File): File = synchronized(lock) {
+      if (Files.isSymbolicLink(hostKeyDir.toPath())) throw IllegalStateException("host key directory is a symbolic link")
+      if (!hostKeyDir.isDirectory && !hostKeyDir.mkdirs()) throw IllegalStateException("cannot create host key directory")
+      // Keep the server's key a plain file; adopt 1.0.4's when there is none.
+      val key = readKey(hostKey) ?: legacyKeyDir(activeHome)?.let { readKey(File(it, HOST_KEY_NAME)) }
+      if (key != null && (Files.isSymbolicLink(hostKey.toPath()) || !hostKey.isFile)) {
+        val temp = File(hostKeyDir, ".${hostKey.name}.tmp")
+        Files.deleteIfExists(temp.toPath())
+        temp.writeBytes(key)
+        temp.setReadable(false, false); temp.setReadable(true, true)
+        temp.setWritable(false, false); temp.setWritable(true, true)
+        Files.move(temp.toPath(), hostKey.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+      }
+      // A key the server will not use should not sit where agents read it.
+      (paths.userHomes() + activeHome).distinct().mapNotNull(::legacyKeyDir).forEach(::deleteKeyFiles)
+      hostKeyDir
+    }
+
+    /** A home reset gives the phone a new identity, as it did when the key lived there. */
+    fun deleteHostKey() = synchronized(lock) {
+      if (!Files.isSymbolicLink(hostKeyDir.toPath())) deleteKeyFiles(hostKeyDir)
+    }
+
+    /** 1.0.4's key directory in [home], when nothing on the way is a link. */
+    private fun legacyKeyDir(home: File): File? {
+      val config = File(home, ".config")
+      val dir = File(config, "horus")
+      return dir.takeIf { listOf(home, config, dir).none { Files.isSymbolicLink(it.toPath()) } && it.isDirectory }
+    }
+
+    /**
+     * dropbearkey publishes its key with link(2), which PRoot emulates as a
+     * symlink chain into its backing store (beside the key, or the shared
+     * store). Follow a link only when it ends in one of those places, so a
+     * link the guest plants cannot pull another app file into the key.
+     */
+    private fun readKey(file: File): ByteArray? {
+      if (!Files.exists(file.toPath())) return null
+      val real = runCatching { file.toPath().toRealPath() }.getOrNull() ?: return null
+      val allowed = listOfNotNull(file.parentFile, paths.hardlinks).map { it.canonicalFile.toPath() }
+      if (allowed.none { real.parent == it }) return null
+      val size = Files.size(real)
+      if (size !in 1..MAX_HOST_KEY_BYTES) return null
+      return Files.readAllBytes(real)
+    }
+
+    /** Unlinks the key, its .pub, and PRoot's link entries beside them; never follows links. */
+    private fun deleteKeyFiles(dir: File) {
+      dir.listFiles()?.filter {
+        it.name == HOST_KEY_NAME || it.name == "$HOST_KEY_NAME.pub" || it.name.startsWith(".l2s.$HOST_KEY_NAME")
+      }?.forEach { Files.deleteIfExists(it.toPath()) }
+    }
+
+    /** Copies the paired keys into a user home created after they were added. */
+    fun syncKeysToHomes() = synchronized(lock) {
+      writeAuthorizedKeys(readAuthorizedKeys())
     }
 
     /**
@@ -193,7 +286,7 @@ object RemoteAccess {
      * key write could land on an app-private file outside the guest.
      */
     private fun rejectSymlinks() {
-      listOf(paths.home, sshDir, authorizedKeys).forEach { file ->
+      (listOf(paths.home, sshDir, authorizedKeys) + paths.userHomes() + mirroredSshDirs + mirroredSshDirs.map { File(it, "authorized_keys") }).forEach { file ->
         if (Files.isSymbolicLink(file.toPath())) throw IllegalStateException("${file.name} is a symbolic link")
       }
     }

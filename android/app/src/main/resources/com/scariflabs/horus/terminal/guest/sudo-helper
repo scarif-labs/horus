@@ -1,0 +1,236 @@
+#!/usr/bin/python3
+# Horus root helper: runs commands as root for one session's user.
+#
+# PRoot only fakes root, and this build does not emulate setuid binaries, so
+# a real sudo can never become root once a session has dropped to its user.
+# The session script starts this helper while it is still root, before the
+# drop; /usr/local/bin/sudo asks it to run commands. It exits with the
+# session that started it.
+#
+# Usage: sudo-helper SOCKET UID
+#
+# Only callers whose (PRoot-emulated) uid is UID, or root, are served.
+# PRoot reports a peer's emulated uid only for processes it traces itself,
+# so other sessions, including the harness users', are always refused.
+import json
+import os
+import pwd
+import select
+import signal
+import socket
+import struct
+import sys
+import termios
+import fcntl
+
+ROOT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+MAX_REQUEST = 256 * 1024
+FORWARDED_SIGNALS = {signal.SIGINT, signal.SIGQUIT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH, signal.SIGCONT}
+
+
+def log(message):
+    sys.stderr.write('horus-sudo-helper[%d]: %s\n' % (os.getpid(), message))
+    sys.stderr.flush()
+
+
+def send(conn, message, fds=()):
+    data = json.dumps(message).encode()
+    if fds:
+        socket.send_fds(conn, [data], list(fds))
+    else:
+        conn.send(data)
+
+
+def peer_uid(conn):
+    _pid, uid, _gid = struct.unpack('3i', conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+    return uid
+
+
+def root_environment(request, uid):
+    env = {key: value for key, value in request.get('env', {}).items() if isinstance(key, str) and isinstance(value, str)}
+    try:
+        user = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        user = str(uid)
+    env.update({
+        'PATH': ROOT_PATH,
+        'USER': 'root',
+        'LOGNAME': 'root',
+        'SUDO_USER': user,
+        'SUDO_UID': str(uid),
+        'SUDO_GID': str(os.getgid()),
+        'SUDO_COMMAND': ' '.join(request['argv'])[:4096],
+    })
+    if not request.get('preserve_env') or 'HOME' not in env:
+        env['HOME'] = '/root'
+    env.setdefault('SHELL', '/bin/sh')
+    return env
+
+
+def exec_child(request, env, fds, ctty):
+    """In the forked child: becomes the command. Never returns."""
+    try:
+        os.setsid()
+        if ctty is not None:
+            fcntl.ioctl(ctty, termios.TIOCSCTTY, 0)
+        for target, fd in enumerate(fds):
+            os.dup2(fd, target)
+        for fd in set(fds):
+            if fd > 2:
+                os.close(fd)
+        # The session script starts this helper as a background job, which
+        # ignores SIGINT and SIGQUIT; commands must get Ctrl-C again.
+        for number in (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP, signal.SIGCHLD, signal.SIGPIPE):
+            signal.signal(number, signal.SIG_DFL)
+        cwd = request.get('cwd') or '/root'
+        try:
+            os.chdir(cwd)
+        except OSError:
+            os.write(2, ('sudo: unable to change directory to %s\n' % cwd).encode())
+            os._exit(1)
+        argv = request['argv']
+        try:
+            os.execvpe(argv[0], argv, env)
+        except FileNotFoundError:
+            os.write(2, ('sudo: %s: command not found\n' % argv[0]).encode())
+            os._exit(127)
+        except OSError as error:
+            os.write(2, ('sudo: %s: %s\n' % (argv[0], error.strerror)).encode())
+            os._exit(126)
+    finally:
+        os._exit(127)
+
+
+def serve(conn, allowed_uid):
+    uid = peer_uid(conn)
+    if uid != allowed_uid and uid != 0:
+        send(conn, {'error': 'not_allowed'})
+        return
+    data, fds, _flags, _addr = socket.recv_fds(conn, MAX_REQUEST, 3)
+    request = json.loads(data)
+    argv = request.get('argv')
+    if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+        send(conn, {'error': 'bad_request'})
+        return
+    env = root_environment(request, uid)
+    if len(fds) != 3:
+        send(conn, {'error': 'bad_request'})
+        return
+    # The caller's terminal streams go on a new pseudo-terminal, which also
+    # becomes the command's controlling terminal; pipes and files pass as is.
+    tty_fds = {fd for fd in request.get('tty_fds', []) if fd in (0, 1, 2)}
+    master = slave = None
+    child_fds = fds
+    if tty_fds:
+        master, slave = os.openpty()
+        rows, columns = int(request.get('rows', 24)), int(request.get('columns', 80))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, columns, 0, 0))
+        child_fds = [slave if index in tty_fds else fd for index, fd in enumerate(fds)]
+        for index in tty_fds:
+            os.close(fds[index])
+    pid = os.fork()
+    if pid == 0:
+        conn.close()
+        if master is not None:
+            os.close(master)
+        exec_child(request, env, child_fds, slave)
+    for fd in set(child_fds):
+        os.close(fd)
+    if master is not None:
+        send(conn, {'ok': True}, [master])
+        os.close(master)
+    else:
+        send(conn, {'ok': True})
+    log('uid %d runs %s' % (uid, ' '.join(argv)[:200]))
+    # Relay the caller's signals until the command ends. If the caller goes
+    # away (its terminal closed), hang up on the command like a terminal would.
+    caller_gone = False
+    while True:
+        if not caller_gone:
+            readable, _, _ = select.select([conn], [], [], 0.2)
+            if readable:
+                try:
+                    message = conn.recv(4096)
+                except OSError:
+                    message = b''
+                if not message:
+                    caller_gone = True
+                    signal_group(pid, signal.SIGHUP)
+                else:
+                    try:
+                        number = int(json.loads(message).get('signal', 0))
+                    except (ValueError, AttributeError):
+                        number = 0
+                    if number in FORWARDED_SIGNALS:
+                        signal_group(pid, number)
+        else:
+            select.select([], [], [], 0.2)
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            break
+    code = os.waitstatus_to_exitcode(status)
+    if code < 0:
+        code = 128 - code
+    if not caller_gone:
+        try:
+            send(conn, {'exit': code})
+        except OSError:
+            pass
+
+
+def signal_group(pid, number):
+    try:
+        os.killpg(pid, number)
+    except OSError:
+        pass
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.stderr.write('usage: sudo-helper SOCKET UID\n')
+        return 2
+    path, allowed_uid = sys.argv[1], int(sys.argv[2])
+    # The session's shell takes over this helper's parent pid with exec;
+    # when that shell ends, this helper is reparented and stops.
+    session_pid = os.getppid()
+    os.setsid()
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    server.bind(path)
+    os.chmod(path, 0o666)
+    server.listen(8)
+    try:
+        while os.getppid() == session_pid:
+            readable, _, _ = select.select([server], [], [], 1.0)
+            if not readable:
+                continue
+            conn, _ = server.accept()
+            if os.fork() == 0:
+                server.close()
+                signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                try:
+                    serve(conn, allowed_uid)
+                except Exception as error:  # noqa: BLE001 - one request must not take the helper down
+                    log('request failed: %r' % (error,))
+                    try:
+                        send(conn, {'error': 'internal'})
+                    except OSError:
+                        pass
+                os._exit(0)
+            conn.close()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

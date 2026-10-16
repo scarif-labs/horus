@@ -53,6 +53,19 @@ class RemoteAccessController(context: Context) {
     }
   }
 
+  /** After a user switch, restarts a running server as the new user. */
+  fun restartIfEnabled() {
+    if (!store.isEnabled()) return
+    runCatching {
+      val intent = Intent(appContext, TerminalSessionService::class.java).setAction(RemoteAccess.ACTION_RESTART)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        appContext.startForegroundService(intent)
+      } else {
+        appContext.startService(intent)
+      }
+    }
+  }
+
   fun disable() {
     store.setEnabled(false)
     // A stopped service has nothing to stop; Android may also refuse a

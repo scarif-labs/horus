@@ -35,6 +35,32 @@ data class DistroStorePaths(val base: File) {
     return File(harnessHomes, harness)
   }
 
+  /** Every distribution other than Alpine keeps its users' homes under here. */
+  val distroHomes: File get() = File(base, "homes")
+
+  /**
+   * [distro]'s user home. Alpine keeps the `home/` it has always had; other
+   * distributions get their own, so tools built for one libc never run on
+   * the other.
+   */
+  fun homeFor(distro: String): File =
+    if (distro == RootfsCatalog.DISTRO_ALPINE) home else File(File(distroHomes, safeDistro(distro)), "home")
+
+  /** [distro]'s home for one harness account, separate per distribution like [homeFor]. */
+  fun harnessHomeFor(distro: String, harness: String): File {
+    if (distro == RootfsCatalog.DISTRO_ALPINE) return harnessHome(harness)
+    require(harness in HARNESS_HOME_KEYS) { "harness home key is invalid" }
+    return File(File(File(distroHomes, safeDistro(distro)), "harness-homes"), harness)
+  }
+
+  /** The user home of every distribution Horus knows, Alpine first. */
+  fun userHomes(): List<File> = RootfsCatalog.entries.map { it.distro }.distinct().map(::homeFor)
+
+  private fun safeDistro(distro: String): String {
+    require(Regex("^[a-z][a-z0-9-]{0,31}$").matches(distro)) { "distribution name is invalid" }
+    return distro
+  }
+
   fun archiveInIncoming(rootfsId: String): File = File(downloadsIncoming, "$rootfsId.tar.gz.part")
   fun archiveInCache(rootfsId: String): File = File(downloadsCache, "$rootfsId.tar.gz")
 
@@ -46,7 +72,7 @@ data class DistroStorePaths(val base: File) {
     downloadsCache, sessions, guestTmp, hardlinks, diagnostics,
   )
 
-  private companion object {
+  companion object {
     val HARNESS_HOME_KEYS = listOf("claude", "codex", "opencode")
   }
 }

@@ -58,6 +58,10 @@ The first time you run `claude`, `codex` or `opencode` on a phone, it installs
 that agent into your home there (needs internet, a minute or two) and then
 starts it.
 
+From scripts, run commands with `horus exec` or `horus ssh pixel -- cmd`, not
+plain `ssh -tt`: the phone's SSH server (dropbear) drops a command's output when
+a terminal is forced and stdin isn't one.
+
 `horus cp` copies like `scp` and follows symlinks; `horus sync` (rsync `-a`)
 keeps them.
 

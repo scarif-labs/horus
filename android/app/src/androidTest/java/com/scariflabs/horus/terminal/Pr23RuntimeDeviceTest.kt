@@ -34,11 +34,11 @@ class Pr23RuntimeDeviceTest {
     val testRoot = File(context.filesDir, "p23")
     assertFalse("another PR23 test guest already exists", testRoot.exists())
     val paths = DistroStorePaths(testRoot)
-    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarGzExtractor(), ProotGuestProber(runtime, paths.guestTmp))
+    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarExtractor(), ProotGuestProber(runtime, paths.guestTmp))
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val dns = connectivity.activeNetwork?.let { connectivity.getLinkProperties(it)?.dnsServers }
       ?.mapNotNull { it.hostAddress }.orEmpty()
-    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns })
+    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns }, seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",)
 
     fun run(launch: ProotSessionLauncher.LaunchSpec, seconds: Long = 300): String {
       val log = File(testRoot, "guest-command.log")
@@ -111,7 +111,7 @@ class Pr23RuntimeDeviceTest {
         sessionCommand = "exec python3 ${'$'}HOME/pr23-socket.py"))
       assertTrue(socket.contains("PR23_SOCKET_OK uid=61001"))
 
-      run(launcher.toolchainProvisionLaunchSpec(rootfs, paths.home, "codex"))
+      run(launcher.toolchainProvisionLaunchSpec(rootfs, paths.home, "codex"), 480)
       assertTrue("native ARM64 payload was not ready", launcher.hasProvisionedToolchain(rootfs, paths.home, "codex"))
       val codex = run(launcher.interactiveShellLaunchSpec(rootfs, paths.home, sessionCommand = """
         set -eu
@@ -142,7 +142,7 @@ class Pr23RuntimeDeviceTest {
     }
   }
 
-  @Test(timeout = 600_000)
+  @Test(timeout = 900_000)
   fun codexReadinessAndHardlinkLifecycleRecovery() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     assertTrue("use the isolated validation package", context.packageName.endsWith(".pr23check"))
@@ -150,10 +150,10 @@ class Pr23RuntimeDeviceTest {
     val runtime = (ProotRuntimeLocator(manifest).locate(File(context.applicationInfo.nativeLibraryDir)) as ProotRuntimeLocator.Location.Available).runtime
     val paths = DistroStorePaths(File(context.filesDir, "r23"))
     assertFalse("test guest already exists", paths.base.exists())
-    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarGzExtractor(), ProotGuestProber(runtime, paths.guestTmp))
+    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarExtractor(), ProotGuestProber(runtime, paths.guestTmp))
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val dns = connectivity.activeNetwork?.let { connectivity.getLinkProperties(it)?.dnsServers }?.mapNotNull { it.hostAddress }.orEmpty()
-    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns })
+    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns }, seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",)
     fun process(launch: ProotSessionLauncher.LaunchSpec, log: File): Process = ProcessBuilder(launch.argv).apply {
       environment().clear()
       launch.environment.forEach { entry -> environment()[entry.substringBefore('=')] = entry.substringAfter('=') }
@@ -162,7 +162,8 @@ class Pr23RuntimeDeviceTest {
     fun run(launch: ProotSessionLauncher.LaunchSpec) {
       val log = File(paths.base, "recovery.log")
       val guest = process(launch, log)
-      if (!guest.waitFor(300, TimeUnit.SECONDS)) { guest.destroyForcibly(); fail(log.readText().takeLast(3000)) }
+      // Provisioning now also installs python3 for sudo before Codex's ~150 MB download.
+      if (!guest.waitFor(480, TimeUnit.SECONDS)) { guest.destroyForcibly(); fail(log.readText().takeLast(3000)) }
       assertEquals(log.readText().takeLast(3000), 0, guest.exitValue())
     }
     try {

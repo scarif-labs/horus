@@ -158,6 +158,7 @@ describe('TerminalSessionClient operations', () => {
       pid: 4242,
       rows: 40,
       columns: 120,
+      reattached: false,
     });
     expect(runtime.calls).toEqual([
       {method: 'startSession', request: {requestId: 'start-1', rows: 40, columns: 120}},

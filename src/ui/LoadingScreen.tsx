@@ -33,7 +33,7 @@ export function LoadingScreen({status, detail, onRetry, onImport, onDebugTermina
             ? 'The Alpine guest could not be prepared yet.'
             : status === 'installing'
               ? 'Preparing the Alpine guest. This may take a few minutes.'
-              : 'Checking the local Alpine runtime.'}
+              : 'Checking the local Linux runtime.'}
         </Text>
         <View style={styles.statusRow}>
           {!isError

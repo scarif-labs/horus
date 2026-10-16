@@ -14,10 +14,12 @@ type AuthScreenLayoutProps = Readonly<{
    */
   footer?: React.ReactNode;
   pinned?: boolean;
+  /** False hides the logo and wordmark, e.g. once a login user is chosen. */
+  showBrand?: boolean;
 }>;
 
-export function AuthScreenLayout({children, screenTestID, brandTestID, footer, pinned = false}: AuthScreenLayoutProps): React.JSX.Element {
-  const brand = (
+export function AuthScreenLayout({children, screenTestID, brandTestID, footer, pinned = false, showBrand = true}: AuthScreenLayoutProps): React.JSX.Element {
+  const brand = !showBrand ? null : (
     <View style={pinned ? [authStyles.brand, pinnedStyles.brand] : authStyles.brand} testID={`${brandTestID}-brand`}>
       <Image accessibilityLabel="Horus eye logo" resizeMode="contain" source={require('../terminal/horus.png')} style={pinned ? [authStyles.logo, pinnedStyles.logo] : authStyles.logo} testID={`${brandTestID}-logo`} />
       <Text style={pinned ? [authStyles.wordmark, pinnedStyles.wordmark] : authStyles.wordmark} testID={`${brandTestID}-wordmark`}>HORUS</Text>

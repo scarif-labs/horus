@@ -37,6 +37,7 @@ function limitLabel(limit: number): string {
   return limit === 1 ? '1 app' : `${limit} apps`;
 }
 
+/** Device-wide settings. Users, switching, and log out live on the user card's screen. */
 export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
   const [settings, setSettings] = React.useState<SessionSettings | undefined>();
   const [loading, setLoading] = React.useState(true);

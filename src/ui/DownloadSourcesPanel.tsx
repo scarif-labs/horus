@@ -74,10 +74,10 @@ export function DownloadSourcesPanel({read = readDownloadSources, write = writeD
 
   return (
     <SettingsSection
-      footer={error ? 'Could not save the download source. Try again.' : 'Mirrors are copies of the official servers, for networks that can’t reach them. Claude Code always downloads from Anthropic.'}
+      footer={error ? 'Could not save the download source. Try again.' : 'Mirrors are copies of the official servers, for networks that can’t reach them. Debian always uses deb.debian.org, and Claude Code always downloads from Anthropic.'}
       footerTone={error ? 'danger' : 'muted'}
       title="DOWNLOADS">
-      {row('alpineMirror', 'Linux packages', ALPINE_MIRRORS, 'https://mirror.example/alpine')}
+      {row('alpineMirror', 'Alpine packages', ALPINE_MIRRORS, 'https://mirror.example/alpine')}
       {row('npmRegistry', 'npm packages', NPM_REGISTRIES, 'https://registry.example.com')}
     </SettingsSection>
   );

@@ -75,7 +75,7 @@ class RemoteAccessProvider : ContentProvider() {
       put("protocol", PROTOCOL_VERSION)
       put("appVersion", appVersion(context))
       put("configured", PasswordGate.isConfigured(context))
-      TerminalGuestIdentity.readStoredUsername(context)?.let { put("username", it) }
+      TerminalSessionSpecFactory(context).activeProfileUsername()?.let { put("username", it) }
       put("enabled", snapshot.enabled)
       put("state", snapshot.state)
       put("detail", snapshot.detail)
@@ -108,11 +108,12 @@ class RemoteAccessProvider : ContentProvider() {
       is RemoteAccess.KeyResult.Valid -> parsed.key
       is RemoteAccess.KeyResult.Invalid -> return result(parsed.reason)
     }
-    when (val check = PasswordGate.verify(context, request.text(EXTRA_PASSWORD))) {
-      PasswordGate.Check.Success -> Unit
-      is PasswordGate.Check.Locked -> return result("locked").put("retryAfterMs", check.retryAfterMs)
-      PasswordGate.Check.Incorrect -> return result("incorrect")
-      PasswordGate.Check.Unavailable -> return result("not_configured")
+    // Either user's password pairs; the attempt limit is shared, so two users do not mean more guesses.
+    when (val check = PasswordGate.verify(context, null, request.text(EXTRA_PASSWORD))) {
+      ProfileUsersCore.Check.Success -> Unit
+      is ProfileUsersCore.Check.Locked -> return result("locked").put("retryAfterMs", check.retryAfterMs)
+      ProfileUsersCore.Check.Incorrect -> return result("incorrect")
+      ProfileUsersCore.Check.Unavailable -> return result("not_configured")
     }
     controller.store.addKey(key)
     // Pairing with the password is consent to turn remote access on.

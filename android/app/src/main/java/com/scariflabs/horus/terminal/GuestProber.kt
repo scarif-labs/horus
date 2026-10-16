@@ -12,26 +12,17 @@ data class GuestProbeResult(
   val output: String,
   val durationMs: Long,
   val timedOut: Boolean = false,
+  /** The catalog entry's marker block; the first and last lines delimit it. */
+  val requiredLines: List<String> = RootfsCatalog.DEFAULT.probeMarkers,
 ) {
-  private val requiredLines: List<String> by lazy {
-    listOf(
-      AlpineRootfsCatalog.ProbeMarkers.BEGIN,
-      AlpineRootfsCatalog.ProbeMarkers.EXPECTED_ARCH,
-      AlpineRootfsCatalog.ALPINE_RELEASE,
-      AlpineRootfsCatalog.ProbeMarkers.EXPECTED_HOME,
-      AlpineRootfsCatalog.ProbeMarkers.EXPECTED_APK,
-      AlpineRootfsCatalog.ProbeMarkers.EXPECTED_SH,
-      AlpineRootfsCatalog.ProbeMarkers.END,
-    )
-  }
 
   private fun trimmedLines(): List<String> = output.lineSequence().map { it.trim() }.toList()
 
   private fun markerBlock(): List<String>? {
     val lines = trimmedLines()
-    val begin = lines.indexOf(AlpineRootfsCatalog.ProbeMarkers.BEGIN)
+    val begin = lines.indexOf(requiredLines.first())
     if (begin < 0) return null
-    val endOffset = lines.drop(begin + 1).indexOf(AlpineRootfsCatalog.ProbeMarkers.END)
+    val endOffset = lines.drop(begin + 1).indexOf(requiredLines.last())
     if (endOffset < 0) return null
     val end = begin + 1 + endOffset
     return lines.subList(begin, end + 1)
@@ -58,8 +49,8 @@ data class GuestProbeResult(
   }
 }
 
-/** Runs the pinned non-interactive probe inside the staged rootfs. */
+/** Runs [entry]'s pinned non-interactive probe inside the staged rootfs. */
 interface GuestProber {
   @Throws(Exception::class)
-  fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult
+  fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult
 }

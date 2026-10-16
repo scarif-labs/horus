@@ -10,6 +10,8 @@ jest.mock('../src/profile/profileStore', () => ({
   saveUserProfile: jest.fn(),
 }));
 
+const USER = {distro: 'alpine', username: 'horus', avatar: 'falcon', password: 'test-password'} as const;
+
 describe('setupOnboardingProfile', () => {
   const provision = jest.mocked(provisionAlpineToolchain);
   const save = jest.mocked(saveUserProfile);
@@ -27,10 +29,10 @@ describe('setupOnboardingProfile', () => {
     });
     save.mockImplementation(async () => {
       order.push('save-profile');
-      return true;
+      return {kind: 'success'};
     });
 
-    const result = await setupOnboardingProfile('test-password', 'setup-shell-1');
+    const result = await setupOnboardingProfile(USER, 'setup-shell-1');
 
     expect(result).toEqual({kind: 'success'});
     expect(order).toEqual(['provision:shell:setup-shell-1', 'save-profile']);
@@ -43,7 +45,7 @@ describe('setupOnboardingProfile', () => {
       errorCode: 'internal_error',
     });
 
-    const result = await setupOnboardingProfile('test-password', 'setup-shell-2');
+    const result = await setupOnboardingProfile(USER, 'setup-shell-2');
 
     expect(result).toEqual({kind: 'error', stage: 'alpine-tools'});
     expect(save).not.toHaveBeenCalled();
@@ -51,18 +53,18 @@ describe('setupOnboardingProfile', () => {
 
   test('reports profile persistence failure after tools are ready', async () => {
     provision.mockResolvedValue({kind: 'success', requestId: 'setup-shell-3'});
-    save.mockResolvedValue(false);
+    save.mockResolvedValue({kind: 'error', code: 'internal_error'});
 
-    const result = await setupOnboardingProfile('test-password', 'setup-shell-3');
+    const result = await setupOnboardingProfile(USER, 'setup-shell-3');
 
     expect(result).toEqual({kind: 'error', stage: 'profile'});
   });
 
   test('saves the profile without tools when asked to skip them', async () => {
-    save.mockResolvedValue(true);
+    save.mockResolvedValue({kind: 'success'});
     const onToolsReady = jest.fn();
 
-    const result = await setupOnboardingProfile('test-password', 'setup-shell-4', {onToolsReady, skipTools: true});
+    const result = await setupOnboardingProfile(USER, 'setup-shell-4', {onToolsReady, skipTools: true});
 
     expect(result).toEqual({kind: 'success'});
     expect(provision).not.toHaveBeenCalled();

@@ -114,7 +114,10 @@ class TerminalSessionServiceDeviceTest {
     val preferences = context.getSharedPreferences("horus_profile", Context.MODE_PRIVATE)
     val createdProfile = !PasswordGate.isConfigured(context)
     if (createdProfile) {
-      assertTrue(PasswordGate.create(context, "Horus-device-test-42"))
+      assertEquals(
+        ProfileUsersCore.CreateResult.CREATED,
+        PasswordGate.create(context, RootfsCatalog.DISTRO_ALPINE, "horus", "falcon", "Horus-device-test-42"),
+      )
       assertTrue(preferences.edit().commit()) // Flush before the other process reads it.
     }
     val controller = RemoteAccessController(context)

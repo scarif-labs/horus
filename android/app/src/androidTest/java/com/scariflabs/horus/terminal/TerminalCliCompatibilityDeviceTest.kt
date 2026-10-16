@@ -78,7 +78,7 @@ class TerminalCliCompatibilityDeviceTest {
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, paths.guestTmp),
     )
     val sink = OutputSink()
@@ -97,6 +97,7 @@ class TerminalCliCompatibilityDeviceTest {
       runtime = runtime,
       scratchDir = paths.guestTmp,
       dnsServersProvider = { dnsServers },
+      seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",
     )
     listener.respondToCursorQuery = { sessionId ->
       supervisor.write(sessionId, "\u001b[1;14R".toByteArray(Charsets.ISO_8859_1))
@@ -133,7 +134,7 @@ class TerminalCliCompatibilityDeviceTest {
       )
       installCli(supervisor, first.sessionId, sink, "codex-cli", npmInstallCommand("codex-cli", "@openai/codex"), 300_000)
       installCli(supervisor, first.sessionId, sink, "opencode", npmInstallCommand("opencode", "opencode-ai"), 300_000)
-      installCli(supervisor, first.sessionId, sink, "gemini-cli", npmInstallCommand("gemini-cli", "@google/gemini-cli"), 300_000)
+      installCli(supervisor, first.sessionId, sink, "gemini-cli", npmInstallCommand("gemini-cli", "@google/gemini-cli"), 600_000)
 
       runStageCommand(supervisor, first.sessionId, sink, "claude-code", claudeVersionDoctorCommand(), "version-doctor", 120_000)
       runStageCommand(supervisor, first.sessionId, sink, "codex-cli", codexVersionDoctorCommand(), "version-doctor", 120_000)
@@ -284,6 +285,8 @@ class TerminalCliCompatibilityDeviceTest {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (System.currentTimeMillis() < deadline) {
       val lines = sink.textFrom(offset).replace('\r', '\n').split('\n').filter(String::isNotEmpty)
+        // The previous command's prompt can land in front of a marker.
+        .map { it.replace(LEADING_PROMPT, "") }
       val match = lines.firstOrNull { line -> if (exact) line == prefix else line.startsWith(prefix) }
       if (match != null) return match
       Thread.sleep(100)
@@ -443,5 +446,6 @@ class TerminalCliCompatibilityDeviceTest {
   private companion object {
     val CLI_IDS = listOf("claude-code", "codex-cli", "opencode", "gemini-cli")
     const val LOG_TAG = "AlpineP6CliMatrixDeviceTest"
+    val LEADING_PROMPT = Regex("^\\S*# ")
   }
 }

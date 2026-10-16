@@ -16,7 +16,7 @@ internal object DeviceTestGuest {
     val location = ProotRuntimeLocator(manifest).locate(File(context.applicationInfo.nativeLibraryDir))
     assertTrue(location.toString(), location is ProotRuntimeLocator.Location.Available)
     val runtime = (location as ProotRuntimeLocator.Location.Available).runtime
-    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarGzExtractor(), ProotGuestProber(runtime, paths.guestTmp))
+    val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarExtractor(), ProotGuestProber(runtime, paths.guestTmp))
     // Ordinary device runs retain the existing read-only rootfs precondition.
     if (!context.packageName.endsWith(".pr23check")) {
       assertTrue("install a guest first, or run the isolated validation package", store.activeRootfsDir() != null)

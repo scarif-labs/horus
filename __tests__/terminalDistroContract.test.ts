@@ -1,5 +1,6 @@
 import {
   buildInstallRootfsRequest,
+  DEBIAN_ROOTFS,
   buildResetRuntimeRequest,
   isInstallRootfsResponse,
   isResetRuntimeResponse,
@@ -24,6 +25,8 @@ describe('request builders', () => {
     expect(buildInstallRootfsRequest('')).toBeNull();
     expect(buildInstallRootfsRequest('bad id!')).toBeNull();
     expect(buildInstallRootfsRequest('x'.repeat(65))).toBeNull();
+    // Only catalog entries can be requested.
+    expect(buildInstallRootfsRequest('install-1', 'debian-13-aarch64')).toBeNull();
   });
 
   it('builds scoped reset requests only', () => {
@@ -103,9 +106,28 @@ describe('isInstallRootfsResponse', () => {
     expect(isInstallRootfsResponse({requestId: '../bad', status: 'error', errorCode: 'download_failed'})).toBe(false);
   });
 
+  it('validates a debian install against the debian entry, not alpine', () => {
+    const debian = {
+      ...success,
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+      archiveSha256: DEBIAN_ROOTFS.sha256,
+      archiveBytes: DEBIAN_ROOTFS.sizeBytes,
+      probeMarkers: [...DEBIAN_ROOTFS.probeMarkers],
+    };
+    expect(buildInstallRootfsRequest('install-1', DEBIAN_ROOTFS.rootfsId)).toEqual({
+      requestId: 'install-1',
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+    });
+    expect(isInstallRootfsResponse(debian)).toBe(true);
+    expect(isInstallRootfsResponse({...debian, probeMarkers: [...PINNED_PROBE_MARKERS]})).toBe(false);
+    expect(isInstallRootfsResponse({...debian, archiveSha256: PINNED_ROOTFS_SHA256})).toBe(false);
+    expect(isInstallRootfsResponse({...debian, archiveBytes: PINNED_ROOTFS_SIZE_BYTES})).toBe(false);
+  });
+
   it('rejects a success with a malformed digest or unknown rootfs id', () => {
     expect(isInstallRootfsResponse({...success, archiveSha256: 'not-a-digest'})).toBe(false);
     expect(isInstallRootfsResponse({...success, rootfsId: '../escape'})).toBe(false);
+    expect(isInstallRootfsResponse({...success, rootfsId: 'debian-13-aarch64'})).toBe(false);
     expect(isInstallRootfsResponse({...success, durationMs: 1.5})).toBe(false);
     expect(isInstallRootfsResponse({...success, probeMarkers: 'alpine_probe_begin'})).toBe(false);
     expect(isInstallRootfsResponse({...success, archiveBytes: Number.MAX_SAFE_INTEGER + 1})).toBe(false);

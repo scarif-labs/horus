@@ -55,6 +55,7 @@ class HorusDeviceModule(
           putDouble("freeMemoryBytes", memory.availMem.toDouble().coerceAtLeast(0.0))
           putDouble("totalMemoryBytes", memory.totalMem.toDouble().coerceAtLeast(0.0))
           putBoolean("wifiConnected", isWifiConnected())
+          putBoolean("online", isOnline())
           putDouble("batteryPercent", batteryPercent)
           putDouble("capturedAtMs", System.currentTimeMillis().toDouble())
         },
@@ -64,46 +65,118 @@ class HorusDeviceModule(
     }
   }
 
+  /** The configured users, at most one per distribution. */
   @ReactMethod
   fun getProfile(promise: Promise) {
-    val configured = preferences.getString(KEY_PASSWORD_SALT, null) != null &&
-      preferences.getString(KEY_PASSWORD_VERIFIER, null) != null
-    if (configured) {
-      preferences.edit()
-        .remove(KEY_LEGACY_USERNAME)
-        .remove(KEY_LEGACY_EMOJI)
-        .apply()
+    val core = PasswordGate.users(appContext)
+    val users = core.users()
+    promise.resolve(
+      Arguments.createMap().apply {
+        putBoolean("configured", users.isNotEmpty())
+        putBoolean("accountIntro", core.needsAccountIntro())
+        if (users.isNotEmpty()) putBoolean("hasPassword", true)
+        putArray(
+          "users",
+          Arguments.createArray().apply {
+            users.forEach { user ->
+              pushMap(
+                Arguments.createMap().apply {
+                  putString("distro", user.distro)
+                  putString("username", user.username)
+                  putString("avatar", user.avatar)
+                },
+              )
+            }
+          },
+        )
+      },
+    )
+  }
+
+  /** The upgrade card on Home was opened or closed; never show it again. */
+  @ReactMethod
+  fun dismissAccountIntro(promise: Promise) {
+    runCatching { PasswordGate.users(appContext).dismissAccountIntro() }
+    promise.resolve(null)
+  }
+
+  /** Adds the user for one distribution. Never replaces an existing user, or its lock could be reset without the password. */
+  @ReactMethod
+  fun saveProfile(request: ReadableMap, promise: Promise) {
+    fun text(key: String) = request.takeIf { it.hasKey(key) }?.getString(key)
+    val distro = text("distro")
+    val username = text("username")
+    val avatar = text("avatar")
+    val password = text("password")
+    val result = if (distro == null || username == null || avatar == null || password == null) {
+      null
+    } else {
+      PasswordGate.create(appContext, distro, username, avatar, password)
     }
     promise.resolve(
       Arguments.createMap().apply {
-        putBoolean("configured", configured)
-        if (configured) {
-          putBoolean("hasPassword", preferences.getBoolean(KEY_HAS_PASSWORD, false))
+        when (result) {
+          ProfileUsersCore.CreateResult.CREATED -> putString("status", "success")
+          null -> {
+            putString("status", "error")
+            putString("errorCode", "invalid_request")
+          }
+          else -> {
+            putString("status", "error")
+            putString("errorCode", result.name.lowercase())
+          }
         }
       },
     )
   }
 
+  /** Renames the signed-in user or changes their avatar; a rename restarts SSH as the new name. */
   @ReactMethod
-  fun saveProfile(request: ReadableMap, promise: Promise) {
-    val password = request.takeIf { it.hasKey("password") }?.getString("password")
-    // The password is set once during onboarding. PasswordGate never
-    // overwrites a configured one, or the lock could be reset without it.
-    val created = password != null && PasswordGate.create(appContext, password)
-    promise.resolve(Arguments.createMap().apply { putString("status", if (created) "success" else "error") })
+  fun updateProfile(request: ReadableMap, promise: Promise) {
+    fun text(key: String) = request.takeIf { it.hasKey(key) }?.getString(key)
+    val distro = text("distro")
+    val username = text("username")
+    val avatar = text("avatar")
+    val before = distro?.let { TerminalGuestIdentity.readStoredUsername(appContext, it) }
+    val result = if (distro == null || username == null || avatar == null) null else PasswordGate.update(appContext, distro, username, avatar)
+    if (result == ProfileUsersCore.UpdateResult.UPDATED && before != username) {
+      RemoteAccessController(appContext).restartIfEnabled()
+    }
+    promise.resolve(
+      Arguments.createMap().apply {
+        when (result) {
+          ProfileUsersCore.UpdateResult.UPDATED -> putString("status", "success")
+          null -> {
+            putString("status", "error")
+            putString("errorCode", "invalid_request")
+          }
+          else -> {
+            putString("status", "error")
+            putString("errorCode", result.name.lowercase())
+          }
+        }
+      },
+    )
   }
 
+  /** Checks one user's password against the shared attempt limit. */
   @ReactMethod
   fun verifyPassword(request: ReadableMap, promise: Promise) {
+    val distro = request.takeIf { it.hasKey("distro") }?.getString("distro")
     val password = request.takeIf { it.hasKey("password") }?.getString("password")
     val result = Arguments.createMap()
-    when (val check = PasswordGate.verify(appContext, password)) {
-      PasswordGate.Check.Success -> result.putString("status", "success")
-      is PasswordGate.Check.Locked -> {
+    if (distro == null) {
+      result.putString("status", "error")
+      promise.resolve(result)
+      return
+    }
+    when (val check = PasswordGate.verify(appContext, distro, password)) {
+      ProfileUsersCore.Check.Success -> result.putString("status", "success")
+      is ProfileUsersCore.Check.Locked -> {
         result.putString("status", "locked")
         result.putDouble("retryAfterMs", check.retryAfterMs.toDouble())
       }
-      PasswordGate.Check.Incorrect, PasswordGate.Check.Unavailable -> result.putString("status", "error")
+      ProfileUsersCore.Check.Incorrect, ProfileUsersCore.Check.Unavailable -> result.putString("status", "error")
     }
     promise.resolve(result)
   }
@@ -260,19 +333,21 @@ class HorusDeviceModule(
     return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
   }
 
+  /** A network Android has validated as reaching the internet. */
+  private fun isOnline(): Boolean {
+    val manager = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    val network = manager.activeNetwork ?: return false
+    val capabilities = manager.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+  }
+
   companion object {
   const val NAME = "HorusDevice"
     private const val PROFILE_PREFERENCES = "horus_profile"
-    private const val KEY_LEGACY_USERNAME = "username"
-    private const val KEY_LEGACY_EMOJI = "emoji"
-    private const val KEY_HAS_PASSWORD = "has_password"
-    private const val KEY_PASSWORD_SALT = "password_salt"
-    private const val KEY_PASSWORD_VERIFIER = "password_verifier"
     private const val KEY_GITHUB_USERNAME = "github_username"
     private const val KEY_GITHUB_AVATAR_URL = "github_avatar_url"
     private val GITHUB_USERNAME_PATTERN = Regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}")
     private val GITHUB_AVATAR_PATH_PATTERN = Regex("https://avatars\\.githubusercontent\\.com/[A-Za-z0-9._~!$'()*+,;=:@%/-]{1,256}")
-
-    fun readStoredUsername(context: Context): String? = TerminalGuestIdentity.readStoredUsername(context)
   }
 }

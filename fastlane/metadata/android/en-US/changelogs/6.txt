@@ -1,0 +1,9 @@
+- Choose Alpine or Debian (experimental) at setup, and add a user on the other later
+- Sign in as either user; switching user stops the other's sessions
+- Rename your user; old /home paths keep working
+- sudo in your terminal and over SSH
+- Package install progress, and a screen that says why an app couldn't install
+- Log out from Settings
+- Home shows who is signed in
+- Claude Code, Codex and OpenCode over SSH share the app's logins
+- New avatars

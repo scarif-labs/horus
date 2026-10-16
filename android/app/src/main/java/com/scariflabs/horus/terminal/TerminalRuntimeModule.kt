@@ -82,7 +82,7 @@ class TerminalRuntimeModule(
     DistroStoreCore(
       paths = DistroStorePaths(File(appContext.filesDir, TerminalRuntimeContract.STORAGE_ROOT_DIR_NAME)),
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = prootProber(),
     )
   }
@@ -386,7 +386,10 @@ class TerminalRuntimeModule(
       }
       if (active != null) {
         putString("activeRootfsId", active.rootfsId)
-        putString("activeAlpineRelease", active.alpineRelease)
+        putString("activeDistro", active.distro)
+        putString("activeRelease", active.release)
+        // Kept for Alpine so the field keeps its old meaning.
+        if (active.distro == RootfsCatalog.DISTRO_ALPINE) putString("activeAlpineRelease", active.release)
         putString("activeRootfsSha256", active.rootfsSha256)
         putString("activeInstalledAt", active.installedAtIso)
       }
@@ -486,12 +489,8 @@ class TerminalRuntimeModule(
 
   override fun installRootfs(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::installError) { requestId ->
-      val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
-        request.getString("rootfsId")
-      } else {
-        AlpineRootfsCatalog.ROOTFS_ID
-      }
-      if (requestedId != AlpineRootfsCatalog.ROOTFS_ID) {
+      val entry = requestedCatalogEntry(request)
+      if (entry == null) {
         promise.resolve(installError(requestId, "invalid_request"))
         return
       }
@@ -500,7 +499,58 @@ class TerminalRuntimeModule(
         return
       }
       TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$requestId")
-      runRootfsInstall(requestId, promise, imported = null)
+      runRootfsInstall(requestId, promise, entry, imported = null, makeActive = requestedMakeActive(request))
+    }
+  }
+
+  /** The catalog entry a request names, Alpine when it names none, or null for an unknown id. */
+  private fun requestedCatalogEntry(request: ReadableMap): RootfsCatalogEntry? {
+    val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
+      request.getString("rootfsId")
+    } else {
+      RootfsCatalog.DEFAULT.rootfsId
+    }
+    return RootfsCatalog.byId(requestedId)
+  }
+
+  private fun requestedMakeActive(request: ReadableMap): Boolean =
+    !(request.hasKey("makeActive") && request.getType("makeActive") == ReadableType.Boolean && !request.getBoolean("makeActive"))
+
+  /** Points new sessions at an installed rootfs, e.g. after signing in as the other distribution's user. */
+  override fun activateRootfs(request: ReadableMap, promise: Promise) {
+    withRequestId(request, promise, ::installError) { requestId ->
+      val entry = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
+        RootfsCatalog.byId(request.getString("rootfsId"))
+      } else {
+        null
+      }
+      if (entry == null) {
+        promise.resolve(installError(requestId, "invalid_request"))
+        return
+      }
+      if (installInProgress.get()) {
+        promise.resolve(installError(requestId, "install_in_progress"))
+        return
+      }
+      installExecutor.execute {
+        val response = try {
+          val switched = store.readActiveRecord()?.rootfsId != entry.rootfsId
+          if (store.activate(entry.rootfsId)) {
+            TerminalDebugLog.record(appContext, "module_rootfs_activated request=$requestId distro=${entry.distro}")
+            if (switched) RemoteAccessController(appContext).restartIfEnabled()
+            Arguments.createMap().apply {
+              putString("requestId", requestId)
+              putString("status", "success")
+              putString("rootfsId", entry.rootfsId)
+            }
+          } else {
+            installError(requestId, "not_installed")
+          }
+        } catch (_: Exception) {
+          installError(requestId, "internal_error")
+        }
+        deliverInstallResponse(promise, response)
+      }
     }
   }
 
@@ -512,6 +562,12 @@ class TerminalRuntimeModule(
    */
   override fun importRootfs(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::installError) { requestId ->
+      val entry = requestedCatalogEntry(request)
+      if (entry == null) {
+        promise.resolve(installError(requestId, "invalid_request"))
+        return
+      }
+      val makeActive = requestedMakeActive(request)
       val activity = appContext.currentActivity
       if (activity == null) {
         promise.resolve(installError(requestId, "runtime_unavailable"))
@@ -532,7 +588,7 @@ class TerminalRuntimeModule(
             return
           }
           TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$requestId")
-          runRootfsInstall(requestId, promise, imported = uri)
+          runRootfsInstall(requestId, promise, entry, imported = uri, makeActive = makeActive)
         }
       }
       appContext.addActivityEventListener(listener)
@@ -550,13 +606,21 @@ class TerminalRuntimeModule(
   }
 
   /** Runs one install on the install worker; the caller already holds installInProgress. */
-  private fun runRootfsInstall(responseRequestId: String, promise: Promise, imported: Uri?) {
+  private fun runRootfsInstall(
+    responseRequestId: String,
+    promise: Promise,
+    entry: RootfsCatalogEntry,
+    imported: Uri?,
+    makeActive: Boolean,
+  ) {
     installExecutor.execute {
       val response = try {
         val outcome = if (imported == null) {
-          store.install(url = downloadSourceSettings.read().rootfsUrl)
+          // The download-source mirror setting only covers Alpine.
+          val url = if (entry == RootfsCatalog.ALPINE) downloadSourceSettings.read().rootfsUrl else entry.url
+          store.install(entry, url = url, makeActive = makeActive)
         } else {
-          store.install(source = ContentUriArchiveReader(appContext.contentResolver, imported))
+          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported), makeActive = makeActive)
         }
         when (outcome) {
           is DistroStoreCore.InstallOutcome.Success -> {
@@ -607,7 +671,7 @@ class TerminalRuntimeModule(
     "download" -> if (failure.reasonCode == "digest_mismatch" || failure.reasonCode == "size_mismatch") "digest_mismatch" else "download_failed"
     "extract" -> "extraction_failed"
     "probe" -> "probe_failed"
-    "promote" -> "promote_failed"
+    "promote" -> if (failure.reasonCode == "runtime_busy") "runtime_busy" else "promote_failed"
     else -> "internal_error"
   }
 
@@ -629,6 +693,24 @@ class TerminalRuntimeModule(
     }
   }
 
+  /** The provisioning script's latest package progress line, from the active distribution's home. */
+  override fun readProvisionProgress(promise: Promise) {
+    val result = Arguments.createMap()
+    try {
+      val distro = store.readActiveRecord()?.distro ?: RootfsCatalog.DISTRO_ALPINE
+      val file = File(paths.homeFor(distro), ".cache/horus/provision-progress")
+      result.putString("status", "success")
+      // The guest owns this file: never follow a link it planted, and read only a line's worth.
+      if (file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath()) && file.length() in 1..256) {
+        val line = file.readText(Charsets.UTF_8).trim()
+        if (line.isNotEmpty() && line.length <= 120 && line.none { it.isISOControl() }) result.putString("line", line)
+      }
+    } catch (_: Exception) {
+      result.putString("status", "error")
+    }
+    promise.resolve(result)
+  }
+
   override fun resetRuntime(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::resetError) { requestId ->
       val scope = stringField(request, "scope")
@@ -643,6 +725,9 @@ class TerminalRuntimeModule(
           deleteWorkspaces = scope == TerminalRuntimeContract.RESET_SCOPE_WORKSPACE ||
             scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
         )
+      } catch (_: DistroStoreCore.RuntimeBusyException) {
+        promise.resolve(resetError(requestId, "runtime_busy"))
+        return
       } catch (_: Exception) {
         promise.resolve(resetError(requestId, "internal_error"))
         return
@@ -999,6 +1084,7 @@ class TerminalRuntimeModule(
       }
       putInt("rows", response.getInt(TerminalSessionServiceProtocol.KEY_ROWS, rows))
       putInt("columns", response.getInt(TerminalSessionServiceProtocol.KEY_COLUMNS, columns))
+      if (response.getBoolean(TerminalSessionServiceProtocol.KEY_REATTACHED, false)) putBoolean("reattached", true)
     }
   }
 
@@ -1013,6 +1099,7 @@ class TerminalRuntimeModule(
             val sessionId = item.getString(TerminalSessionServiceProtocol.KEY_SESSION_ID)
             val target = item.getString(TerminalSessionServiceProtocol.KEY_TARGET)
             val startedAtMs = item.getLong(TerminalSessionServiceProtocol.KEY_STARTED_AT_MS, -1L)
+            val command = item.getString(TerminalSessionServiceProtocol.KEY_COMMAND)
             if (TerminalSessionContract.isValidSessionId(sessionId) &&
               TerminalRuntimeContract.isValidToolchainTarget(target) &&
               startedAtMs >= 0L
@@ -1022,6 +1109,9 @@ class TerminalRuntimeModule(
                   putString("sessionId", sessionId)
                   putString("toolchain", target)
                   putDouble("startedAtMs", startedAtMs.toDouble())
+                  if (command != null && command.isNotEmpty() && command.length <= TerminalSessionContract.MAX_COMMAND_LENGTH) {
+                    putString("command", command)
+                  }
                 },
               )
             }
@@ -1114,7 +1204,7 @@ class TerminalRuntimeModule(
 
   /** A prober that fails closed when the packaged runtime is unusable. */
   private class UnavailableGuestProber(private val reasonCode: String) : GuestProber {
-    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult =
+    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult =
       throw IllegalStateException("proot runtime unavailable: $reasonCode")
   }
 
@@ -1288,9 +1378,15 @@ class TerminalRuntimeModule(
     }.apply { allowCoreThreadTimeOut(true) }
   }
 
+  /** Browses the active distribution's user home, which is the home its sessions see. */
   private fun guestFileBrowser(): GuestFileBrowser {
     val storePaths = paths
-    return GuestFileBrowser(homeRoot = storePaths.home, workspaceRoot = storePaths.defaultWorkspace)
+    val distro = try {
+      store.readActiveRecord()?.distro
+    } catch (_: Exception) {
+      null
+    } ?: RootfsCatalog.DISTRO_ALPINE
+    return GuestFileBrowser(homeRoot = storePaths.homeFor(distro), workspaceRoot = storePaths.defaultWorkspace)
   }
 
   /** Parses the shared guest file request; null means invalid_request. */

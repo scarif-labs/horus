@@ -385,7 +385,8 @@ export function isStartSessionResponse(value: unknown, requestId: string): value
   if (value.status === 'error') return isValidSessionError(value, requestId);
   if (value.status !== 'success') return false;
   return (
-    hasOnlyKeys(value, ['requestId', 'status', 'sessionId', 'pid', 'rows', 'columns']) &&
+    hasOnlyKeys(value, ['requestId', 'status', 'sessionId', 'pid', 'rows', 'columns', 'reattached']) &&
+    (value.reattached === undefined || value.reattached === true) &&
     isValidTerminalSessionId(value.sessionId) &&
     isSafeIntegerInRange(value.pid, 1, Number.MAX_SAFE_INTEGER) &&
     isValidTerminalSessionRows(value.rows) &&
@@ -485,10 +486,12 @@ export function isListTerminalSessionsResponse(
   }
   const seenIds = new Set<string>();
   return value.sessions.every(session => {
-    if (!isRecord(session) || !hasOnlyKeys(session, ['sessionId', 'toolchain', 'startedAtMs'])) return false;
+    if (!isRecord(session) || !hasOnlyKeys(session, ['sessionId', 'toolchain', 'startedAtMs', 'command'])) return false;
     if (!isValidTerminalSessionId(session.sessionId) || seenIds.has(session.sessionId)) return false;
     if (typeof session.toolchain !== 'string' || !TERMINAL_TOOLCHAIN_TARGETS.includes(session.toolchain as TerminalToolchainTarget)) return false;
     if (!isSafeIntegerInRange(session.startedAtMs, 0, Number.MAX_SAFE_INTEGER)) return false;
+    if (session.command !== undefined &&
+      (typeof session.command !== 'string' || session.command.length === 0 || session.command.length > TERMINAL_SESSION_MAX_COMMAND_LENGTH)) return false;
     seenIds.add(session.sessionId);
     return true;
   });
@@ -649,7 +652,7 @@ export type TrustedSessionOperation = Readonly<
 >;
 
 export type TrustedSessionStart = Readonly<
-  | {kind: 'success'; sessionId: string; pid: number; rows: number; columns: number}
+  | {kind: 'success'; sessionId: string; pid: number; rows: number; columns: number; reattached: boolean}
   | {kind: 'error'; errorCode: TerminalSessionOperationErrorCode}
 >;
 

@@ -42,7 +42,7 @@ class DistroStoreCore(
 
   interface RootfsExtractor {
     @Throws(IOException::class)
-    fun extract(archive: File, destinationRoot: File): SafeTarGzExtractor.Summary
+    fun extract(archive: File, destinationRoot: File, format: ArchiveFormat): SafeTarExtractor.Summary
   }
 
   sealed interface InstallOutcome {
@@ -50,7 +50,7 @@ class DistroStoreCore(
       val rootfsId: String,
       val archiveBytes: Long,
       val archiveSha256: String,
-      val extraction: SafeTarGzExtractor.Summary,
+      val extraction: SafeTarExtractor.Summary,
       val probe: GuestProbeResult,
       val reusedCachedArchive: Boolean,
       val durationMs: Long,
@@ -59,10 +59,16 @@ class DistroStoreCore(
     data class Failure(val rootfsId: String, val stage: String, val reasonCode: String, val detail: String) : InstallOutcome
   }
 
+  /**
+   * The installed rootfs a record points at. Alpine records keep the v1 shape
+   * (`alpineRelease`, no `distro`) byte for byte, so an older Horus can still
+   * read them after a downgrade; other distributions use v2.
+   */
   data class ActiveRecord(
     val schemaVersion: Int,
+    val distro: String,
     val rootfsId: String,
-    val alpineRelease: String,
+    val release: String,
     val rootfsSha256: String,
     val installedAtIso: String,
     val probeMarkers: List<String>,
@@ -96,12 +102,15 @@ class DistroStoreCore(
 
   @Synchronized
   fun install(
-    rootfsId: String = AlpineRootfsCatalog.ROOTFS_ID,
-    url: String = AlpineRootfsCatalog.ROOTFS_URL,
-    expectedSha256: String = AlpineRootfsCatalog.ROOTFS_SHA256,
-    expectedBytes: Long = AlpineRootfsCatalog.ROOTFS_SIZE_BYTES,
+    entry: RootfsCatalogEntry = RootfsCatalog.DEFAULT,
+    rootfsId: String = entry.rootfsId,
+    url: String = entry.url,
+    expectedSha256: String = entry.sha256,
+    expectedBytes: Long = entry.sizeBytes,
     downloadTimeoutMs: Long = 120_000,
     source: ArchiveDownloader = downloader,
+    /** False installs the version beside the active one, e.g. a second user's distribution, without switching to it. */
+    makeActive: Boolean = true,
   ): InstallOutcome {
     if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) {
       return InstallOutcome.Failure(rootfsId, "validate", "invalid_rootfs_id", "id does not match the catalog pattern")
@@ -169,19 +178,23 @@ class DistroStoreCore(
     val stagingRootfs = File(staging, "rootfs")
     val summary = try {
       if (!stagingRootfs.mkdirs()) throw IOException("cannot create staging rootfs")
-      extractor.extract(archiveToUse, stagingRootfs)
+      extractor.extract(archiveToUse, stagingRootfs, entry.archiveFormat)
     } catch (error: Exception) {
       deleteQuietly(staging)
       val reason = when (error) {
-        is SafeTarGzExtractor.UnsafeArchiveException -> "unsafe_archive"
+        is SafeTarExtractor.UnsafeArchiveException -> "unsafe_archive"
         else -> "extraction_failed"
       }
       return InstallOutcome.Failure(rootfsId, "extract", reason, error.message ?: "extraction failure")
     }
 
     // The guest must prove itself before promotion.
+    // The markers to require come from the catalog entry, never from the
+    // prober's result, so another distribution's probe output cannot pass.
     val probe = try {
-      prober.probe(stagingRootfs, paths.home, 60_000)
+      val probeHome = paths.homeFor(entry.distro)
+      if (!probeHome.isDirectory && !probeHome.mkdirs()) throw IOException("cannot create ${entry.distro} home")
+      prober.probe(stagingRootfs, probeHome, 60_000, entry).copy(requiredLines = entry.probeMarkers)
     } catch (error: Exception) {
       deleteQuietly(staging)
       return InstallOutcome.Failure(rootfsId, "probe", "probe_failed", error.message ?: "probe failure")
@@ -196,9 +209,10 @@ class DistroStoreCore(
     }
 
     val record = ActiveRecord(
-      schemaVersion = AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION,
+      schemaVersion = recordSchemaFor(entry.distro),
+      distro = entry.distro,
       rootfsId = rootfsId,
-      alpineRelease = AlpineRootfsCatalog.ALPINE_RELEASE,
+      release = entry.release,
       rootfsSha256 = expectedSha256,
       installedAtIso = java.time.Instant.ofEpochMilli(clock()).toString(),
       probeMarkers = probe.markerLines(),
@@ -220,68 +234,71 @@ class DistroStoreCore(
     // active record or a complete-but-unreferenced version — never a
     // manifest-less version. Reinstalling the active id never removes the
     // currently referenced rootfs before the replacement is known-good.
+    val versionDir = paths.versionDir(rootfsId)
+    fun success() = InstallOutcome.Success(
+      rootfsId = rootfsId,
+      archiveBytes = archiveToUse.length(),
+      archiveSha256 = expectedSha256,
+      extraction = summary,
+      probe = probe,
+      reusedCachedArchive = reusedCache,
+      durationMs = clock() - startedAt,
+    )
+    if (readActiveRecord()?.rootfsId == rootfsId && versionDir.isDirectory) {
+      try {
+        deleteTreeIfPresent(staging)
+      } catch (error: IOException) {
+        return InstallOutcome.Failure(rootfsId, "promote", "staging_cleanup_failed", error.message ?: "cannot clear staging")
+      }
+      return success()
+    }
+    fun promote(): InstallOutcome {
+      val replacement = paths.versionReplacement(rootfsId)
+      try {
+        deleteTreeIfPresent(replacement)
+        if (versionDir.exists() && !versionDir.renameTo(replacement)) {
+          throw IOException("cannot stage the existing versions/$rootfsId for replacement")
+        }
+        if (!staging.renameTo(versionDir)) {
+          if (replacement.exists() && !replacement.renameTo(versionDir)) {
+            throw IOException("cannot roll back versions/$rootfsId after promotion failure")
+          }
+          throw IOException("cannot rename staging into versions/$rootfsId")
+        }
+      } catch (error: IOException) {
+        deleteQuietly(staging)
+        return InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "cannot promote version")
+      }
+      try {
+        if (makeActive) writeJsonAtomically(paths.activeRecord, record.toJson())
+      } catch (error: IOException) {
+        deleteQuietly(versionDir)
+        if (replacement.exists() && !replacement.renameTo(versionDir)) {
+          return InstallOutcome.Failure(rootfsId, "promote", "rollback_failed", "active record write failed and version rollback failed")
+        }
+        return InstallOutcome.Failure(rootfsId, "promote", "manifest_write_failed", error.message ?: "manifest failure")
+      }
+      deleteQuietly(replacement)
+      return success()
+    }
+    // Only replacing an existing version can pull a rootfs out from under a
+    // running session, so only that waits for sessions to stop. A new
+    // version (e.g. a second user's distribution) promotes beside them.
+    if (!versionDir.exists()) return promote()
     return try {
       withHardlinkLock {
-        val activeBefore = readActiveRecord()
-        val versionDir = paths.versionDir(rootfsId)
-        if (activeBefore?.rootfsId == rootfsId && versionDir.isDirectory) {
-          try {
-            deleteTreeIfPresent(staging)
-          } catch (error: IOException) {
-            return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "staging_cleanup_failed", error.message ?: "cannot clear staging")
-          }
-          return@withHardlinkLock InstallOutcome.Success(
-            rootfsId = rootfsId,
-            archiveBytes = archiveToUse.length(),
-            archiveSha256 = expectedSha256,
-            extraction = summary,
-            probe = probe,
-            reusedCachedArchive = reusedCache,
-            durationMs = clock() - startedAt,
-          )
+        promote().also {
+          // Collection failure must not turn a committed installation into a
+          // reported install failure. A later lifecycle operation retries it.
+          if (it is InstallOutcome.Success) runCatching { pruneHardlinkBacking() }
         }
-        val replacement = paths.versionReplacement(rootfsId)
-        try {
-          deleteTreeIfPresent(replacement)
-          if (versionDir.exists() && !versionDir.renameTo(replacement)) {
-            throw IOException("cannot stage the existing versions/$rootfsId for replacement")
-          }
-          if (!staging.renameTo(versionDir)) {
-            if (replacement.exists() && !replacement.renameTo(versionDir)) {
-              throw IOException("cannot roll back versions/$rootfsId after promotion failure")
-            }
-            throw IOException("cannot rename staging into versions/$rootfsId")
-          }
-        } catch (error: IOException) {
-          deleteQuietly(staging)
-          return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "cannot promote version")
-        }
-        try {
-          writeJsonAtomically(paths.activeRecord, record.toJson())
-        } catch (error: IOException) {
-          deleteQuietly(versionDir)
-          if (replacement.exists() && !replacement.renameTo(versionDir)) {
-            return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "rollback_failed", "active record write failed and version rollback failed")
-          }
-          return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "manifest_write_failed", error.message ?: "manifest failure")
-        }
-        deleteQuietly(replacement)
-        // Collection failure must not turn a committed installation into a
-        // reported install failure. A later lifecycle operation retries it.
-        runCatching { pruneHardlinkBacking() }
-        return@withHardlinkLock InstallOutcome.Success(
-          rootfsId = rootfsId,
-          archiveBytes = archiveToUse.length(),
-          archiveSha256 = expectedSha256,
-          extraction = summary,
-          probe = probe,
-          reusedCachedArchive = reusedCache,
-          durationMs = clock() - startedAt,
-        )
       }
+    } catch (error: RuntimeBusyException) {
+      deleteQuietly(staging)
+      InstallOutcome.Failure(rootfsId, "promote", "runtime_busy", error.message ?: "runtime is in use")
     } catch (error: IOException) {
       deleteQuietly(staging)
-      InstallOutcome.Failure(rootfsId, "promote", "storage_busy", error.message ?: "storage unavailable")
+      InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "storage unavailable")
     }
   }
 
@@ -294,13 +311,41 @@ class DistroStoreCore(
     val manifest = readRecordFile(paths.versionManifest(record.rootfsId)) ?: return null
     return record.takeIf {
       manifest.schemaVersion == record.schemaVersion &&
+        manifest.distro == record.distro &&
         manifest.rootfsId == record.rootfsId &&
-        manifest.alpineRelease == record.alpineRelease &&
+        manifest.release == record.release &&
         manifest.rootfsSha256 == record.rootfsSha256 &&
         manifest.installedAtIso == record.installedAtIso &&
         manifest.probeMarkers == record.probeMarkers
     }
   }
+
+  /**
+   * Makes an installed version active again without reinstalling it: the
+   * active record becomes a copy of that version's own manifest. Returns
+   * false when the version is missing or its manifest no longer matches the
+   * catalog.
+   */
+  @Synchronized
+  fun activate(rootfsId: String): Boolean {
+    if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) return false
+    val rootfs = paths.versionRootfs(rootfsId)
+    if (!isOwnedDirectory(rootfs) || !rootfs.isDirectory) return false
+    val manifest = readRecordFile(paths.versionManifest(rootfsId)) ?: return false
+    if (manifest.rootfsId != rootfsId) return false
+    if (readActiveRecord()?.rootfsId == rootfsId) return true
+    return try {
+      writeJsonAtomically(paths.activeRecord, manifest.toJson())
+      true
+    } catch (_: IOException) {
+      false
+    }
+  }
+
+  /** The installed version of [distro], if any; at most one per distribution is kept. */
+  @Synchronized
+  fun installedVersionFor(distro: String): String? =
+    installedVersionIds().firstOrNull { RootfsCatalog.byId(it)?.distro == distro }
 
   @Synchronized
   fun installedVersionIds(): List<String> {
@@ -340,9 +385,11 @@ class DistroStoreCore(
     var removedHome = false
     var removedWorkspaces = false
     if (deleteHome) {
-      removedHome = paths.home.exists() || paths.harnessHomes.exists()
+      removedHome = paths.home.exists() || paths.harnessHomes.exists() || paths.distroHomes.exists()
       deleteTreeIfPresent(paths.home)
       deleteTreeIfPresent(paths.harnessHomes)
+      deleteTreeIfPresent(paths.distroHomes)
+      RemoteAccess.Store(paths.base).deleteHostKey()
       if (!paths.home.mkdirs() && !paths.home.isDirectory) throw IOException("cannot recreate home")
       if (!paths.harnessHomes.mkdirs() && !paths.harnessHomes.isDirectory) {
         throw IOException("cannot recreate harness homes")
@@ -365,7 +412,8 @@ class DistroStoreCore(
         throw IOException("cannot recreate workspaces")
       }
     }
-    pruneHardlinkBacking()
+    // The reset itself is done; a failed scan only defers reclamation.
+    runCatching { pruneHardlinkBacking() }
     ResetResult(removedVersions, removedHome, removedWorkspaces)
   }
 
@@ -374,7 +422,7 @@ class DistroStoreCore(
     ensureLayout()
     FileChannel.open(File(paths.hardlinks, ".gc.lock").toPath(), WRITE, CREATE, NOFOLLOW_LINKS).use { channel ->
       val lock = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null }
-        ?: throw IOException("runtime is in use; stop active sessions and SSH access, then retry")
+        ?: throw RuntimeBusyException()
       lock.use { return action() }
     }
   }
@@ -393,11 +441,19 @@ class DistroStoreCore(
     }
     if (candidates.isEmpty()) return
     val live = mutableSetOf<Path>()
+    // Candidates are canonical. A link written through another spelling of
+    // the same directory (/data/user/0 vs /data/data) must still match, or
+    // its live backing would be collected. Only the parent is resolved.
+    fun canonical(path: Path): Path {
+      val absolute = path.toAbsolutePath().normalize()
+      val parent = absolute.parent ?: return absolute
+      return runCatching { parent.toRealPath().resolve(absolute.fileName) }.getOrDefault(absolute)
+    }
     fun mark(path: Path) {
-      var current = path.toAbsolutePath().normalize()
+      var current = canonical(path)
       while (current in candidates && live.add(current)) {
         if (!Files.isSymbolicLink(current)) break
-        current = current.parent.resolve(Files.readSymbolicLink(current)).normalize()
+        current = canonical(current.parent.resolve(Files.readSymbolicLink(current)))
       }
     }
     Files.walkFileTree(paths.base.canonicalFile.toPath(), object : java.nio.file.SimpleFileVisitor<Path>() {
@@ -425,6 +481,9 @@ class DistroStoreCore(
     }
   }
 
+  /** A session or SSH server holds PRoot's shared lease on the hardlink store. */
+  class RuntimeBusyException : IOException("runtime is in use; stop active sessions and SSH access, then retry")
+
   data class ResetResult(
     val removedVersionIds: List<String>,
     val homeRemoved: Boolean,
@@ -448,15 +507,16 @@ class DistroStoreCore(
     if (Files.isSymbolicLink(file.toPath()) || !file.isFile) return null
     return try {
       val json = JSONObject(file.readText(Charsets.UTF_8))
+      val schemaVersion = json.optInt("schemaVersion", -1)
       val id = json.optString("rootfsId")
       val digest = json.optString("rootfsSha256")
-      val release = json.optString("alpineRelease")
       val installedAt = json.optString("installedAtIso")
-      if (!AlpineRootfsCatalog.isValidRootfsId(id) ||
-        !sha256Pattern.matches(digest) ||
-        release != AlpineRootfsCatalog.ALPINE_RELEASE ||
-        json.optInt("schemaVersion", -1) != AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION
-      ) return null
+      val (distro, release) = when (schemaVersion) {
+        RootfsCatalog.LEGACY_ALPINE_RECORD_SCHEMA -> RootfsCatalog.DISTRO_ALPINE to json.optString("alpineRelease")
+        RootfsCatalog.RECORD_SCHEMA -> json.optString("distro") to json.optString("release")
+        else -> return null
+      }
+      if (!AlpineRootfsCatalog.isValidRootfsId(id) || !sha256Pattern.matches(digest)) return null
       val values = json.optJSONArray("probeMarkers") ?: return null
       val markers = (0 until values.length()).map { index ->
         val value = values.opt(index)
@@ -464,9 +524,10 @@ class DistroStoreCore(
         value
       }
       val record = ActiveRecord(
-        schemaVersion = AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION,
+        schemaVersion = schemaVersion,
+        distro = distro,
         rootfsId = id,
-        alpineRelease = release,
+        release = release,
         rootfsSha256 = digest,
         installedAtIso = installedAt,
         probeMarkers = markers,
@@ -500,21 +561,19 @@ class DistroStoreCore(
     return candidate == base || candidate.startsWith(base + File.separator)
   }
 
-  private fun isValidRecord(record: ActiveRecord): Boolean =
-    record.schemaVersion == AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION &&
-      AlpineRootfsCatalog.isValidRootfsId(record.rootfsId) &&
+  /** A record is only valid for a catalog entry it matches exactly. */
+  private fun isValidRecord(record: ActiveRecord): Boolean {
+    val entry = RootfsCatalog.byId(record.rootfsId) ?: return false
+    return record.schemaVersion == recordSchemaFor(entry.distro) &&
+      record.distro == entry.distro &&
       sha256Pattern.matches(record.rootfsSha256) &&
-      record.alpineRelease == AlpineRootfsCatalog.ALPINE_RELEASE &&
+      record.release == entry.release &&
       runCatching { java.time.Instant.parse(record.installedAtIso) }.isSuccess &&
-      record.probeMarkers == listOf(
-        AlpineRootfsCatalog.ProbeMarkers.BEGIN,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_ARCH,
-        AlpineRootfsCatalog.ALPINE_RELEASE,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_HOME,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_APK,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_SH,
-        AlpineRootfsCatalog.ProbeMarkers.END,
-      )
+      record.probeMarkers == entry.probeMarkers
+  }
+
+  private fun recordSchemaFor(distro: String): Int =
+    if (distro == RootfsCatalog.DISTRO_ALPINE) RootfsCatalog.LEGACY_ALPINE_RECORD_SCHEMA else RootfsCatalog.RECORD_SCHEMA
 
   private fun writeJsonAtomically(destination: File, json: JSONObject) {
     val temp = File(destination.parentFile, ".${destination.name}.tmp")
@@ -527,8 +586,9 @@ class DistroStoreCore(
 
   private fun ActiveRecord.toJson(): JSONObject = JSONObject()
     .put("schemaVersion", schemaVersion)
+    .apply { if (schemaVersion == RootfsCatalog.RECORD_SCHEMA) put("distro", distro) }
     .put("rootfsId", rootfsId)
-    .put("alpineRelease", alpineRelease)
+    .put(if (schemaVersion == RootfsCatalog.RECORD_SCHEMA) "release" else "alpineRelease", release)
     .put("rootfsSha256", rootfsSha256)
     .put("installedAtIso", installedAtIso)
     .put("probeMarkers", org.json.JSONArray(probeMarkers))

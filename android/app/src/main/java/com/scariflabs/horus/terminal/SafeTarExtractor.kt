@@ -5,11 +5,13 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.nio.file.Files
 import java.util.zip.GZIPInputStream
+import org.tukaani.xz.XZInputStream
 
 /**
- * Streaming tar.gz extraction that never lets an archive entry escape the
+ * Streaming tar.gz / tar.xz extraction that never lets an archive entry escape the
  * destination root:
  *  - entry names are rejected when absolute, containing "..", or empty;
  *  - every written path's parent is resolved and must stay under the root, so
@@ -23,11 +25,16 @@ import java.util.zip.GZIPInputStream
  * Supported formats: ustar (with prefix), GNU long names ('L'), and pax
  * extended headers ('x'/'g') carrying a `path=` override. Sizes must be plain
  * octal; GNU base-256 sizes are rejected.
+ *
+ * The compression comes from the catalog entry, never from sniffing the file:
+ * a pinned archive is exactly one format.
  */
-class SafeTarGzExtractor(
+class SafeTarExtractor(
   private val maxEntries: Int = 100_000,
   private val maxFileBytes: Long = 256L * 1024 * 1024,
   private val maxTotalBytes: Long = 512L * 1024 * 1024,
+  /** xz decoder memory cap in KiB; a default-preset (-6) stream needs about 9 MiB. */
+  private val xzMemoryLimitKiB: Int = 64 * 1024,
 ) : DistroStoreCore.RootfsExtractor {
   data class Summary(
     val entryCount: Int,
@@ -41,7 +48,7 @@ class SafeTarGzExtractor(
 
   class UnsafeArchiveException(message: String) : IOException(message)
 
-  override fun extract(archive: File, destinationRoot: File): Summary {
+  override fun extract(archive: File, destinationRoot: File, format: ArchiveFormat): Summary {
     val rootCanonical = destinationRoot.canonicalFile
     if (!rootCanonical.isDirectory) throw IOException("destination root is not a directory")
     var entries = 0
@@ -55,7 +62,7 @@ class SafeTarGzExtractor(
     var globalPathOverride: String? = null
 
     FileInputStream(archive).use { fileInput ->
-      GZIPInputStream(fileInput, 1 shl 16).use { input ->
+      decompress(fileInput, format).use { input ->
         val header = ByteArray(512)
         while (true) {
           if (!readFully(input, header)) break
@@ -169,6 +176,11 @@ class SafeTarGzExtractor(
     return Summary(entries, files, dirs, symlinks, hardlinks, skipped.take(32), total)
   }
 
+  private fun decompress(input: InputStream, format: ArchiveFormat): InputStream = when (format) {
+    ArchiveFormat.TAR_GZ -> GZIPInputStream(input, 1 shl 16)
+    ArchiveFormat.TAR_XZ -> XZInputStream(input.buffered(1 shl 16), xzMemoryLimitKiB)
+  }
+
   private fun entryName(header: ByteArray, globalPathOverride: String?, nextPathOverride: String?): String? {
     val override = nextPathOverride ?: globalPathOverride
     if (override != null && override.isNotEmpty()) return override
@@ -201,7 +213,7 @@ class SafeTarGzExtractor(
     ensurePathWithinRoot(rootCanonical, parent, "entry escapes the extraction root")
   }
 
-  private fun writeRegularFile(input: GZIPInputStream, target: File, size: Long, root: File) {
+  private fun writeRegularFile(input: InputStream, target: File, size: Long, root: File) {
     ensureParentDirectory(target, root)
     val effectiveParent = target.parentFile?.canonicalFile
     if (effectiveParent != null && effectiveParent != root.canonicalFile &&
@@ -231,17 +243,17 @@ class SafeTarGzExtractor(
     target.setExecutable(executable, false)
   }
 
-  private fun readInlineBytes(input: GZIPInputStream, size: Long): ByteArray {
+  private fun readInlineBytes(input: InputStream, size: Long): ByteArray {
     if (size <= 0 || size > 1L * 1024 * 1024) throw UnsafeArchiveException("unreasonable inline record size")
     val bytes = ByteArray(size.toInt())
     if (!readFully(input, bytes)) throw EOFException("archive ended inside an inline record")
     return bytes
   }
 
-  private fun readInlineString(input: GZIPInputStream, size: Long): String =
+  private fun readInlineString(input: InputStream, size: Long): String =
     readInlineBytes(input, size).toString(Charsets.UTF_8)
 
-  private fun skipRemaining(input: GZIPInputStream, size: Long) {
+  private fun skipRemaining(input: InputStream, size: Long) {
     var remaining = size
     val buffer = ByteArray(1 shl 16)
     while (remaining > 0) {
@@ -252,7 +264,7 @@ class SafeTarGzExtractor(
     }
   }
 
-  private fun readFully(input: GZIPInputStream, buffer: ByteArray): Boolean {
+  private fun readFully(input: InputStream, buffer: ByteArray): Boolean {
     var offset = 0
     while (offset < buffer.size) {
       val read = input.read(buffer, offset, buffer.size - offset)

@@ -58,4 +58,27 @@ describe('remote access', () => {
     expect(renderer?.root.findAllByProps({testID: 'remote-access-computer'})).toHaveLength(0);
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
+
+  test('panel notices a computer turning remote access off while it is open', async () => {
+    jest.useFakeTimers();
+    try {
+      const on = parseRemoteAccess(running);
+      const off = parseRemoteAccess({...running, enabled: false, state: 'stopped'});
+      const read = jest.fn(async () => on);
+      let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+      await ReactTestRenderer.act(async () => {
+        renderer = ReactTestRenderer.create(<RemoteAccessPanel read={read} />);
+      });
+      const status = () => renderer?.root.findByProps({testID: 'remote-access-status'}).props.children;
+      expect(status()).toContain('On.');
+
+      // `horus stop` on the computer.
+      read.mockImplementation(async () => off);
+      await ReactTestRenderer.act(async () => { await jest.advanceTimersByTimeAsync(5000); });
+      expect(status()).toBe('Off. Nothing is listening.');
+      await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

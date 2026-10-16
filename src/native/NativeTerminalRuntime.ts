@@ -58,6 +58,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'extraction_failed',
   'probe_failed',
   'promote_failed',
+  'runtime_busy',
   'session_not_found',
   'session_limit_reached',
   'session_exited',
@@ -72,6 +73,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'toolchain_codex_install_failed',
   'toolchain_opencode_install_failed',
   'toolchain_normalization_failed',
+  'not_installed',
 ] as const;
 
 export type TerminalRuntimeErrorCode =
@@ -86,6 +88,7 @@ export type TerminalRuntimeErrorCode =
   | 'extraction_failed'
   | 'probe_failed'
   | 'promote_failed'
+  | 'runtime_busy'
   | 'session_not_found'
   | 'session_limit_reached'
   | 'session_exited'
@@ -99,7 +102,8 @@ export type TerminalRuntimeErrorCode =
   | 'toolchain_github_install_failed'
   | 'toolchain_codex_install_failed'
   | 'toolchain_opencode_install_failed'
-  | 'toolchain_normalization_failed';
+  | 'toolchain_normalization_failed'
+  | 'not_installed';
 
 export type TerminalRuntimeStatusResponse = {
   status: 'success' | 'error';
@@ -113,6 +117,9 @@ export type TerminalRuntimeStatusResponse = {
   prootAvailable?: boolean;
   prootVersion?: string;
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
+  /** Alpine only; kept so the field keeps its old meaning. */
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;
@@ -158,6 +165,29 @@ export type InstallRootfsRequest = {
   requestId: string;
   /** Optional; must match the pinned catalog id when present. */
   rootfsId?: string;
+  /**
+   * Defaults to true. False installs the rootfs beside the active one, e.g.
+   * for a second user, without switching new sessions to it.
+   */
+  makeActive?: boolean;
+};
+
+export type ProvisionProgressResponse = {
+  status: 'success' | 'error';
+  /** The latest package progress line, e.g. "Installing packages… 64%"; absent when nothing is installing. */
+  line?: string;
+};
+
+export type ActivateRootfsRequest = {
+  requestId: string;
+  rootfsId: string;
+};
+
+export type ActivateRootfsResponse = {
+  requestId: string;
+  status: 'success' | 'error';
+  rootfsId?: string;
+  errorCode?: TerminalRuntimeErrorCode;
 };
 
 export type InstallRootfsResponse = {
@@ -233,6 +263,8 @@ export type TerminalSessionSummary = {
   sessionId: string;
   toolchain: TerminalToolchainTarget;
   startedAtMs: number;
+  /** The command the session was started with, to start it again. */
+  command?: string;
 };
 
 export type ListTerminalSessionsRequest = {
@@ -302,6 +334,8 @@ export type StartSessionResponse = {
   pid?: number;
   rows?: number;
   columns?: number;
+  /** The service handed back a session that was already running. */
+  reattached?: boolean;
   errorCode?: TerminalRuntimeErrorCode;
 };
 
@@ -517,7 +551,11 @@ export interface Spec extends TurboModule {
   installRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
   /** Opens the system file picker and installs the archive the user picks. */
   importRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
+  /** Points new sessions at an installed rootfs without reinstalling it. */
+  activateRootfs(request: ActivateRootfsRequest): Promise<ActivateRootfsResponse>;
   provisionToolchain(request: ProvisionToolchainRequest): Promise<ProvisionToolchainResponse>;
+  /** What the running system package install last reported, for progress while provisioning. */
+  readProvisionProgress(): Promise<ProvisionProgressResponse>;
   resetRuntime(request: ResetRuntimeRequest): Promise<ResetRuntimeResponse>;
   startSession(request: StartSessionRequest): Promise<StartSessionResponse>;
   listTerminalSessions(request: ListTerminalSessionsRequest): Promise<ListTerminalSessionsResponse>;

@@ -19,6 +19,7 @@ type RemoteAccessPanelProps = Readonly<{
 }>;
 
 const TRANSITION_POLL_MS = 1500;
+const STEADY_POLL_MS = 5000;
 
 export function RemoteAccessPanel({
   read = readRemoteAccess,
@@ -48,13 +49,14 @@ export function RemoteAccessPanel({
     };
   }, [apply, read]);
 
-  // Follow the server while it installs or starts; stay quiet otherwise.
+  // Follow the server closely while it installs or starts. Otherwise check
+  // now and then: a paired computer can turn it off (`horus stop`) or on
+  // (`horus pair`) while this screen is open.
   const transitioning = snapshot?.enabled === true && (snapshot.state === 'starting' || snapshot.state === 'installing' || snapshot.state === 'stopped');
   React.useEffect(() => {
-    if (!transitioning) return undefined;
     const timer = setInterval(() => {
       read().then(apply).catch(() => undefined);
-    }, TRANSITION_POLL_MS);
+    }, transitioning ? TRANSITION_POLL_MS : STEADY_POLL_MS);
     return () => clearInterval(timer);
   }, [apply, read, transitioning]);
 

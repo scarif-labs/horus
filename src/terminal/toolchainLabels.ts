@@ -11,7 +11,7 @@ function toolchainName(target: TerminalToolchainTarget, shellLabel: string): str
 
 /** Label used while a toolchain is being installed or started. */
 export function toolchainInstallLabel(target: TerminalToolchainTarget): string {
-  return toolchainName(target, 'Alpine shell');
+  return toolchainName(target, 'Linux shell');
 }
 
 /** Title shown for a running session in recents and the session-limit list. */

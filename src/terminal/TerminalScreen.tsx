@@ -22,6 +22,7 @@ import {
 import {
   TerminalSessionClient,
   type TerminalSessionAttachment,
+  type TerminalSessionExitView,
 } from './session/sessionClient';
 import {TerminalCellBuffer, terminalSize, TERMINAL_BACKGROUND, type TerminalFrame, type TerminalSize} from './terminalBuffer';
 import {TerminalGrid, TERMINAL_CELL_HEIGHT, type NativeScreenState} from './TerminalGrid';
@@ -33,7 +34,7 @@ import {
 } from './runtimeStatus';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {findGithubDeviceLoginUrl} from '../projects/githubDeviceLogin';
-import type {TrustedSessionOperation} from './session/sessionContract';
+import type {TrustedSessionOperation, TrustedSessionSnapshot} from './session/sessionContract';
 import {openTrustedTerminalLink} from './terminalLinks';
 import {BrandMark} from './BrandMark';
 import {toolchainInstallLabel} from './toolchainLabels';
@@ -45,6 +46,9 @@ import {SessionLimitOverlay} from './SessionLimitOverlay';
 import {readTerminalPaste} from './terminalPaste';
 import {TerminalControls, type TerminalArrow} from './TerminalControls';
 import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
+import {InstallFailedOverlay, installFailureIssueUrl} from './InstallFailedOverlay';
+import {classifyInstallFailure, cleanInstallLog, INSTALL_LOG_TAIL_CHARS, type InstallFailure, type InstallFailureKind} from './installFailure';
+import {readDeviceSnapshot} from '../device/deviceSnapshot';
 
 export type TerminalScreenProps = Readonly<{
   client?: TerminalSessionClient;
@@ -135,6 +139,25 @@ function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'codex') return 'toolchain_codex_install_failed';
   if (target === 'opencode') return 'toolchain_opencode_install_failed';
   return 'toolchain_install_failed';
+}
+
+/** A start that failed while the service provisioned the app, by its error code. */
+function startInstallFailureKind(errorCode: string): InstallFailureKind | undefined {
+  if (errorCode === 'toolchain_network') return 'network';
+  if (errorCode === 'toolchain_node_version') return 'node_version';
+  if (errorCode === 'toolchain_permissions') return 'permissions';
+  if (errorCode.startsWith('toolchain_')) return 'unknown';
+  return undefined;
+}
+
+/** The exit a session snapshot reports, for a session that ended while detached. */
+function exitFromSnapshot(sessionId: string, snapshot: Extract<TrustedSessionSnapshot, {kind: 'success'}>): TerminalSessionExitView {
+  return {
+    sessionId,
+    reason: snapshot.exitReason ?? 'process_exit',
+    ...(snapshot.exitCode !== undefined ? {exitCode: snapshot.exitCode} : {}),
+    ...(snapshot.signal !== undefined ? {signal: snapshot.signal} : {}),
+  };
 }
 
 function hasToolchainReadyMarker(value: string): boolean {
@@ -246,6 +269,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [installDownload, setInstallDownload] = React.useState<string | undefined>(undefined);
   // Set when an app quits on its own, to show why and offer a restart.
   const [appExit, setAppExit] = React.useState<AppExit | undefined>(undefined);
+  // Set when a first-run install fails, to explain why and offer a retry.
+  const [installFailure, setInstallFailure] = React.useState<InstallFailure | undefined>(undefined);
+  // The end of the install output, kept for the failure screen: a native
+  // session's own copy goes away with the session.
+  const installLogRef = React.useRef('');
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
   const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
@@ -337,6 +365,23 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     onCommandFailure?.();
   }, [completionMarker, onCommandFailure]);
 
+  /**
+   * Covers the terminal with why the install failed. Helper commands (clone,
+   * login) report through onCommandFailure instead. Android's own view of the
+   * network settles "offline" without guessing from the log.
+   */
+  const showInstallFailure = React.useCallback((kind?: InstallFailureKind) => {
+    if (completionMarker !== undefined) return;
+    const rawLog = installLogRef.current;
+    const stage = installStageRef.current;
+    const log = cleanInstallLog(rawLog);
+    setInstallFailure({kind: kind ?? classifyInstallFailure(rawLog, stage, undefined), ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log})});
+    void readDeviceSnapshot().then(snapshot => {
+      if (!mountedRef.current || snapshot?.online !== false) return;
+      setInstallFailure(current => current === undefined ? current : {...current, kind: 'offline'});
+    });
+  }, [completionMarker]);
+
   const disposeAttachment = React.useCallback(() => {
     isAttachedRef.current = false;
     client.dispose();
@@ -352,6 +397,56 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     deliverCompletion();
     deliverCommandFailure();
   }, [deliverCommandFailure, deliverCompletion]);
+
+  /**
+   * Ends the screen's session, whether the end arrived live or was found on
+   * reattaching (after the app was in the background, or on resume): a failed
+   * install gets the failure screen either way.
+   */
+  const finishSession = React.useCallback((exit: TerminalSessionExitView) => {
+    // The end may arrive twice: live, and again from the replay on reattaching.
+    if (activeSessionRef.current !== exit.sessionId) return;
+    client.dispose();
+    isAttachedRef.current = false;
+    attachmentRef.current = undefined;
+    setNativeSessionId(undefined);
+    setTerminalInputSessionId(undefined);
+    setNativeHarnessReady(false);
+    if (!mountedRef.current) return;
+    // A resumed session is assumed installed, so its failed stage counts too.
+    if (!installReadyRef.current || installStageRef.current?.endsWith('_failed') === true) {
+      activeSessionRef.current = undefined;
+      setState('error');
+      setError(toolchainInstallError(toolchain));
+      showInstallFailure();
+      deliverCommandFailure();
+      return;
+    }
+    // One-off shell commands (clones) report through their completion
+    // marker; an interactive shell gets the exit screen like an app, or
+    // `exit` would leave the install placeholder behind.
+    if ((toolchain !== 'shell' || completionMarker === undefined) && exit.reason === 'process_exit') {
+      // Read the last screen before the buffer is reused; a native
+      // session's lives in the native engine until taken once.
+      const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
+        // A wrapped row continues the one above (soft wrap), not a new line.
+        .map((line, index) => (index > 0 && line.wrapped ? '' : '\n') + line.text)
+        .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
+      const exitInfo: AppExit = {
+        ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
+        ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
+      };
+      const screen = nativeHarness && nativeTerminalRuntime !== null
+        ? nativeTerminalRuntime.takeExitScreen(exit.sessionId).catch(() => null)
+        : Promise.resolve(localScreen);
+      void screen.then(output => {
+        if (!mountedRef.current) return;
+        Keyboard.dismiss();
+        setAppExit(output ? {...exitInfo, output} : exitInfo);
+      });
+    }
+    handleSessionExited(exit.signal);
+  }, [client, completionMarker, deliverCommandFailure, handleSessionExited, nativeHarness, showInstallFailure, toolchain]);
 
   const openTerminalLink = React.useCallback((url: string) => {
     void openTrustedTerminalLink(url).catch(() => {
@@ -443,7 +538,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         }
         if (outcome.sessionState === 'exited') {
           // The exit happened while backgrounded, so onExit never ran.
-          handleSessionExited(outcome.signal);
+          finishSession(exitFromSnapshot(sessionId, outcome));
           return;
         }
         setError(undefined);
@@ -456,7 +551,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       });
     });
     return () => subscription.remove();
-  }, [client, disposeAttachment, handleSessionExited]);
+  }, [client, disposeAttachment, finishSession]);
 
   const readRuntimeStatus = React.useCallback(async (): Promise<TerminalRuntimeStatusView> => {
     if (runtime === undefined) return readTerminalRuntimeStatus();
@@ -471,6 +566,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const startPtySession = React.useCallback(async (sessionToResume?: string) => {
     let sessionId: string;
+    // A resumed session, or one the service handed back because it was
+    // already running: its install finished long ago, and it stays the
+    // user's if this screen fails to attach.
+    let resumed = sessionToResume !== undefined;
     if (sessionToResume !== undefined) {
       // The running session's terminal size is not known here: it may have
       // been sized with the keyboard hidden, or by another screen. Leave it
@@ -495,7 +594,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         // App and shell sessions outlive their screen, and the service hands
         // the same running session to the next screen that starts this
         // command. Stopping it here would kill the remounted screen's session.
-        if (started.kind === 'success' && stopSessionOnUnmount) {
+        if (started.kind === 'success' && stopSessionOnUnmount && !started.reattached) {
           await client.stopSession(nextRequestId('late-stop'), started.sessionId, 'screen_unmount');
         }
         return;
@@ -503,18 +602,24 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       if (started.kind !== 'success') {
         setState('error');
         setError(started.errorCode);
+        const failureKind = toolchain === 'shell' ? undefined : startInstallFailureKind(started.errorCode);
+        if (failureKind !== undefined) showInstallFailure(failureKind);
         deliverCommandFailure();
         return;
       }
       sessionId = started.sessionId;
       requestedSizeRef.current = {rows: started.rows, columns: started.columns};
+      if (started.reattached) {
+        resumed = true;
+        installReadyRef.current = true;
+      }
     }
     if (!mountedRef.current) return;
     lastOutputSeqRef.current = 0;
     activeSessionRef.current = sessionId;
     setTerminalInputSessionId(nativeTerminalInput ? sessionId : undefined);
     setNativeSessionId(nativeHarness ? sessionId : undefined);
-    setNativeHarnessReady(nativeHarness && sessionToResume !== undefined);
+    setNativeHarnessReady(nativeHarness && resumed);
     displayBufferRef.current = nativeHarness ? undefined : new TerminalCellBuffer(requestedSizeRef.current ?? sizeRef.current, {
       onChange: nextFrame => {
         if (!mountedRef.current) return;
@@ -537,12 +642,12 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         disposeAttachment();
         const activeSession = activeSessionRef.current;
         activeSessionRef.current = undefined;
-        if (activeSession !== undefined && sessionToResume === undefined) {
+        if (activeSession !== undefined && !resumed) {
           void client.stopSession(nextRequestId('renderer-stop'), activeSession, 'screen_unmount');
         }
       },
     });
-    if (sessionToResume !== undefined && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
+    if (resumed && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
     const attachment: TerminalSessionAttachment = {
       onOutput: chunk => {
         if (!mountedRef.current) return;
@@ -553,6 +658,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         if (scanInstallMarker || scanGithubLogin || scanCompletionMarker) {
           const outputText = textDecoder.decode(chunk.bytes);
           if (scanInstallMarker) {
+            installLogRef.current = `${installLogRef.current}${outputText}`.slice(-INSTALL_LOG_TAIL_CHARS);
             const stage = lastInstallStage(outputText);
             if (stage !== undefined && stage !== installStageRef.current) {
               installStageRef.current = stage;
@@ -595,46 +701,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         }
         displayBufferRef.current?.append(chunk.bytes);
       },
-      onExit: exit => {
-        client.dispose();
-        isAttachedRef.current = false;
-        attachmentRef.current = undefined;
-        setNativeSessionId(undefined);
-        setTerminalInputSessionId(undefined);
-        setNativeHarnessReady(false);
-        if (!mountedRef.current) return;
-        if (!installReadyRef.current) {
-          activeSessionRef.current = undefined;
-          setState('error');
-          setError(toolchainInstallError(toolchain));
-          deliverCommandFailure();
-          return;
-        }
-        // One-off shell commands (clones) report through their completion
-        // marker; an interactive shell gets the exit screen like an app, or
-        // `exit` would leave the install placeholder behind.
-        if ((toolchain !== 'shell' || completionMarker === undefined) && exit.reason === 'process_exit') {
-          // Read the last screen before the buffer is reused; a native
-          // session's lives in the native engine until taken once.
-          const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
-            // A wrapped row continues the one above (soft wrap), not a new line.
-            .map((line, index) => (index > 0 && line.wrapped ? '' : '\n') + line.text)
-            .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
-          const exitInfo: AppExit = {
-            ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
-            ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
-          };
-          const screen = nativeHarness && nativeTerminalRuntime !== null
-            ? nativeTerminalRuntime.takeExitScreen(exit.sessionId).catch(() => null)
-            : Promise.resolve(localScreen);
-          void screen.then(output => {
-            if (!mountedRef.current) return;
-            Keyboard.dismiss();
-            setAppExit(output ? {...exitInfo, output} : exitInfo);
-          });
-        }
-        handleSessionExited(exit.signal);
-      },
+      onExit: finishSession,
       onProtocolError: protocolError => {
         if (!mountedRef.current) return;
         if (protocolError.kind === 'output_gap' || protocolError.kind === 'sequence_gap') {
@@ -658,7 +725,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       );
       if (subscription.kind !== 'success') {
         disposeAttachment();
-        if (sessionToResume === undefined) {
+        if (!resumed) {
           await client.stopSession(nextRequestId('subscribe-failed-stop'), sessionId, 'screen_unmount');
         }
         activeSessionRef.current = undefined;
@@ -668,8 +735,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         return;
       }
       if (subscription.sessionState === 'exited') {
-        disposeAttachment();
-        handleSessionExited(subscription.signal);
+        finishSession(exitFromSnapshot(sessionId, subscription));
         return;
       }
       if (mountedRef.current && activeSessionRef.current === sessionId) {
@@ -680,7 +746,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       }
     } catch {
       disposeAttachment();
-      if (sessionToResume === undefined) {
+      if (!resumed) {
         await client.stopSession(nextRequestId('subscribe-error-stop'), sessionId, 'screen_unmount');
       }
       activeSessionRef.current = undefined;
@@ -689,7 +755,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       setError('subscription_failed');
       deliverCommandFailure();
     }
-  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, handleSessionExited, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, stopSessionOnUnmount, toolchain, waitForMeasuredSize]);
+  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, finishSession, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, showInstallFailure, stopSessionOnUnmount, toolchain, waitForMeasuredSize]);
 
   /** Starts (or resumes) the session; [fresh] ignores the one to resume. */
   const start = React.useCallback(async (fresh = false) => {
@@ -698,6 +764,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setState('starting');
     setError(undefined);
     setAppExit(undefined);
+    setInstallFailure(undefined);
+    installLogRef.current = '';
     setOutputHistoryGap(false);
     githubLoginOutputTailRef.current = '';
     openedGithubLoginUrlsRef.current.clear();
@@ -903,6 +971,20 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     })();
   }, [appExit, readRuntimeStatus, toolchain]);
 
+  const reportInstallFailure = React.useCallback(() => {
+    if (installFailure === undefined) return;
+    void (async () => {
+      const status = await readRuntimeStatus().catch(() => undefined);
+      const url = installFailureIssueUrl(toolchain, installFailure, {
+        ...(status !== undefined && status.kind !== 'error' ? {appVersion: status.appVersion} : {}),
+        androidVersion: String(Platform.Version),
+      });
+      await openTrustedTerminalLink(url).catch(() => {
+        if (mountedRef.current) setError('link_unavailable');
+      });
+    })();
+  }, [installFailure, readRuntimeStatus, toolchain]);
+
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
     const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
     if (toolchain === 'codex' && direction === 'up' && !transcriptPagerOpen) {
@@ -1016,6 +1098,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // An app that is already installed gets the short "Starting …" screen.
   const showStartup = !installActive && appStarting;
   const appExitVisible = appExit !== undefined && state === 'stopped';
+  const installFailureVisible = installFailure !== undefined && state === 'error';
 
   return (
     <>
@@ -1069,6 +1152,15 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
                 onBack={onHome ?? onBack}
                 onReport={reportAppExit}
                 onRestart={restartApp}
+                toolchain={toolchain}
+              />
+            ) : null}
+            {installFailureVisible ? (
+              <InstallFailedOverlay
+                failure={installFailure}
+                onBack={onHome ?? onBack}
+                onReport={reportInstallFailure}
+                onRetry={restartApp}
                 toolchain={toolchain}
               />
             ) : null}
@@ -1135,9 +1227,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               Some earlier terminal output is unavailable.
             </Text>
           ) : null}
-          {error !== undefined && !sessionLimitReached ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
-          {/* The limit and exit screens cover the terminal; nothing to type into. */}
-          {sessionLimitReached || appExitVisible ? null : <TerminalControls
+          {error !== undefined && !sessionLimitReached && !installFailureVisible ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
+          {/* The limit, exit, and install-failure screens cover the terminal; nothing to type into. */}
+          {sessionLimitReached || appExitVisible || installFailureVisible ? null : <TerminalControls
             altActive={altActive}
             ctrlActive={ctrlActive}
             keyboardVisible={keyboardVisible}

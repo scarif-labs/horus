@@ -156,6 +156,7 @@ export class TerminalSessionClient {
         pid: response.pid!,
         rows: response.rows!,
         columns: response.columns!,
+        reattached: response.reattached === true,
       }),
     );
   }

@@ -18,6 +18,11 @@ type SettingsSectionProps = Readonly<{
   testID?: string;
 }>;
 
+/** A section title on its own, for content that is not a list of rows. */
+export function SettingsSectionTitle({title}: Readonly<{title: string}>): React.JSX.Element {
+  return <Text style={styles.sectionTitle}>{title}</Text>;
+}
+
 export function SettingsSection({title, footer, footerTone = 'muted', children, testID}: SettingsSectionProps): React.JSX.Element {
   const rows = React.Children.toArray(children).filter(Boolean);
   return (
@@ -37,6 +42,8 @@ export function SettingsSection({title, footer, footerTone = 'muted', children, 
 
 type SettingsRowProps = Readonly<{
   icon?: EntryIconKind;
+  /** Shown before the label instead of an icon, e.g. a user's avatar. */
+  leading?: React.ReactNode;
   label: string;
   detail?: string;
   right?: React.ReactNode;
@@ -47,11 +54,12 @@ type SettingsRowProps = Readonly<{
   testID?: string;
 }>;
 
-export function SettingsRow({icon, label, detail, right, below, onPress, accessibilityLabel, testID}: SettingsRowProps): React.JSX.Element {
+export function SettingsRow({icon, leading, label, detail, right, below, onPress, accessibilityLabel, testID}: SettingsRowProps): React.JSX.Element {
   const content = (
     <>
       <View style={styles.rowLine}>
         {icon === undefined ? null : <EntryIcon kind={icon} size={20} />}
+        {leading === undefined ? null : <View style={styles.leading}>{leading}</View>}
         <View style={styles.rowCopy}>
           <Text style={styles.rowLabel}>{label}</Text>
           {detail === undefined ? null : <Text numberOfLines={2} style={styles.rowDetail}>{detail}</Text>}
@@ -134,6 +142,7 @@ const styles = StyleSheet.create({
   footerDanger: {color: uiColors.danger},
   row: {paddingHorizontal: 14, paddingVertical: 12},
   rowLine: {alignItems: 'center', flexDirection: 'row', minHeight: 32},
+  leading: {marginRight: 12},
   rowCopy: {flex: 1, minWidth: 0},
   rowLabel: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '700'},
   rowDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 13, marginTop: 3},

@@ -30,7 +30,7 @@ class ProotGuestProber(
   private val scratchDir: File,
 ) : GuestProber {
 
-  override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult {
+  override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult {
     require(timeoutMs > 0) { "probe timeout must be positive" }
     require(rootfsDir.isDirectory) { "rootfs directory is missing" }
     require(guestHomeDir.isDirectory) { "guest home directory is missing" }
@@ -47,13 +47,7 @@ class ProotGuestProber(
     // probe non-interactive and bounded while launching each required guest
     // executable in its own PRoot process. The host only assembles the marker
     // block after every value has been observed from the guest rootfs.
-    val commands = listOf(
-      ProbeCommand(listOf("/bin/uname", "-m"), AlpineRootfsCatalog.ProbeMarkers.EXPECTED_ARCH),
-      ProbeCommand(listOf("/bin/cat", "/etc/alpine-release"), AlpineRootfsCatalog.ALPINE_RELEASE),
-      ProbeCommand(listOf("/bin/sh", "-c", "printf '%s\\n' \"\$HOME\""), AlpineRootfsCatalog.ProbeMarkers.EXPECTED_HOME),
-      ProbeCommand(listOf("/bin/sh", "-c", "command -v apk"), AlpineRootfsCatalog.ProbeMarkers.EXPECTED_APK),
-      ProbeCommand(listOf("/bin/sh", "-c", "command -v sh"), AlpineRootfsCatalog.ProbeMarkers.EXPECTED_SH),
-    )
+    val commands = entry.probeChecks
     val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     val observed = mutableListOf<String>()
     for (command in commands) {
@@ -64,6 +58,7 @@ class ProotGuestProber(
           output = observed.joinToString("\n"),
           durationMs = System.currentTimeMillis() - startedAt,
           timedOut = true,
+          requiredLines = entry.probeMarkers,
         )
       }
       val commandResult = runGuestCommand(
@@ -80,35 +75,33 @@ class ProotGuestProber(
           output = (observed + rawOutput).filter { it.isNotEmpty() }.joinToString("\n"),
           durationMs = System.currentTimeMillis() - startedAt,
           timedOut = commandResult.timedOut,
+          requiredLines = entry.probeMarkers,
         )
       }
       val lines = rawOutput.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
-      if (lines.size != 1 || lines.single() != command.expectedOutput) {
+      if (lines.size != 1 || lines.single() != command.expected) {
         return GuestProbeResult(
           exitCode = 1,
           output = (observed + rawOutput).filter { it.isNotEmpty() }.joinToString("\n"),
           durationMs = System.currentTimeMillis() - startedAt,
+          requiredLines = entry.probeMarkers,
         )
       }
       observed += lines.single()
     }
 
     val markerOutput = listOf(
-      AlpineRootfsCatalog.ProbeMarkers.BEGIN,
+      entry.probeBegin,
       *observed.toTypedArray(),
-      AlpineRootfsCatalog.ProbeMarkers.END,
+      entry.probeEnd,
     ).joinToString("\n") + "\n"
     return GuestProbeResult(
       exitCode = 0,
       output = markerOutput,
       durationMs = System.currentTimeMillis() - startedAt,
+      requiredLines = entry.probeMarkers,
     )
   }
-
-  private data class ProbeCommand(
-    val argv: List<String>,
-    val expectedOutput: String,
-  )
 
   private data class CommandResult(
     val exitCode: Int,

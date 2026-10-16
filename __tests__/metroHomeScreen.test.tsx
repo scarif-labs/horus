@@ -56,6 +56,77 @@ describe('MetroHomeScreen', () => {
     });
   });
 
+  test('points an upgraded user at Account once, from a card above the menu', async () => {
+    const onOpen = jest.fn();
+    const onDismiss = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <MetroHomeScreen
+          accountIntro={{onOpen, onDismiss}}
+          onOpen={() => undefined}
+          onOpenGithubLogin={() => undefined}
+          user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const find = (testID: string) => renderer.root.findAllByProps({testID});
+    expect(find('metro-account-intro').length).toBeGreaterThan(0);
+    // No account to offer unless a distribution has none.
+    expect(find('metro-account-intro-add')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { find('metro-account-intro-open')[0].props.onPress(); });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { find('metro-account-intro-dismiss')[0].props.onPress(); });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer.update(<MetroHomeScreen accountIntro={{onOpen, onDismiss, addableDistro: 'debian'}} onOpen={() => undefined} onOpenGithubLogin={() => undefined} user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}} />);
+    });
+    expect(find('metro-account-intro-add')[0].props.children).toContain('create a Debian account');
+
+    await ReactTestRenderer.act(async () => {
+      renderer.update(<MetroHomeScreen onOpen={() => undefined} onOpenGithubLogin={() => undefined} user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}} />);
+    });
+    expect(find('metro-account-intro')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  test('shows who is signed in beside a compact GitHub card', async () => {
+    const onOpenUser = jest.fn();
+    const onOpenGithubLogin = jest.fn();
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <MetroHomeScreen
+          onOpen={() => undefined}
+          onOpenGithubLogin={onOpenGithubLogin}
+          onOpenUser={onOpenUser}
+          user={{distro: 'debian', username: 'nefer', avatar: 'scarab'}}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const byId = (testID: string) => renderer!.root.findByProps({testID});
+    expect(byId('metro-user').props.accessibilityLabel).toBe('Signed in as nefer, Debian');
+    expect(byId('metro-user-name').props.children).toBe('nefer');
+    expect(byId('metro-user-distro').props.children).toBe('DEBIAN');
+    expect(byId('metro-github-title').props.children).toBe('Log in');
+    await ReactTestRenderer.act(async () => {
+      byId('metro-user').props.onPress();
+      byId('metro-github').props.onPress();
+    });
+    expect(onOpenUser).toHaveBeenCalledTimes(1);
+    expect(onOpenGithubLogin).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => {
+      renderer?.unmount();
+      await Promise.resolve();
+    });
+  });
+
   test('shows the authenticated GitHub handle in a square avatar and opens account details', async () => {
     const onOpenGithubAccount = jest.fn();
     let renderer: ReactTestRenderer.ReactTestRenderer | undefined;

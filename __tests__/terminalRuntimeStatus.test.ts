@@ -11,6 +11,8 @@ jest.mock('../src/native/NativeTerminalRuntime', () => {
 });
 
 import {
+  activateRootfs,
+  readProvisionProgress,
   isTerminalRuntimeStatusResponse,
   importRootfs,
   installRootfs,
@@ -20,6 +22,7 @@ import {
   TERMINAL_RUNTIME_SCHEMA_VERSION,
 } from '../src/terminal/runtimeStatus';
 import {
+  DEBIAN_ROOTFS,
   PINNED_ALPINE_RELEASE,
   PINNED_PROBE_MARKERS,
   PINNED_ROOTFS_ID,
@@ -76,6 +79,8 @@ describe('isTerminalRuntimeStatusResponse', () => {
         successResponse({
           runtimeState: 'ready',
           activeRootfsId: PINNED_ROOTFS_ID,
+          activeDistro: 'alpine',
+          activeRelease: PINNED_ALPINE_RELEASE,
           activeAlpineRelease: PINNED_ALPINE_RELEASE,
           activeRootfsSha256: PINNED_ROOTFS_SHA256,
           activeInstalledAt: '2026-09-08T00:00:00.000Z',
@@ -85,6 +90,52 @@ describe('isTerminalRuntimeStatusResponse', () => {
     ).toBe(true);
     expect(isTerminalRuntimeStatusResponse(successResponse({installedVersionIds: ['../escape']}))).toBe(false);
     expect(isTerminalRuntimeStatusResponse(successResponse({prootAvailable: undefined}))).toBe(false);
+  });
+
+  it('requires the active distro and release to match the catalog entry', () => {
+    const ready = {
+      runtimeState: 'ready' as const,
+      activeRootfsId: PINNED_ROOTFS_ID,
+      activeDistro: 'alpine',
+      activeRelease: PINNED_ALPINE_RELEASE,
+      activeAlpineRelease: PINNED_ALPINE_RELEASE,
+      activeRootfsSha256: PINNED_ROOTFS_SHA256,
+      activeInstalledAt: '2026-09-08T00:00:00.000Z',
+      installedVersionIds: [PINNED_ROOTFS_ID],
+    };
+    expect(isTerminalRuntimeStatusResponse(successResponse(ready))).toBe(true);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeDistro: undefined}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeDistro: 'debian'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeRelease: '3.23.0'}))).toBe(false);
+    // Alpine keeps reporting activeAlpineRelease, and it must agree.
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeAlpineRelease: undefined}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeAlpineRelease: '3.23.0'}))).toBe(false);
+    // A rootfs the catalog does not know is never ready.
+    expect(
+      isTerminalRuntimeStatusResponse(
+        successResponse({...ready, activeRootfsId: 'debian-13-aarch64', installedVersionIds: ['debian-13-aarch64']}),
+      ),
+    ).toBe(false);
+    expect(
+      isTerminalRuntimeStatusResponse(successResponse({runtimeState: 'not_installed', activeDistro: 'alpine'})),
+    ).toBe(false);
+  });
+
+  it('accepts an active debian rootfs, which never reports activeAlpineRelease', () => {
+    const debian = {
+      runtimeState: 'ready' as const,
+      activeRootfsId: DEBIAN_ROOTFS.rootfsId,
+      activeDistro: 'debian',
+      activeRelease: DEBIAN_ROOTFS.release,
+      activeRootfsSha256: DEBIAN_ROOTFS.sha256,
+      activeInstalledAt: '2026-10-12T00:00:00.000Z',
+      installedVersionIds: [PINNED_ROOTFS_ID, DEBIAN_ROOTFS.rootfsId],
+    };
+    expect(isTerminalRuntimeStatusResponse(successResponse(debian))).toBe(true);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeAlpineRelease: '13.7'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeDistro: 'alpine'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeRootfsSha256: PINNED_ROOTFS_SHA256}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, installedVersionIds: [PINNED_ROOTFS_ID]}))).toBe(false);
   });
 
   it('rejects active metadata that disagrees with runtime state', () => {
@@ -98,6 +149,8 @@ describe('isTerminalRuntimeStatusResponse', () => {
         successResponse({
           runtimeState: 'ready',
           activeRootfsId: PINNED_ROOTFS_ID,
+          activeDistro: 'alpine',
+          activeRelease: PINNED_ALPINE_RELEASE,
           activeAlpineRelease: PINNED_ALPINE_RELEASE,
           activeRootfsSha256: PINNED_ROOTFS_SHA256,
           activeInstalledAt: '2026-09-08T00:00:00.000Z',
@@ -243,6 +296,62 @@ describe('typed install/reset wrappers', () => {
       requestId: 'install-1',
       rootfsId: PINNED_ROOTFS_ID,
     });
+  });
+
+  it('installs another distribution beside the active one when asked', async () => {
+    const runtime = {
+      installRootfs: jest.fn().mockResolvedValue({
+        requestId: 'install-2',
+        status: 'success',
+        rootfsId: DEBIAN_ROOTFS.rootfsId,
+        archiveSha256: DEBIAN_ROOTFS.sha256,
+        archiveBytes: DEBIAN_ROOTFS.sizeBytes,
+        extractionFiles: 2677,
+        probeExitCode: 0,
+        probeMarkers: [...DEBIAN_ROOTFS.probeMarkers],
+        reusedCache: false,
+        durationMs: 14_513,
+      }),
+    };
+    await expect(installRootfs('install-2', runtime, {rootfsId: DEBIAN_ROOTFS.rootfsId, makeActive: false}))
+      .resolves.toMatchObject({kind: 'success', rootfsId: DEBIAN_ROOTFS.rootfsId});
+    expect(runtime.installRootfs).toHaveBeenCalledWith({
+      requestId: 'install-2',
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+      makeActive: false,
+    });
+    await expect(installRootfs('install-3', runtime, {rootfsId: 'debian-13-aarch64'}))
+      .resolves.toEqual({kind: 'error', requestId: 'install-3', errorCode: 'invalid_request'});
+  });
+
+  it('passes on only well-formed package progress lines', async () => {
+    const reply = (line: unknown) => ({readProvisionProgress: jest.fn().mockResolvedValue({status: 'success', line})});
+    await expect(readProvisionProgress(reply('Downloading packages… 37%'))).resolves.toBe('Downloading packages… 37%');
+    await expect(readProvisionProgress(reply('Installing packages… 100%'))).resolves.toBe('Installing packages… 100%');
+    await expect(readProvisionProgress(reply(undefined))).resolves.toBeUndefined();
+    await expect(readProvisionProgress(reply('rm -rf / … 5%'))).resolves.toBeUndefined();
+    await expect(readProvisionProgress(reply('Installing packages… 1000%'))).resolves.toBeUndefined();
+    await expect(readProvisionProgress({readProvisionProgress: jest.fn().mockRejectedValue(new Error('gone'))})).resolves.toBeUndefined();
+  });
+
+  it('activates an installed rootfs and validates the answer', async () => {
+    const runtime = {
+      activateRootfs: jest.fn().mockResolvedValue({requestId: 'act-1', status: 'success', rootfsId: DEBIAN_ROOTFS.rootfsId}),
+    };
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'success', requestId: 'act-1', rootfsId: DEBIAN_ROOTFS.rootfsId});
+    expect(runtime.activateRootfs).toHaveBeenCalledWith({requestId: 'act-1', rootfsId: DEBIAN_ROOTFS.rootfsId});
+
+    runtime.activateRootfs.mockResolvedValue({requestId: 'act-1', status: 'error', errorCode: 'not_installed'});
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'not_installed'});
+
+    // A success for a different rootfs than asked for is not trusted.
+    runtime.activateRootfs.mockResolvedValue({requestId: 'act-1', status: 'success', rootfsId: PINNED_ROOTFS_ID});
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'invalid_response'});
+    await expect(activateRootfs('act-1', 'debian-13-aarch64', runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'invalid_request'});
   });
 
   it('imports a picked archive through the same validation', async () => {

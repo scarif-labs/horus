@@ -1,6 +1,9 @@
 import React from 'react';
-import {ActivityIndicator, Linking, StyleSheet, Text, TextInput, View} from 'react-native';
+import {ActivityIndicator, Linking, StyleSheet, Text, View} from 'react-native';
+import {DISTRO_NAMES, type LinuxDistro, type NewProfileUser} from '../profile/profileStore';
+import {ALPINE_ROOTFS, DEBIAN_ROOTFS} from '../terminal/distroContract';
 import {ALPINE_MIRRORS, npmRegistryFor, rootfsUrl, type DownloadSources} from '../terminal/downloadSources';
+import {AccountForm, useAccountDraft} from './AccountForm';
 import {AuthScreenLayout, authStyles} from './AuthScreenLayout';
 import {uiColors} from './brand';
 import {EntryIcon} from './EntryIcon';
@@ -22,12 +25,14 @@ export type RootfsSetupResult = Readonly<{kind: 'success'}> | Readonly<{kind: 'e
 export type ProfileSetupResult = Readonly<{kind: 'success'}> | Readonly<{kind: 'error'; stage: 'alpine-tools' | 'profile'}>;
 
 export type OnboardingActions = Readonly<{
-  /** Downloads and installs the pinned Alpine rootfs. */
-  installRootfs: () => Promise<RootfsSetupResult>;
-  /** Installs a rootfs archive the user picks from storage. */
-  importRootfs: () => Promise<RootfsSetupResult>;
-  /** Installs the shell's tools (unless skipped) and saves the password. */
-  saveProfile: (password: string, options: Readonly<{skipTools: boolean; onToolsReady: () => void}>) => Promise<ProfileSetupResult>;
+  /** Downloads and installs the pinned rootfs of [distro], and makes it active. */
+  installRootfs: (distro: LinuxDistro) => Promise<RootfsSetupResult>;
+  /** Installs a rootfs archive for [distro] the user picks from storage. */
+  importRootfs: (distro: LinuxDistro) => Promise<RootfsSetupResult>;
+  /** The latest package progress while tools install, e.g. "Installing packages… 64%". */
+  readToolsProgress?: () => Promise<string | undefined>;
+  /** Installs the shell's tools (unless skipped) and creates the user. */
+  saveProfile: (user: NewProfileUser, options: Readonly<{skipTools: boolean; onToolsReady: () => void}>) => Promise<ProfileSetupResult>;
   readDownloadSources: () => Promise<DownloadSources>;
   /** Resolves false when the sources could not be saved. */
   saveDownloadSources: (sources: DownloadSources) => Promise<boolean>;
@@ -36,14 +41,14 @@ export type OnboardingActions = Readonly<{
 }>;
 
 export type OnboardingScreenProps = Readonly<{
-  /** True when Alpine is already installed, e.g. after a profile reset. */
+  /** True when Alpine is already installed and active, e.g. after a profile reset. */
   rootfsInstalled: boolean;
   actions: OnboardingActions;
   permissions?: OnboardingPermissions;
 }>;
 
-type OnboardingStep = 'welcome' | 'password' | 'permissions' | 'setup' | 'keys';
-const STEPS: readonly OnboardingStep[] = ['welcome', 'password', 'permissions', 'setup', 'keys'];
+type OnboardingStep = 'welcome' | 'distro' | 'account' | 'permissions' | 'setup' | 'keys';
+const STEPS: readonly OnboardingStep[] = ['welcome', 'distro', 'account', 'permissions', 'setup', 'keys'];
 
 type RootfsState =
   | Readonly<{kind: 'idle' | 'ready'}>
@@ -51,15 +56,18 @@ type RootfsState =
   | Readonly<{kind: 'failed'; errorCode: string}>;
 
 /**
- * First run, in five steps: what Horus is, a password, background
- * permissions, installing Linux, and how to use the terminal keys. The Alpine
- * download starts as soon as the user leaves the welcome step so it runs
- * while they set the password and permissions.
+ * First run, in six steps: what Horus is, Alpine or Debian, the user
+ * (hieroglyph, username, password), background permissions, installing
+ * Linux, and how to use the terminal keys. The download starts as soon as
+ * the user picks a distribution, so it runs while they fill in the rest.
  */
 export function OnboardingScreen({rootfsInstalled, actions, permissions = DEFAULT_BACKGROUND_PERMISSION_ACTIONS}: OnboardingScreenProps): React.JSX.Element {
   const [step, setStep] = React.useState<OnboardingStep>('welcome');
-  const [password, setPassword] = React.useState('');
-  const [rootfs, setRootfs] = React.useState<RootfsState>({kind: rootfsInstalled ? 'ready' : 'idle'});
+  const [distro, setDistro] = React.useState<LinuxDistro>('alpine');
+  const [user, setUser] = React.useState<NewProfileUser | undefined>();
+  const account = useAccountDraft();
+  // An Alpine left over from a profile reset counts as installed; any other choice installs.
+  const [rootfs, setRootfs] = React.useState<RootfsState>({kind: 'idle'});
   const rootfsRef = React.useRef(rootfs);
   const mountedRef = React.useRef(true);
   React.useEffect(() => {
@@ -67,16 +75,20 @@ export function OnboardingScreen({rootfsInstalled, actions, permissions = DEFAUL
     return () => { mountedRef.current = false; };
   }, []);
 
-  const runRootfs = React.useCallback((source: 'download' | 'import') => {
+  const runRootfs = React.useCallback((source: 'download' | 'import', target: LinuxDistro) => {
     const current = rootfsRef.current;
     if (current.kind === 'working' || current.kind === 'ready') return;
     const update = (next: RootfsState) => {
       rootfsRef.current = next;
       if (mountedRef.current) setRootfs(next);
     };
+    if (source === 'download' && target === 'alpine' && rootfsInstalled) {
+      update({kind: 'ready'});
+      return;
+    }
     update({kind: 'working', source});
     const run = source === 'download' ? actions.installRootfs : actions.importRootfs;
-    run().catch((): RootfsSetupResult => ({kind: 'error', errorCode: 'internal_error'})).then(result => {
+    run(target).catch((): RootfsSetupResult => ({kind: 'error', errorCode: 'internal_error'})).then(result => {
       if (result.kind === 'success') {
         update({kind: 'ready'});
       } else if (result.errorCode === 'import_cancelled' && current.kind === 'failed') {
@@ -86,16 +98,25 @@ export function OnboardingScreen({rootfsInstalled, actions, permissions = DEFAUL
         update({kind: 'failed', errorCode: result.errorCode});
       }
     });
-  }, [actions.importRootfs, actions.installRootfs]);
+  }, [actions.importRootfs, actions.installRootfs, rootfsInstalled]);
 
-  const startFromWelcome = React.useCallback(() => {
-    runRootfs('download');
-    setStep('password');
-  }, [runRootfs]);
+  const chooseDistro = React.useCallback(() => {
+    runRootfs('download', distro);
+    setStep('account');
+  }, [distro, runRootfs]);
+
+  const submitAccount = React.useCallback(() => {
+    const draft = account.validate();
+    if (draft === undefined) return;
+    setUser({...draft, distro});
+    setStep('permissions');
+  }, [account, distro]);
 
   const goBack = React.useCallback(() => {
-    if (step === 'password') setStep('welcome');
-    else if (step === 'permissions') setStep('password');
+    if (step === 'distro') setStep('welcome');
+    // The download for the chosen distribution has started; it cannot switch now.
+    else if (step === 'account') return true;
+    else if (step === 'permissions') setStep('account');
     else return false;
     return true;
   }, [step]);
@@ -104,16 +125,70 @@ export function OnboardingScreen({rootfsInstalled, actions, permissions = DEFAUL
   const stepNumber = STEPS.indexOf(step) + 1;
   switch (step) {
     case 'welcome':
-      return <WelcomeStep onContinue={startFromWelcome} />;
-    case 'password':
-      return <PasswordStep onContinue={value => { setPassword(value); setStep('permissions'); }} step={stepNumber} />;
+      return <WelcomeStep onContinue={() => setStep('distro')} />;
+    case 'distro':
+      return <DistroStep distro={distro} onChoose={setDistro} onContinue={chooseDistro} step={stepNumber} />;
+    case 'account':
+      return (
+        <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="CONTINUE  →" onPress={submitAccount} testID="profile-continue" />} pinned screenTestID="onboarding-account">
+          <View style={styles.step}>
+            <StepHeader detail="Agents can use your code and accounts. Your password keeps them safe if someone picks up your phone." step={stepNumber} title="Create your user" />
+            <AccountForm distroName={DISTRO_NAMES[distro]} draft={account} onSubmit={submitAccount} />
+          </View>
+        </AuthScreenLayout>
+      );
     case 'permissions':
       return <PermissionsStep onContinue={() => setStep('setup')} permissions={permissions} step={stepNumber} />;
     case 'setup':
-      return <SetupStep actions={actions} onDone={() => setStep('keys')} onRootfs={runRootfs} password={password} rootfs={rootfs} step={stepNumber} />;
+      return user === undefined ? <WelcomeStep onContinue={() => setStep('account')} /> : (
+        <SetupStep actions={actions} distro={distro} onDone={() => setStep('keys')} onRootfs={source => runRootfs(source, distro)} rootfs={rootfs} step={stepNumber} user={user} />
+      );
     case 'keys':
       return <KeysStep onDone={actions.done} step={stepNumber} />;
   }
+}
+
+type DistroOption = Readonly<{distro: LinuxDistro; tagline: string; facts: string; badge?: string}>;
+
+const DISTRO_OPTIONS: readonly DistroOption[] = [
+  {distro: 'alpine', tagline: 'Small and fast.', facts: `${Math.round(ALPINE_ROOTFS.sizeBytes / 1e6)} MB · musl · apk`},
+  {distro: 'debian', tagline: 'Runs more prebuilt tools.', facts: `${Math.round(DEBIAN_ROOTFS.sizeBytes / 1e6)} MB · glibc · apt`, badge: 'EXPERIMENTAL'},
+];
+
+/** Alpine or Debian. Alpine is chosen unless the user picks Debian. */
+function DistroStep({step, distro, onChoose, onContinue}: Readonly<{step: number; distro: LinuxDistro; onChoose: (distro: LinuxDistro) => void; onContinue: () => void}>): React.JSX.Element {
+  return (
+    <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="CONTINUE  →" onPress={onContinue} testID="distro-continue" />} pinned screenTestID="onboarding-distro">
+      <View style={styles.step}>
+        <StepHeader detail="You can add a user on the other one later, in Settings." step={step} title="Choose your Linux" />
+        <View accessibilityRole="radiogroup" style={styles.distros}>
+          {DISTRO_OPTIONS.map(option => {
+            const selected = option.distro === distro;
+            return (
+              <Pressable
+                key={option.distro}
+                accessibilityLabel={`${DISTRO_NAMES[option.distro]}. ${option.tagline} ${option.facts}`}
+                accessibilityRole="radio"
+                accessibilityState={{checked: selected}}
+                onPress={() => onChoose(option.distro)}
+                style={[styles.distro, selected && styles.distroSelected]}
+                testID={`distro-${option.distro}${selected ? '-selected' : ''}`}>
+                <View style={styles.distroHead}>
+                  <Text style={styles.distroName}>{DISTRO_NAMES[option.distro]}</Text>
+                  {option.badge === undefined ? null : <Text style={styles.distroBadge}>{option.badge}</Text>}
+                  <View style={[styles.checkMark, selected && styles.checkMarkOn]}>
+                    {selected ? <EntryIcon kind="check" size={14} style={styles.checkIcon} /> : null}
+                  </View>
+                </View>
+                <Text style={styles.distroTagline}>{option.tagline}</Text>
+                <Text style={styles.distroFacts}>{option.facts}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </AuthScreenLayout>
+  );
 }
 
 /** "STEP 2 OF 5" with one dot per step. */
@@ -156,41 +231,6 @@ function WelcomeStep({onContinue}: Readonly<{onContinue: () => void}>): React.JS
         <View style={styles.demo}>
           <WelcomeDemo />
         </View>
-      </View>
-    </AuthScreenLayout>
-  );
-}
-
-const MIN_PASSWORD_LENGTH = 4;
-
-function PasswordStep({step, onContinue}: Readonly<{step: number; onContinue: (password: string) => void}>): React.JSX.Element {
-  const [password, setPassword] = React.useState('');
-  const [confirmation, setConfirmation] = React.useState('');
-  const [error, setError] = React.useState<string | undefined>();
-  const confirmRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
-
-  const submit = () => {
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Use at least ${MIN_PASSWORD_LENGTH} characters.`);
-    } else if (password !== confirmation) {
-      setError('Passwords don’t match.');
-    } else {
-      setError(undefined);
-      onContinue(password);
-    }
-  };
-
-  return (
-    <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="CONTINUE  →" onPress={submit} testID="profile-continue" />} pinned screenTestID="onboarding-password">
-      <View style={styles.step}>
-        <StepHeader
-          detail="Agents can use your code and accounts. This keeps them safe if someone picks up your phone."
-          step={step}
-          title="Create a password" />
-        <TextInput accessibilityLabel="Create password" autoCapitalize="none" autoCorrect={false} onChangeText={setPassword} onSubmitEditing={() => confirmRef.current?.focus()} placeholder="Create password" placeholderTextColor={uiColors.subdued} returnKeyType="next" secureTextEntry style={[authStyles.input, styles.field]} submitBehavior="submit" testID="profile-password" value={password} />
-        <TextInput accessibilityLabel="Repeat password" autoCapitalize="none" autoCorrect={false} onChangeText={setConfirmation} onSubmitEditing={submit} placeholder="Repeat password" placeholderTextColor={uiColors.subdued} ref={confirmRef} returnKeyType="done" secureTextEntry style={[authStyles.input, styles.field]} testID="profile-password-confirm" value={confirmation} />
-        <Text style={styles.note}>Stored only on this phone. It can’t be recovered.</Text>
-        {error === undefined ? null : <Text style={authStyles.error} testID="profile-error">{error}</Text>}
       </View>
     </AuthScreenLayout>
   );
@@ -265,15 +305,16 @@ type ProfileState =
 
 type SetupStepProps = Readonly<{
   step: number;
-  password: string;
+  distro: LinuxDistro;
+  user: NewProfileUser;
   rootfs: RootfsState;
   actions: OnboardingActions;
   onRootfs: (source: 'download' | 'import') => void;
   onDone: () => void;
 }>;
 
-/** Waits for Alpine, then installs the shell's tools and saves the password. */
-function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupStepProps): React.JSX.Element {
+/** Waits for Linux, then installs the shell's tools and creates the user. */
+function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: SetupStepProps): React.JSX.Element {
   const [profile, setProfile] = React.useState<ProfileState>({kind: 'idle'});
   const [mirror, setMirror] = React.useState<string | undefined>();
   const runningRef = React.useRef(false);
@@ -287,7 +328,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
     if (runningRef.current) return;
     runningRef.current = true;
     setProfile({kind: skipTools ? 'saving' : 'tools'});
-    actions.saveProfile(password, {skipTools, onToolsReady: () => { if (mountedRef.current) setProfile({kind: 'saving'}); }})
+    actions.saveProfile(user, {skipTools, onToolsReady: () => { if (mountedRef.current) setProfile({kind: 'saving'}); }})
       .catch((): ProfileSetupResult => ({kind: 'error', stage: 'profile'}))
       .then(result => {
         runningRef.current = false;
@@ -295,7 +336,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
         if (result.kind === 'success') onDone();
         else setProfile({kind: 'failed', stage: result.stage});
       });
-  }, [actions, onDone, password]);
+  }, [actions, onDone, user]);
 
   React.useEffect(() => {
     actions.readDownloadSources().then(sources => { if (mountedRef.current) setMirror(sources.alpineMirror); }).catch(() => undefined);
@@ -316,13 +357,28 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
     if (rootfs.kind === 'ready' && profile.kind === 'idle') saveProfile(false);
   }, [onRootfs, profile.kind, rootfs.kind, saveProfile]);
 
+  // Poll the package manager's progress while the tools install.
+  const [toolsProgress, setToolsProgress] = React.useState<string | undefined>();
+  const toolsRunning = rootfs.kind === 'ready' && (profile.kind === 'tools' || profile.kind === 'idle');
+  React.useEffect(() => {
+    const read = actions.readToolsProgress;
+    if (!toolsRunning || read === undefined) {
+      setToolsProgress(undefined);
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      read().then(line => { if (mountedRef.current) setToolsProgress(line); }).catch(() => undefined);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [actions.readToolsProgress, toolsRunning]);
+
   const linuxStatus: TaskStatus = rootfs.kind === 'ready' ? 'done' : rootfs.kind === 'failed' ? 'failed' : 'working';
   const toolsStatus: TaskStatus = rootfs.kind !== 'ready' ? 'waiting'
     : profile.kind === 'tools' || profile.kind === 'idle' ? 'working'
     : profile.kind === 'failed' && profile.stage === 'alpine-tools' ? 'failed' : 'done';
   const saveStatus: TaskStatus = profile.kind === 'saving' ? 'working'
     : profile.kind === 'failed' && profile.stage === 'profile' ? 'failed' : 'waiting';
-  const linuxLabel = rootfs.kind === 'working' && rootfs.source === 'import' ? 'Installing Linux from your file' : 'Downloading Linux';
+  const linuxLabel = rootfs.kind === 'working' && rootfs.source === 'import' ? `Installing ${DISTRO_NAMES[distro]} from your file` : `Downloading ${DISTRO_NAMES[distro]}`;
 
   return (
     <AuthScreenLayout brandTestID="setup" pinned screenTestID="onboarding-setup">
@@ -330,10 +386,10 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
         <StepHeader detail="This can take a few minutes." step={step} title="Installing Linux" />
         <View accessibilityLiveRegion="polite" style={styles.tasks}>
           <SetupTask label={linuxLabel} status={linuxStatus} testID="setup-task-linux" />
-          <SetupTask label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
-          <SetupTask label="Saving your password" status={saveStatus} testID="setup-task-profile" />
+          <SetupTask detail={toolsStatus === 'working' ? toolsProgress : undefined} label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
+          <SetupTask label={`Creating ${user.username}`} status={saveStatus} testID="setup-task-profile" />
         </View>
-        {rootfs.kind === 'failed' ? <RootfsFailure errorCode={rootfs.errorCode} mirror={mirror} onImport={() => onRootfs('import')} onMirror={chooseMirror} onRetry={() => onRootfs('download')} /> : null}
+        {rootfs.kind === 'failed' ? <RootfsFailure distro={distro} errorCode={rootfs.errorCode} mirror={mirror} onImport={() => onRootfs('import')} onMirror={chooseMirror} onRetry={() => onRootfs('download')} /> : null}
         {profile.kind === 'failed' && profile.stage === 'alpine-tools' ? (
           <View style={styles.problem} testID="setup-tools-failed">
             <Text style={styles.problemTitle}>Tools need the internet</Text>
@@ -344,7 +400,7 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
         ) : null}
         {profile.kind === 'failed' && profile.stage === 'profile' ? (
           <View style={styles.problem} testID="setup-profile-failed">
-            <Text style={styles.problemTitle}>Your password couldn’t be saved</Text>
+            <Text style={styles.problemTitle}>Your user couldn’t be created</Text>
             <Text style={styles.problemDetail}>Please try again.</Text>
             <PrimaryButton label="TRY AGAIN" onPress={() => saveProfile(true)} testID="setup-profile-retry" />
           </View>
@@ -356,21 +412,25 @@ function SetupStep({step, password, rootfs, actions, onRootfs, onDone}: SetupSte
 
 type TaskStatus = 'waiting' | 'working' | 'done' | 'failed';
 
-function SetupTask({label, status, testID}: Readonly<{label: string; status: TaskStatus; testID: string}>): React.JSX.Element {
+function SetupTask({label, detail, status, testID}: Readonly<{label: string; detail?: string; status: TaskStatus; testID: string}>): React.JSX.Element {
   return (
-    <View accessibilityLabel={`${label}, ${status}`} style={styles.task} testID={`${testID}-${status}`}>
+    <View accessibilityLabel={`${label}, ${detail ?? status}`} style={styles.task} testID={`${testID}-${status}`}>
       <View style={styles.taskIcon}>
         {status === 'working' ? <ActivityIndicator color={uiColors.accent} size="small" />
           : status === 'done' ? <View style={[styles.checkMark, styles.checkMarkOn]}><EntryIcon kind="check" size={14} style={styles.checkIcon} /></View>
           : <View style={[styles.taskDot, status === 'failed' && styles.taskDotFailed]} />}
       </View>
-      <Text style={[styles.taskLabel, status === 'waiting' && styles.taskLabelWaiting, status === 'failed' && styles.taskLabelFailed]}>{label}</Text>
+      <View style={styles.taskBody}>
+        <Text style={[styles.taskLabel, status === 'waiting' && styles.taskLabelWaiting, status === 'failed' && styles.taskLabelFailed]}>{label}</Text>
+        {detail === undefined ? null : <Text style={styles.taskDetail} testID={`${testID}-detail`}>{detail}</Text>}
+      </View>
     </View>
   );
 }
 
 /** Offline or a bad file: retry, or pick an archive downloaded elsewhere. */
 type RootfsFailureProps = Readonly<{
+  distro: LinuxDistro;
   errorCode: string;
   mirror: string | undefined;
   onMirror: (url: string | undefined) => void;
@@ -379,10 +439,12 @@ type RootfsFailureProps = Readonly<{
 }>;
 
 /** Offline, blocked or a bad file: try a mirror, retry, or pick an archive downloaded elsewhere. */
-function RootfsFailure({errorCode, mirror, onMirror, onRetry, onImport}: RootfsFailureProps): React.JSX.Element {
+function RootfsFailure({distro, errorCode, mirror, onMirror, onRetry, onImport}: RootfsFailureProps): React.JSX.Element {
   const badFile = errorCode === 'import_failed' || errorCode === 'digest_mismatch';
   const offline = errorCode === 'download_failed' || errorCode === 'import_cancelled';
-  const url = rootfsUrl(mirror);
+  // Mirrors serve Alpine only; Debian's pinned archive has one home.
+  const alpine = distro === 'alpine';
+  const url = alpine ? rootfsUrl(mirror) : DEBIAN_ROOTFS.url;
   return (
     <View style={styles.problem} testID="setup-linux-failed">
       <Text style={styles.problemTitle}>{badFile ? 'Wrong file' : offline ? 'Couldn’t download Linux' : 'Linux couldn’t be installed'}</Text>
@@ -390,11 +452,17 @@ function RootfsFailure({errorCode, mirror, onMirror, onRetry, onImport}: RootfsF
         {badFile
           ? 'Its checksum didn’t match. Download it again from the link below.'
           : offline
-            ? 'Check your connection, or try a mirror closer to you.'
-            : `Something went wrong (${errorCode}).`}
+            ? alpine ? 'Check your connection, or try a mirror closer to you.' : 'Check your connection and try again.'
+            : errorCode === 'runtime_busy'
+              ? 'Linux is in use. Close its terminals and turn off SSH access, then try again.'
+              : `Something went wrong (${errorCode}).`}
       </Text>
-      <Text style={styles.problemLabel}>DOWNLOAD FROM</Text>
-      <MirrorPicker onSelect={onMirror} options={ALPINE_MIRRORS} placeholder="https://mirror.example/alpine" testID="setup-mirror" value={mirror} />
+      {alpine ? (
+        <>
+          <Text style={styles.problemLabel}>DOWNLOAD FROM</Text>
+          <MirrorPicker onSelect={onMirror} options={ALPINE_MIRRORS} placeholder="https://mirror.example/alpine" testID="setup-mirror" value={mirror} />
+        </>
+      ) : null}
       <PrimaryButton label="TRY AGAIN" onPress={onRetry} testID="setup-linux-retry" />
       <Text style={[styles.problemLabel, styles.problemLabelGap]}>OR USE THE FILE</Text>
       <Text selectable style={styles.url} testID="setup-rootfs-url">{url}</Text>
@@ -495,8 +563,14 @@ const styles = StyleSheet.create({
   welcomeTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', textAlign: 'center'},
   welcomeDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 8, textAlign: 'center'},
   demo: {marginBottom: 8, marginTop: 24},
-  field: {marginTop: 10},
-  note: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 10},
+  distros: {gap: 12},
+  distro: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, padding: 16},
+  distroSelected: {backgroundColor: uiColors.accentSurface, borderColor: uiColors.accent},
+  distroHead: {alignItems: 'center', flexDirection: 'row', gap: 10},
+  distroName: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 15, fontWeight: '800'},
+  distroBadge: {borderColor: uiColors.warning, borderRadius: 5, borderWidth: 1, color: uiColors.warning, fontFamily: UI_FONT_FAMILY, fontSize: 8, fontWeight: '800', letterSpacing: 0.6, paddingHorizontal: 6, paddingVertical: 2},
+  distroTagline: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, marginTop: 8},
+  distroFacts: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 4},
   secondary: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', marginTop: 10, minHeight: 46},
   secondaryText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.5},
   checklist: {borderBottomColor: uiColors.borderSoft, borderBottomWidth: 1, marginTop: 4},
@@ -514,7 +588,9 @@ const styles = StyleSheet.create({
   taskIcon: {alignItems: 'center', justifyContent: 'center', width: 22},
   taskDot: {borderColor: uiColors.border, borderRadius: 11, borderWidth: 1.5, height: 22, width: 22},
   taskDotFailed: {backgroundColor: uiColors.danger, borderColor: uiColors.danger},
-  taskLabel: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 12},
+  taskBody: {flex: 1},
+  taskLabel: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12},
+  taskDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 3},
   taskLabelWaiting: {color: uiColors.subdued},
   taskLabelFailed: {color: uiColors.danger},
   problem: {marginTop: 20},

@@ -41,6 +41,8 @@ object TerminalSessionServiceProtocol {
   const val KEY_ERROR_CODE = "errorCode"
   const val KEY_SESSION_ID = "sessionId"
   const val KEY_PID = "pid"
+  /** Set on a start response that handed back an already-running session. */
+  const val KEY_REATTACHED = "reattached"
   const val KEY_ROWS = "rows"
   const val KEY_COLUMNS = "columns"
   const val KEY_COMMAND = "command"

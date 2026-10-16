@@ -266,8 +266,8 @@ android {
         applicationId "com.scariflabs.horus"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "1.0.4"
+        versionCode 6
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets {
@@ -319,6 +319,9 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Pure-Java xz decoder for .tar.xz rootfs archives (0BSD).
+    implementation("org.tukaani:xz:1.10")
 
     testImplementation("junit:junit:4.13.2")
     // Local JVM tests otherwise resolve Android's deliberately non-functional

@@ -19,8 +19,10 @@ import type {
  */
 
 import {
+  buildActivateRootfsRequest,
   buildInstallRootfsRequest,
   buildResetRuntimeRequest,
+  isActivateRootfsResponse,
   isInstallRootfsResponse,
   isResetRuntimeResponse,
   isValidTerminalRuntimeErrorCode,
@@ -51,6 +53,8 @@ export type TerminalRuntimeStatusSuccess = Readonly<{
   prootVersion: string;
   installedVersionIds: readonly string[];
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;
@@ -127,6 +131,8 @@ type TerminalRuntimeStatusWireSuccess = {
   prootVersion: string;
   installedVersionIds: string[];
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;
@@ -194,6 +200,8 @@ export async function readTerminalRuntimeStatus(
       prootVersion: success.prootVersion,
       installedVersionIds: success.installedVersionIds,
       ...(success.activeRootfsId !== undefined ? {activeRootfsId: success.activeRootfsId} : {}),
+      ...(success.activeDistro !== undefined ? {activeDistro: success.activeDistro} : {}),
+      ...(success.activeRelease !== undefined ? {activeRelease: success.activeRelease} : {}),
       ...(success.activeAlpineRelease !== undefined ? {activeAlpineRelease: success.activeAlpineRelease} : {}),
       ...(success.activeRootfsSha256 !== undefined ? {activeRootfsSha256: success.activeRootfsSha256} : {}),
       ...(success.activeInstalledAt !== undefined ? {activeInstalledAt: success.activeInstalledAt} : {}),
@@ -228,12 +236,21 @@ function operationError(
   return {kind: 'error', requestId, errorCode};
 }
 
-/** Installs the pinned rootfs and returns only a fully validated outcome. */
+/** Which catalog rootfs to install, and whether new sessions switch to it. */
+export type RootfsInstallOptions = Readonly<{
+  /** A catalog id; Alpine when absent. */
+  rootfsId?: string;
+  /** Defaults to true; false installs it beside the active rootfs. */
+  makeActive?: boolean;
+}>;
+
+/** Installs a pinned rootfs and returns only a fully validated outcome. */
 export async function installRootfs(
   requestId: string,
   runtime: Pick<Spec, 'installRootfs'> | null = nativeTerminalRuntime,
+  options: RootfsInstallOptions = {},
 ): Promise<TrustedInstallOutcome> {
-  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.installRootfs(request));
+  return runRootfsInstall(requestId, options, runtime === null ? null : request => runtime.installRootfs(request));
 }
 
 /**
@@ -243,15 +260,49 @@ export async function installRootfs(
 export async function importRootfs(
   requestId: string,
   runtime: Pick<Spec, 'importRootfs'> | null = nativeTerminalRuntime,
+  options: RootfsInstallOptions = {},
 ): Promise<TrustedInstallOutcome> {
-  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.importRootfs(request));
+  return runRootfsInstall(requestId, options, runtime === null ? null : request => runtime.importRootfs(request));
+}
+
+export type ActivateRootfsOutcome =
+  | Readonly<{kind: 'success'; requestId: string; rootfsId: string}>
+  | Readonly<{kind: 'error'; requestId: string; errorCode: TerminalRuntimeOperationErrorCode}>;
+
+/** Points new sessions at an installed rootfs, without reinstalling it. */
+export async function activateRootfs(
+  requestId: string,
+  rootfsId: string,
+  runtime: Pick<Spec, 'activateRootfs'> | null = nativeTerminalRuntime,
+): Promise<ActivateRootfsOutcome> {
+  const request = buildActivateRootfsRequest(requestId, rootfsId);
+  if (request === null) return operationError(requestId, 'invalid_request');
+  if (runtime === null) return operationError(requestId, 'unavailable');
+  let response: unknown;
+  try {
+    response = await runtime.activateRootfs(request);
+  } catch {
+    return operationError(requestId, 'internal_error');
+  }
+  if (!isActivateRootfsResponse(response) || response.requestId !== requestId) {
+    return operationError(requestId, 'invalid_response');
+  }
+  if (response.status === 'error') {
+    return isValidTerminalRuntimeErrorCode(response.errorCode)
+      ? operationError(requestId, response.errorCode)
+      : operationError(requestId, 'invalid_response');
+  }
+  return response.rootfsId === rootfsId
+    ? {kind: 'success', requestId, rootfsId}
+    : operationError(requestId, 'invalid_response');
 }
 
 async function runRootfsInstall(
   requestId: string,
+  options: RootfsInstallOptions,
   call: ((request: InstallRootfsRequest) => Promise<unknown>) | null,
 ): Promise<TrustedInstallOutcome> {
-  const request = buildInstallRootfsRequest(requestId);
+  const request = buildInstallRootfsRequest(requestId, options.rootfsId, options.makeActive);
   if (request === null) return operationError(requestId, 'invalid_request');
   if (call === null) return operationError(requestId, 'unavailable');
 
@@ -282,6 +333,27 @@ async function runRootfsInstall(
     reusedCache: success.reusedCache,
     durationMs: success.durationMs,
   };
+}
+
+const PROVISION_PROGRESS_PATTERN = /^(Downloading|Installing) packages… (\d{1,3})%$/;
+
+/**
+ * What the running system package install last reported, e.g.
+ * "Installing packages… 64%", or undefined when nothing is reported.
+ * Anything other than that exact shape is ignored.
+ */
+export async function readProvisionProgress(
+  runtime: Pick<Spec, 'readProvisionProgress'> | null = nativeTerminalRuntime,
+): Promise<string | undefined> {
+  if (runtime === null) return undefined;
+  try {
+    const response: unknown = await runtime.readProvisionProgress();
+    if (typeof response !== 'object' || response === null) return undefined;
+    const line = (response as {line?: unknown}).line;
+    return typeof line === 'string' && PROVISION_PROGRESS_PATTERN.test(line) ? line : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Provisions only the shell or harness requested for the first launch. */

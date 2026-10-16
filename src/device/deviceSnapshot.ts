@@ -6,6 +6,8 @@ export type DeviceSnapshot = Readonly<{
   freeMemoryBytes: number;
   totalMemoryBytes: number;
   wifiConnected: boolean;
+  /** Android sees a validated internet connection; absent on older builds. */
+  online?: boolean;
   batteryPercent: number;
   capturedAtMs: number;
 }>;
@@ -29,6 +31,7 @@ function isDeviceSnapshot(value: unknown): value is DeviceSnapshot {
     safeNonNegative(value.freeMemoryBytes) &&
     safeNonNegative(value.totalMemoryBytes) &&
     typeof value.wifiConnected === 'boolean' &&
+    (value.online === undefined || typeof value.online === 'boolean') &&
     typeof value.batteryPercent === 'number' &&
     Number.isFinite(value.batteryPercent) &&
     value.batteryPercent >= 0 &&

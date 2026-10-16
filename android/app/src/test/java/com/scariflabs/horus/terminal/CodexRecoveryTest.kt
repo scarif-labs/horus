@@ -106,10 +106,15 @@ class CodexRecoveryTest {
     assertEquals(result.second, 0, result.first)
     assertFalse(File(home, "probe.log").exists()); assertFalse(File(home, "npm.log").exists())
 
+    // A fake /proc and /dev, so the rendered SSH script needs no Linux host.
+    val hostProc = File(temp.root, "proc").apply { mkdirs(); File(this, "stat").writeText("cpu 1\n"); File(this, "loadavg").writeText("0 0 0\n") }
+    val hostDev = File(temp.root, "dev").apply {
+      mkdirs(); listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(this, it).writeText("") }; File(this, "pts").mkdirs()
+    }
     val launcher = ProotSessionLauncher(ProotRuntimeLocator.LocatedRuntime(
-      File(temp.root, "proot"), File(temp.root, "loader"), temp.root, "5.4.0"), File(temp.root, "scratch"))
+      File(temp.root, "proot"), File(temp.root, "loader"), temp.root, "5.4.0"), File(temp.root, "scratch"), hostProc, hostDev)
     val rootfs = File(temp.root, "rootfs").apply { mkdirs(); File(this, "etc").mkdirs() }
-    val remote = launcher.remoteAccessLaunchSpec(rootfs, home, null, "horus").argv.takeLast(8)[2]
+    val remote = launcher.remoteAccessLaunchSpec(rootfs, home, null, "horus").argv.let { it[it.indexOf("horus-remote-access") - 1] }
     val installer = remote.substringAfter("<<'HORUS_INSTALLER'\n").substringBefore("\nHORUS_INSTALLER")
       .replace("/usr/bin/node", node.absolutePath)
     executable(File(home, ".local/bin/codex"), "#!/bin/sh\nprintf 'launched:%s\\n' \"${'$'}1\"\n")

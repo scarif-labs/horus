@@ -307,7 +307,10 @@ class TerminalSessionService : Service() {
     startedForWork.set(true)
     startForeground(NOTIFICATION_ID, buildNotification())
     queueRecovery()
-    if (intent?.action == RemoteAccess.ACTION_START) enqueueWorker {
+    if (intent?.action == RemoteAccess.ACTION_START || intent?.action == RemoteAccess.ACTION_RESTART) enqueueWorker {
+      // dropbear runs as the user active when it started; a computer then
+      // logs in as the new one, who does not exist in the old rootfs.
+      if (intent.action == RemoteAccess.ACTION_RESTART && remoteServerDelegate.isInitialized()) remoteServer.stop()
       if (remoteStore.isEnabled()) remoteServer.start()
       refreshSessionNotifications()
     }
@@ -532,7 +535,7 @@ class TerminalSessionService : Service() {
       when {
         current?.state == TerminalSessionSupervisor.SessionState.RUNNING -> {
           supervisor.resize(recoverable.sessionId, rows, columns)
-          sendResponse(reply, startSuccess(requestId, recoverable.sessionId, current.pid, rows, columns))
+          sendResponse(reply, startSuccess(requestId, recoverable.sessionId, current.pid, rows, columns, reattached = true))
           return
         }
         current?.state == TerminalSessionSupervisor.SessionState.EXITED -> {
@@ -562,7 +565,8 @@ class TerminalSessionService : Service() {
       rows = rows,
       columns = columns,
       command = command,
-      startedAtMs = recoverable?.startedAtMs ?: System.currentTimeMillis(),
+      // Every start below is a fresh process, so its age starts now.
+      startedAtMs = System.currentTimeMillis(),
       toolchainTarget = toolchainTarget,
     )
     val wasPendingRecord = recoverable != null && reuseId != null
@@ -958,6 +962,8 @@ class TerminalSessionService : Service() {
           putString(TerminalSessionServiceProtocol.KEY_SESSION_ID, record.sessionId)
           putString(TerminalSessionServiceProtocol.KEY_TARGET, record.toolchainTarget ?: TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL)
           putLong(TerminalSessionServiceProtocol.KEY_STARTED_AT_MS, record.startedAtMs)
+          // Lets a reopened session start the same app again after it quits.
+          record.command?.let { putString(TerminalSessionServiceProtocol.KEY_COMMAND, it) }
         }
       }
     sendResponse(
@@ -1098,7 +1104,12 @@ class TerminalSessionService : Service() {
         is TerminalSessionSpecFactory.BuildOutcome.Success -> {
           sessionStartElapsedMs[record.sessionId] = SystemClock.elapsedRealtime()
           when (supervisor.start(record.sessionId, built.spec)) {
-            is TerminalSessionSupervisor.StartOutcome.Success -> Unit
+            is TerminalSessionSupervisor.StartOutcome.Success -> {
+              // Same command, fresh process: Recents counts its age from now.
+              val restarted = record.copy(startedAtMs = System.currentTimeMillis())
+              sessionRecords[record.sessionId] = restarted
+              runCatching { journal.upsert(restarted) }
+            }
             is TerminalSessionSupervisor.StartOutcome.Failure -> sessionStartElapsedMs.remove(record.sessionId)
           }
         }
@@ -1368,12 +1379,22 @@ class TerminalSessionService : Service() {
     putString(TerminalSessionServiceProtocol.KEY_ERROR_CODE, errorCode)
   }
 
-  private fun startSuccess(requestId: String, sessionId: String, pid: Int, rows: Int, columns: Int): Bundle =
+  private fun startSuccess(
+    requestId: String,
+    sessionId: String,
+    pid: Int,
+    rows: Int,
+    columns: Int,
+    reattached: Boolean = false,
+  ): Bundle =
     successResponse(requestId).apply {
       putString(TerminalSessionServiceProtocol.KEY_SESSION_ID, sessionId)
       putInt(TerminalSessionServiceProtocol.KEY_PID, pid)
       putInt(TerminalSessionServiceProtocol.KEY_ROWS, rows)
       putInt(TerminalSessionServiceProtocol.KEY_COLUMNS, columns)
+      // The screen must treat this like a resume: the install already
+      // finished, and the session is the user's to keep if attaching fails.
+      if (reattached) putBoolean(TerminalSessionServiceProtocol.KEY_REATTACHED, true)
     }
 
   private fun mapSessionFailureCode(reasonCode: String): String = when (reasonCode) {

@@ -77,7 +77,7 @@ class TerminalToolchainDeviceTest {
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, paths.guestTmp),
     )
     val sink = OutputSink()
@@ -205,7 +205,7 @@ class TerminalToolchainDeviceTest {
           "P5_WORKFLOWS_END",
         ),
         "toolchain workflow checks",
-        timeoutMs = 120_000,
+        timeoutMs = 240_000,
       )
       android.util.Log.i(LOG_TAG, "ALPINE_P5_WORKFLOWS_OK")
 
@@ -245,7 +245,7 @@ class TerminalToolchainDeviceTest {
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, paths.guestTmp),
     )
     val dnsServers = targetContext.getSystemService(ConnectivityManager::class.java).activeNetwork
@@ -316,7 +316,7 @@ class TerminalToolchainDeviceTest {
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, paths.guestTmp),
     )
     val dnsServers = targetContext.getSystemService(ConnectivityManager::class.java).activeNetwork
@@ -499,7 +499,12 @@ class TerminalToolchainDeviceTest {
     }.start()
     val output = ByteArrayOutputStream()
     val drain = Thread {
-      process.inputStream.use { it.copyTo(output) }
+      // The main thread closes the stream once the process exits; an
+      // uncaught read error here would crash the whole instrumentation run.
+      try {
+        process.inputStream.use { it.copyTo(output) }
+      } catch (_: java.io.IOException) {
+      }
     }.apply {
       isDaemon = true
       name = "alpine-github-lazy-device-output"

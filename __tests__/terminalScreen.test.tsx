@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
+import {ActivityIndicator, AppState, type AppStateStatus, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
@@ -88,6 +88,8 @@ function runtimeStatus(overrides: Record<string, unknown> = {}): Record<string, 
     prootVersion: '5.4.0',
     installedVersionIds: ['alpine-3.24.0-aarch64'],
     activeRootfsId: 'alpine-3.24.0-aarch64',
+    activeDistro: 'alpine',
+    activeRelease: '3.24.0',
     activeAlpineRelease: '3.24.0',
     activeRootfsSha256: '4b8cd66a6688b2a87276c39843ed89c3a06d9534fc6a5823c586aff2696c1f2a',
     activeInstalledAt: '2026-09-08T00:00:00.000Z',
@@ -109,7 +111,7 @@ describe('TerminalScreen', () => {
   test('installs a missing runtime, refreshes status, then starts', async () => {
     const runtime = fakeRuntime();
     const statuses = [
-      runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}),
+      runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeDistro: undefined, activeRelease: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}),
       runtimeStatus(),
     ];
     runtime.spec.getRuntimeStatus = jest.fn().mockImplementation(async () => statuses.shift());
@@ -477,6 +479,32 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('a shell reopened from its tile while still running closes cleanly, not as a failed install', async () => {
+    const runtime = fakeRuntime();
+    // The service hands back the running shell; its ready marker went by long ago.
+    runtime.spec.startSession = async (request: {requestId: string; rows?: number; columns?: number}) => (
+      {requestId: request.requestId, status: 'success', sessionId: 's-1-1', pid: 1, rows: request.rows ?? 24, columns: request.columns ?? 80, reattached: true}
+    );
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />);
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      // Ctrl+D at the prompt.
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 0});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-install-failed'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-exited'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-report'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('shows install progress instead of the apk transcript on first launch, with the log one tap away', async () => {
     const runtime = fakeRuntime();
     const client = new TerminalSessionClient(runtime.spec, handler => {
@@ -520,11 +548,149 @@ describe('TerminalScreen', () => {
     expect(has('terminal-install-download')).toBe(false);
     await emitText(3, 'Downloading Codex… 37% (55 of 148 MB)\n');
     const download = renderer.root.findAllByProps({testID: 'terminal-install-download'})[0];
-    expect(download.props.children).toEqual(['37%', ' downloaded']);
+    expect(download.props.children).toBe('37% downloaded');
 
     // A failed stage hands the screen back to the transcript and its error.
     await emitText(4, 'HORUS_INSTALL_STAGE=codex_failed\n');
     expect(has('terminal-install-progress')).toBe(false);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('covers the terminal with why an install failed, its log, and a retry', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    runtime.spec.startSession = jest.fn(runtime.spec.startSession);
+    const onHome = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+      );
+      await flushAsync();
+    });
+    const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=codex\nDownloading Codex… 1 MB\nDownloading Codex… 2 MB\nnpm error code EAI_AGAIN\nnpm error request to https://registry.npmjs.org/@openai%2fcodex failed\nHORUS_INSTALL_STAGE=codex_failed\nHORUS_INSTALL_COMMAND_EXIT=1\n')});
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 23});
+      await flushAsync();
+    });
+    expect(has('terminal-install-failed')).toBe(true);
+    expect(has('terminal-error')).toBe(false);
+    expect(renderer.root.findByProps({testID: 'terminal-install-failed-reason'}).props.children).toBe('The download didn’t get through.');
+    const log = renderer.root.findByProps({testID: 'terminal-install-failed-log'}).props.children as string;
+    expect(log).toContain('npm error code EAI_AGAIN');
+    expect(log).not.toContain('HORUS_');
+    expect(log).not.toContain('1 MB');
+    expect(log).toContain('Downloading Codex… 2 MB');
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-install-back'}).props.onPress();
+    });
+    expect(onHome).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-install-retry'}).props.onPress();
+      await flushAsync();
+    });
+    expect(runtime.spec.startSession).toHaveBeenCalledTimes(2);
+    expect(has('terminal-install-failed')).toBe(false);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('shows why an install failed when it failed while Horus was in the background', async () => {
+    const runtime = fakeRuntime();
+    let changeAppState: ((state: AppStateStatus) => void) | undefined;
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, handler) => {
+      changeAppState = handler as (state: AppStateStatus) => void;
+      return {remove: () => undefined} as ReturnType<typeof AppState.addEventListener>;
+    });
+    const failedInstall = 'npm error code EAI_AGAIN\nHORUS_INSTALL_COMMAND_EXIT=1\nHORUS_INSTALL_STAGE=opencode_failed\n';
+    let subscriptions = 0;
+    runtime.spec.subscribeSessionEvents = jest.fn(async (request: {requestId: string; sessionId: string}) => {
+      subscriptions += 1;
+      // On returning, the native side replays what was missed: the failure, then the exit.
+      if (subscriptions > 1) runtime.emit({type: 'output', sessionId: request.sessionId, seq: 2, base64: encodeTestBase64(failedInstall)});
+      return {
+        requestId: request.requestId,
+        status: 'success' as const,
+        sessionId: request.sessionId,
+        eventName: 'terminalSessionEvents' as const,
+        sessionState: subscriptions > 1 ? 'exited' as const : 'running' as const,
+        firstAvailableSeq: subscriptions > 1 ? 2 : 1,
+        lastEmittedSeq: subscriptions > 1 ? 2 : 0,
+        replayAvailable: true,
+        // The install command failed, but its shell exited cleanly.
+        ...(subscriptions > 1 ? {exitCode: 0, exitReason: 'process_exit'} : {}),
+      };
+    });
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="opencode" toolchain="opencode" />,
+      );
+      await flushAsync();
+    });
+    const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=opencode\n')});
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      changeAppState?.('background');
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      changeAppState?.('active');
+      await flushAsync();
+    });
+
+    expect(subscriptions).toBe(2);
+    expect(has('terminal-install-failed')).toBe(true);
+    expect(has('terminal-app-exited')).toBe(false);
+    expect(renderer.root.findByProps({testID: 'terminal-install-failed-log'}).props.children).toContain('EAI_AGAIN');
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('shows why an install failed when reopening a session whose install failed', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.subscribeSessionEvents = jest.fn(async (request: {requestId: string; sessionId: string}) => {
+      runtime.emit({type: 'output', sessionId: request.sessionId, seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nnpm error code ENOSPC\nHORUS_INSTALL_STAGE=codex_failed\n')});
+      return {
+        requestId: request.requestId,
+        status: 'success' as const,
+        sessionId: request.sessionId,
+        eventName: 'terminalSessionEvents' as const,
+        sessionState: 'exited' as const,
+        firstAvailableSeq: 1,
+        lastEmittedSeq: 1,
+        replayAvailable: true,
+        exitCode: 0,
+        exitReason: 'process_exit',
+      };
+    });
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />,
+      );
+      await flushAsync();
+    });
+
+    expect(renderer.root.findAllByProps({testID: 'terminal-install-failed'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findByProps({testID: 'terminal-install-failed-reason'}).props.children).toBe('Your phone is out of storage.');
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
@@ -625,7 +791,7 @@ describe('TerminalScreen', () => {
     });
 
     expect(onCommandFailure).toHaveBeenCalledTimes(1);
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Alpine shell']);
+    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Linux shell']);
     expect(renderer.root.findByProps({testID: 'session-limit-warning-overlay'}).props.style).toMatchObject({
       justifyContent: 'center',
       position: 'absolute',
@@ -729,7 +895,7 @@ describe('TerminalScreen', () => {
 
     const failed = fakeRuntime();
     failed.spec.startSession = jest.fn(failed.spec.startSession);
-    failed.spec.getRuntimeStatus = jest.fn().mockResolvedValue(runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}));
+    failed.spec.getRuntimeStatus = jest.fn().mockResolvedValue(runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeDistro: undefined, activeRelease: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}));
     failed.spec.installRootfs = jest.fn().mockImplementation(async (request: {requestId: string}) => ({requestId: request.requestId, status: 'error', errorCode: 'download_failed'}));
     await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalScreen client={new TerminalSessionClient(failed.spec)} runtime={failed.spec} />); });
     await ReactTestRenderer.act(async () => { await flushAsync(); });

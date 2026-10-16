@@ -1,5 +1,5 @@
 import {provisionAlpineToolchain} from '../terminal/runtimeStatus';
-import {saveUserProfile} from './profileStore';
+import {saveUserProfile, type NewProfileUser} from './profileStore';
 
 export type OnboardingSetupOutcome =
   | Readonly<{kind: 'success'}>
@@ -16,7 +16,7 @@ export type OnboardingSetupOptions = Readonly<{
 
 /** Installs the profile shell's Alpine tools before onboarding is complete. */
 export async function setupOnboardingProfile(
-  password: string,
+  user: NewProfileUser,
   requestId: string,
   {onToolsReady = () => undefined, skipTools = false}: OnboardingSetupOptions = {},
 ): Promise<OnboardingSetupOutcome> {
@@ -25,6 +25,6 @@ export async function setupOnboardingProfile(
     if (tools.kind !== 'success') return {kind: 'error', stage: 'alpine-tools'};
   }
   onToolsReady();
-  if (!(await saveUserProfile(password))) return {kind: 'error', stage: 'profile'};
+  if ((await saveUserProfile(user)).kind !== 'success') return {kind: 'error', stage: 'profile'};
   return {kind: 'success'};
 }

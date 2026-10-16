@@ -1,0 +1,290 @@
+#!/usr/bin/python3
+# Horus sudo: runs a command as root through the session's root helper
+# (/usr/local/lib/horus/sudo-helper). Signing in to Horus is the password.
+import json
+import os
+import select
+import shlex
+import shutil
+import signal
+import socket
+import sys
+import termios
+import time
+import tty
+import fcntl
+
+SSH_SOCKET = '/run/horus-sudo/ssh'
+USAGE = '''usage: sudo [-iEs] [-u root] [--] command [args...]
+       sudo -i | -s
+Runs a command as root inside Horus. Your Horus sign-in is the password.
+  -i, --login            run root's login shell (in /root)
+  -s, --shell            run a shell as root
+  -E, --preserve-env     keep your environment
+  -u, --user root        only root is supported
+  -n, -S, -H, -k, -v     accepted for compatibility
+  -l, --list             show what you may run
+'''
+LONG_OPTIONS = {'login': 'i', 'shell': 's', 'preserve-env': 'E', 'non-interactive': 'n', 'stdin': 'S',
+                'set-home': 'H', 'reset-timestamp': 'k', 'validate': 'v', 'list': 'l', 'help': 'h', 'version': 'V'}
+
+
+class UsageError(Exception):
+    pass
+
+
+def parse(args):
+    options = {'login': False, 'shell': False, 'preserve_env': False, 'only': None}
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == '--':
+            index += 1
+            break
+        if not arg.startswith('-') or arg == '-':
+            break
+        if arg.startswith('--'):
+            name, _, value = arg[2:].partition('=')
+            if name == 'user':
+                if not value:
+                    index += 1
+                    if index >= len(args):
+                        raise UsageError('option --user needs a user')
+                    value = args[index]
+                check_user(value)
+            else:
+                flag = LONG_OPTIONS.get(name)
+                if flag is None:
+                    raise UsageError('unknown option --%s' % name)
+                apply_flag(flag, options)
+            index += 1
+            continue
+        flags = arg[1:]
+        position = 0
+        while position < len(flags):
+            flag = flags[position]
+            if flag == 'u':
+                value = flags[position + 1:]
+                if not value:
+                    index += 1
+                    if index >= len(args):
+                        raise UsageError('option -u needs a user')
+                    value = args[index]
+                check_user(value)
+                break
+            apply_flag(flag, options)
+            position += 1
+        index += 1
+    return options, args[index:]
+
+
+def apply_flag(flag, options):
+    if flag == 'i':
+        options['login'] = True
+    elif flag == 's':
+        options['shell'] = True
+    elif flag == 'E':
+        options['preserve_env'] = True
+    elif flag in ('n', 'S', 'H', 'K', 'k', 'v', 'b', 'P'):
+        if flag in ('k', 'K', 'v'):
+            options['only'] = options['only'] or 'noop'
+    elif flag == 'l':
+        options['only'] = 'list'
+    elif flag == 'h':
+        options['only'] = 'help'
+    elif flag == 'V':
+        options['only'] = 'version'
+    else:
+        raise UsageError('unknown option -%s' % flag)
+
+
+def check_user(value):
+    if value not in ('root', '0', '#0'):
+        raise UsageError('Horus only runs commands as root, not %s' % value)
+
+
+def root_shell():
+    return shutil.which('zsh', path='/usr/bin:/bin') or '/bin/sh'
+
+
+def command_for(options, command):
+    if options['login']:
+        shell = root_shell()
+        return ([shell, '-l'] if not command else [shell, '-l', '-c', ' '.join(shlex.quote(arg) for arg in command)]), '/root'
+    if options['shell']:
+        shell = os.environ.get('SHELL') or root_shell()
+        return ([shell] if not command else [shell, '-c', ' '.join(shlex.quote(arg) for arg in command)]), os.getcwd()
+    return command, os.getcwd()
+
+
+def environment(options):
+    if options['preserve_env']:
+        return dict(os.environ)
+    kept = ('TERM', 'COLORTERM', 'LANG', 'LANGUAGE', 'TZ', 'DISPLAY', 'DEBIAN_FRONTEND')
+    return {key: value for key, value in os.environ.items() if key in kept or key.startswith('LC_')}
+
+
+def connect():
+    candidates = []
+    session = os.environ.get('HORUS_SUDO_SOCKET')
+    if session:
+        candidates.append(session)
+    candidates.append(SSH_SOCKET)
+    for path in candidates:
+        # The session's helper may still be starting.
+        deadline = time.monotonic() + (2.0 if path == session else 0)
+        while True:
+            conn = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            try:
+                conn.connect(path)
+                return conn
+            except (FileNotFoundError, ConnectionRefusedError):
+                conn.close()
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+    return None
+
+
+def receive(conn):
+    data, fds, _flags, _addr = socket.recv_fds(conn, 65536, 1)
+    if not data:
+        return None, fds
+    return json.loads(data), fds
+
+
+def fail(message, code=1):
+    sys.stderr.write('sudo: %s\n' % message)
+    return code
+
+
+def run(conn, request):
+    tty_fds = [fd for fd in (0, 1, 2) if os.isatty(fd)]
+    terminal = None
+    if tty_fds:
+        try:
+            terminal = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
+        except OSError:
+            tty_fds = []
+    request['tty_fds'] = tty_fds
+    if terminal is not None:
+        size = os.get_terminal_size(terminal)
+        request['rows'], request['columns'] = size.lines, size.columns
+    socket.send_fds(conn, [json.dumps(request).encode()], [0, 1, 2])
+    reply, fds = receive(conn)
+    if reply is None or 'error' in reply:
+        return reply
+    master = fds[0] if fds else None
+    # Typing reaches the command through its pseudo-terminal only when stdin
+    # is the terminal; otherwise keyboard signals arrive here and are passed on.
+    interactive = master is not None and 0 in tty_fds
+
+    def forward(signum, _frame):
+        try:
+            conn.send(json.dumps({'signal': signum}).encode())
+        except OSError:
+            pass
+
+    def resize(_signum, _frame):
+        try:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, fcntl.ioctl(terminal, termios.TIOCGWINSZ, b'\0' * 8))
+        except OSError:
+            pass
+
+    forwarded = (signal.SIGTERM, signal.SIGHUP) if interactive else (
+        signal.SIGINT, signal.SIGQUIT, signal.SIGTERM, signal.SIGHUP, signal.SIGCONT)
+    for number in forwarded:
+        signal.signal(number, forward)
+    if master is None:
+        signal.signal(signal.SIGWINCH, forward)
+        reply, _ = receive(conn)
+        return reply or {'exit': 1}
+    signal.signal(signal.SIGWINCH, resize)
+    saved = termios.tcgetattr(terminal) if interactive else None
+    if interactive:
+        tty.setraw(terminal)
+    exit_reply = None
+    master_open = True
+    try:
+        while master_open and exit_reply is None:
+            watched = [master, conn] + ([0] if interactive else [])
+            readable, _, _ = select.select(watched, [], [])
+            if 0 in readable:
+                data = os.read(0, 4096)
+                if data:
+                    os.write(master, data)
+            if master in readable:
+                try:
+                    data = os.read(master, 65536)
+                except OSError:
+                    data = b''
+                if data:
+                    os.write(terminal, data)
+                else:
+                    master_open = False
+            if conn in readable:
+                exit_reply, _ = receive(conn)
+                exit_reply = exit_reply or {'exit': 1}
+        # Print what the command wrote just before it ended.
+        while master_open:
+            readable, _, _ = select.select([master], [], [], 0.1)
+            if not readable:
+                break
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            os.write(terminal, data)
+        if exit_reply is None:
+            exit_reply, _ = receive(conn)
+    finally:
+        if saved is not None:
+            termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+        os.close(master)
+        os.close(terminal)
+    return exit_reply or {'exit': 1}
+
+
+def main(args):
+    try:
+        options, command = parse(args)
+    except UsageError as error:
+        sys.stderr.write('sudo: %s\n%s' % (error, USAGE))
+        return 1
+    if options['only'] == 'help':
+        sys.stdout.write(USAGE)
+        return 0
+    if options['only'] == 'version':
+        sys.stdout.write('Horus sudo (runs commands through the Horus root helper)\n')
+        return 0
+    if options['only'] == 'list':
+        sys.stdout.write('You may run any command as root in Horus, without a password.\n    (root) NOPASSWD: ALL\n')
+        return 0
+    if options['only'] == 'noop' and not command:
+        return 0
+    if not command and not options['login'] and not options['shell']:
+        sys.stderr.write(USAGE)
+        return 1
+    argv, cwd = command_for(options, command)
+    if os.geteuid() == 0:
+        os.chdir(cwd)
+        os.execvp(argv[0], argv)
+    conn = connect()
+    if conn is None:
+        return fail('Horus can only run commands as root from your own terminal or SSH session.')
+    request = {'argv': argv, 'cwd': cwd, 'env': environment(options), 'preserve_env': options['preserve_env']}
+    with conn:
+        reply = run(conn, request)
+    if reply is None:
+        return fail('the Horus root helper stopped unexpectedly.')
+    if reply.get('error') == 'not_allowed':
+        return fail('only your own Horus user can run commands as root, not apps like Claude Code or Codex.')
+    if 'error' in reply:
+        return fail('the Horus root helper could not run this (%s).' % reply['error'])
+    return int(reply.get('exit', 1))
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

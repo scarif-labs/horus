@@ -28,13 +28,18 @@ export function lastInstallStage(text: string): string | undefined {
   return stage;
 }
 
-// "… 37% (90 of 243 MB)" when the script knows the download size, else "… 84 MB".
-const DOWNLOAD_PATTERN = /Downloading [^\r\n]*… (?:(\d+)%|(\d+) MB)/g;
+// "Downloading Codex… 37% (90 of 243 MB)" when the script knows the download
+// size, else "… 84 MB"; system packages report "Downloading packages… 37%"
+// and then "Installing packages… 64%".
+const PROGRESS_PATTERN = /(Downloading|Installing) [^\r\n]*… (?:(\d+)%|(\d+) MB)/g;
 
-/** The latest download progress the provisioning script reported in [text], e.g. "37%" or "84 MB". */
+/** The latest progress the provisioning script reported in [text], e.g. "37% downloaded" or "64% installed". */
 export function lastDownloadProgress(text: string): string | undefined {
   let progress: string | undefined;
-  for (const match of text.matchAll(DOWNLOAD_PATTERN)) progress = match[1] !== undefined ? `${match[1]}%` : `${match[2]} MB`;
+  for (const match of text.matchAll(PROGRESS_PATTERN)) {
+    const amount = match[2] !== undefined ? `${match[2]}%` : `${match[3]} MB`;
+    progress = `${amount} ${match[1] === 'Installing' ? 'installed' : 'downloaded'}`;
+  }
   return progress;
 }
 
@@ -42,7 +47,7 @@ type InstallProgressOverlayProps = Readonly<{
   /** Undefined for an app that is already installed and only starting. */
   step?: number;
   toolchain: TerminalToolchainTarget;
-  /** How much the active step has downloaded so far, e.g. "37%" or "84 MB". */
+  /** The active step's progress so far, e.g. "37% downloaded" or "64% installed". */
   download?: string;
 }>;
 
@@ -83,7 +88,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
                 <View>
                   <Text style={[styles.stepText, done && styles.stepTextDone, active && styles.stepTextActive]}>{text}</Text>
                   {active && download !== undefined ? (
-                    <Text style={styles.stepDetail} testID="terminal-install-download">{download} downloaded</Text>
+                    <Text style={styles.stepDetail} testID="terminal-install-download">{download}</Text>
                   ) : null}
                 </View>
               </View>

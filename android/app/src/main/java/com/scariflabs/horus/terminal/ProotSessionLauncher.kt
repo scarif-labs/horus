@@ -40,6 +40,9 @@ class ProotSessionLauncher(
   private val hardlinkDir: File = File(scratchDir.absoluteFile.parentFile, "l"),
 ) {
 
+  /** A harness's home, as the app's own sessions of that harness see it. */
+  data class HarnessHome(val target: String, val username: String, val hostDir: File)
+
   data class LaunchSpec(
     val argv: List<String>,
     val environment: List<String>,
@@ -120,6 +123,13 @@ class ProotSessionLauncher(
     term: String = DEFAULT_TERM,
     sessionCommand: String? = null,
     provision: Boolean = true,
+    /**
+     * Starts the root helper behind `sudo` before the session drops to its
+     * user. Only the profile user's own sessions get it, never a harness's.
+     */
+    rootHelper: Boolean = false,
+    /** The app's harness homes, mounted for the profile user's own sessions. */
+    harnessHomes: List<HarnessHome> = emptyList(),
   ): LaunchSpec {
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val command = sessionCommand ?: "exec zsh -l"
@@ -132,6 +142,9 @@ class ProotSessionLauncher(
       "/home/$guestUsername"
     }
     val sessionWorkingDirectory = if (workspaceDir == null) guestHomePath else "/workspace"
+    if (rootHelper) installRootHelper(rootfsDir)
+    requireHarnessHomes(harnessHomes, guestUsername)
+    if (harnessHomes.isNotEmpty()) installAgentHomes(rootfsDir, harnessHomes)
     val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -153,9 +166,16 @@ class ProotSessionLauncher(
       guestUid = guestUid,
       guestGid = guestGid,
       forceRootIdentity = true,
+      // sudo runs commands on their own pseudo-terminal, as SSH logins do.
+      extraDeviceBinds = if (rootHelper) ptyDeviceBinds() else emptyList(),
+      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
     )
-    if (provision) return launch
-    return launch.copy(environment = launch.environment + "HORUS_SKIP_TOOLCHAIN_PROVISION=1")
+    val environment = buildList {
+      addAll(launch.environment)
+      if (rootHelper) add("HORUS_ROOT_HELPER=1")
+      if (!provision) add("HORUS_SKIP_TOOLCHAIN_PROVISION=1")
+    }
+    return launch.copy(environment = environment)
   }
 
   /**
@@ -172,9 +192,18 @@ class ProotSessionLauncher(
     guestUid: Int = GUEST_UID,
     guestGid: Int = GUEST_GID,
     port: Int = RemoteAccess.PORT,
+    harnessHomes: List<HarnessHome> = emptyList(),
+    /** App-private directory holding the phone's one host key; null keeps it in the user's home. */
+    hostKeyDir: File? = null,
   ): LaunchSpec {
     require(guestUsername != GUEST_ROOT_USER) { "remote access needs a non-root profile user" }
+    require(hostKeyDir == null || (hostKeyDir.isDirectory && !Files.isSymbolicLink(hostKeyDir.toPath()))) {
+      "remote access host key directory is unavailable"
+    }
     require(port in 1025..65535) { "remote access port is invalid" }
+    requireHarnessHomes(harnessHomes, guestUsername)
+    installRootHelper(rootfsDir)
+    installAgentHomes(rootfsDir, harnessHomes)
     return buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -192,13 +221,18 @@ class ProotSessionLauncher(
         guestUid.toString(),
         guestGid.toString(),
         port.toString(),
+        if (hostKeyDir == null) "" else RemoteAccess.GUEST_HOST_KEY_DIR,
       ),
       forceRootIdentity = true,
       // Root's own /root stays the rootfs directory, so logins see their
       // home only as /home/<user>.
       bindHomeAtRoot = false,
       // SSH logins allocate their own pseudo-terminals inside the guest.
-      extraDeviceBinds = listOf(File(hostDevDir, "ptmx") to "$GUEST_DEV/ptmx", File(hostDevDir, "pts") to "$GUEST_DEV/pts"),
+      extraDeviceBinds = ptyDeviceBinds(),
+      // The app's harness homes, where its sessions see them, so `codex`
+      // and friends over SSH run the app's installs with its logins.
+      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" } +
+        listOfNotNull(hostKeyDir?.let { it to RemoteAccess.GUEST_HOST_KEY_DIR }),
     )
   }
 
@@ -214,6 +248,7 @@ class ProotSessionLauncher(
     toolchainTarget: String? = null,
     forceRootIdentity: Boolean = false,
     extraDeviceBinds: List<Pair<File, String>> = emptyList(),
+    extraBinds: List<Pair<File, String>> = emptyList(),
     bindHomeAtRoot: Boolean = true,
   ): LaunchSpec {
     require(rootfsDir.isDirectory) { "rootfs directory is missing" }
@@ -239,6 +274,9 @@ class ProotSessionLauncher(
       throw IllegalStateException("cannot create proot scratch directory")
     }
     require(!Files.isSymbolicLink(scratchDir.toPath())) { "proot scratch directory is a symbolic link" }
+    // This is the guest /tmp for every rootfs and user, so give it the
+    // rootfs tarball's 1777. The app-private parent still keeps it private.
+    runCatching { Os.chmod(scratchDir.absolutePath, "1777".toInt(8)) }
     DistroStoreCore.pruneProotTemps(scratchDir, hostProcDir)
     require(!Files.isSymbolicLink(hardlinkDir.toPath())) { "proot hardlink directory is a symbolic link" }
     if (!hardlinkDir.isDirectory && !hardlinkDir.mkdirs() && !hardlinkDir.isDirectory) {
@@ -308,6 +346,10 @@ class ProotSessionLauncher(
       if (workspacePath != null) {
         add("-b")
         add("$workspacePath:/workspace")
+      }
+      extraBinds.forEach { (source, guestPath) ->
+        add("-b")
+        add("${source.canonicalFile.absolutePath}:$guestPath")
       }
       add("-b")
       add("${scratchDir.canonicalPath}:/tmp")
@@ -387,6 +429,75 @@ class ProotSessionLauncher(
       // the Phase 1 prober; the guest sees the selected bind through PRoot's -w.
       workingDirectory = null,
     )
+  }
+
+  private fun ptyDeviceBinds(): List<Pair<File, String>> =
+    listOf(File(hostDevDir, "ptmx") to "$GUEST_DEV/ptmx", File(hostDevDir, "pts") to "$GUEST_DEV/pts")
+
+  /** Writes `sudo` and its root helper into the rootfs. */
+  private fun installRootHelper(rootfsDir: File) {
+    ROOT_HELPER_FILES.forEach { (resource, guestPath) ->
+      val content = requireNotNull(ProotSessionLauncher::class.java.getResourceAsStream("/com/scariflabs/horus/terminal/guest/$resource")) {
+        "missing guest resource $resource"
+      }.use { it.readBytes() }
+      writeGuestFile(rootfsDir, guestPath, content, executable = true)
+    }
+  }
+
+  /**
+   * Lists where the app's harness homes are mounted, for the `codex`,
+   * `claude`, and `opencode` commands outside the app's own harness sessions.
+   */
+  private fun installAgentHomes(rootfsDir: File, harnessHomes: List<HarnessHome>) {
+    val content = harnessHomes.joinToString("") { "${it.target}=/home/${it.username}\n" }
+    writeGuestFile(rootfsDir, GUEST_AGENT_HOMES_PATH, content.toByteArray(), executable = false)
+  }
+
+  private fun requireHarnessHomes(harnessHomes: List<HarnessHome>, guestUsername: String) {
+    harnessHomes.forEach { home ->
+      require(home.target in AGENT_STUB_TARGETS && USERNAME_PATTERN.matches(home.username) && home.username != guestUsername) {
+        "harness home is invalid"
+      }
+    }
+  }
+
+  /**
+   * Writes one file into the rootfs. The guest owns the rootfs, so a
+   * directory on the way may be a symlink planted there; never write through
+   * one, or the app could overwrite its own files.
+   */
+  private fun writeGuestFile(rootfsDir: File, guestPath: String, content: ByteArray, executable: Boolean) {
+    var directory = rootfsDir
+    guestPath.trim('/').split('/').dropLast(1).forEach { part ->
+      directory = File(directory, part)
+      if (Files.isSymbolicLink(directory.toPath())) {
+        throw IllegalStateException("guest path $guestPath goes through a symlink")
+      }
+      if (!directory.isDirectory && !directory.mkdir() && !directory.isDirectory) {
+        throw IllegalStateException("cannot create guest directory for $guestPath")
+      }
+    }
+    val target = File(rootfsDir, guestPath.trim('/'))
+    if (!Files.isSymbolicLink(target.toPath()) && target.isFile && (!executable || target.canExecute()) &&
+      target.readBytes().contentEquals(content)
+    ) {
+      return
+    }
+    var temporary: File? = null
+    try {
+      temporary = File.createTempFile("${target.name}-", ".tmp", directory)
+      temporary.writeBytes(content)
+      temporary.setReadable(true, false)
+      if (executable) temporary.setExecutable(true, false)
+      Files.move(
+        temporary.toPath(),
+        target.toPath(),
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING,
+      )
+    } finally {
+      temporary?.takeIf { it.exists() }?.delete()
+    }
   }
 
   private fun prepareDeviceBinds(): List<DeviceBind> {
@@ -578,7 +689,10 @@ class ProotSessionLauncher(
     if (!etc.isDirectory || Files.isSymbolicLink(etc.toPath())) {
       throw IllegalStateException("guest etc directory is missing")
     }
-    val home = File(rootfsDir, "home/$username")
+    val homeRoot = File(rootfsDir, "home")
+    val home = File(homeRoot, username)
+    // Renaming back to a former name reuses its alias; drop the link first.
+    if (isHomeAlias(home)) Files.delete(home.toPath())
     if (Files.isSymbolicLink(home.toPath()) || (home.exists() && !home.isDirectory)) {
       throw IllegalStateException("guest home directory is unavailable")
     }
@@ -597,6 +711,7 @@ class ProotSessionLauncher(
     var groupLines = originalGroupLines
     var shadowLines = originalShadowLines
     var migratedLegacyProfile = false
+    var formerUsername: String? = null
     val existingUser = passwdLines.firstOrNull { it.substringBefore(':') == username }
     if (existingUser != null) {
       val fields = existingUser.split(':')
@@ -619,7 +734,8 @@ class ProotSessionLauncher(
         if (!isFixedProfileIdentity(username, uid, gid)) {
           throw IllegalStateException("guest uid is already occupied")
         }
-        val migrated = migrateLegacyProfileAccount(passwdLines, groupLines, shadowLines)
+        formerUsername = uidRows.singleOrNull()?.substringBefore(':')
+        val migrated = migrateLegacyProfileAccount(passwdLines, groupLines, shadowLines, username)
         passwdLines = migrated.passwd
         groupLines = migrated.group
         shadowLines = migrated.shadow
@@ -675,7 +791,40 @@ class ProotSessionLauncher(
     if (!home.exists() && !home.mkdirs() || !home.isDirectory) {
       throw IllegalStateException("guest home directory is unavailable")
     }
+    linkFormerHomes(homeRoot, formerUsername, username)
   }
+
+  /**
+   * After a rename, files that saved the old absolute path (virtualenvs,
+   * rc files, tool configs) keep working: /home/<former> becomes a relative
+   * link to the current name, and older aliases follow each later rename.
+   * Only an empty mount-point directory is ever replaced; anything with
+   * content is left alone. Running sessions keep their own bind instead.
+   */
+  private fun linkFormerHomes(homeRoot: File, former: String?, current: String) {
+    if (former != null && former != current && USERNAME_PATTERN.matches(former)) {
+      val old = File(homeRoot, former)
+      val path = old.toPath()
+      val replaceable = when {
+        Files.isSymbolicLink(path) -> isHomeAlias(old)
+        old.isDirectory -> old.list()?.isEmpty() == true
+        else -> !old.exists()
+      }
+      if (replaceable) {
+        Files.deleteIfExists(path)
+        Files.createSymbolicLink(path, java.nio.file.Paths.get(current))
+      }
+    }
+    homeRoot.listFiles()?.filter { isHomeAlias(it) && Files.readSymbolicLink(it.toPath()).toString() != current }?.forEach {
+      Files.delete(it.toPath())
+      Files.createSymbolicLink(it.toPath(), java.nio.file.Paths.get(current))
+    }
+  }
+
+  /** A link Horus made for a former name: a symlink to a bare sibling username. */
+  private fun isHomeAlias(file: File): Boolean =
+    Files.isSymbolicLink(file.toPath()) &&
+      runCatching { Files.readSymbolicLink(file.toPath()).toString() }.getOrNull()?.let { it != "." && it != ".." && USERNAME_PATTERN.matches(it) } == true
 
   private data class GuestAccountLines(
     val passwd: List<String>,
@@ -683,14 +832,20 @@ class ProotSessionLauncher(
     val shadow: List<String>,
   )
 
+  /** The profile user's uid and gid, under whatever name the user chose. */
   private fun isFixedProfileIdentity(username: String, uid: Int, gid: Int): Boolean =
-    username == PROFILE_USERNAME && uid == GUEST_UID && gid == GUEST_GID
+    username != GUEST_ROOT_USER && uid == GUEST_UID && gid == GUEST_GID
 
-  /** Renames only the exact account row format written by the former profile flow. */
+  /**
+   * Renames the profile uid's account to [profileUsername]. Accepts only the
+   * exact row format Horus writes, so it covers the 1.0.x custom-name accounts
+   * and a rootfs whose account predates the configured name.
+   */
   private fun migrateLegacyProfileAccount(
     passwdLines: List<String>,
     groupLines: List<String>,
     shadowLines: List<String>,
+    profileUsername: String,
   ): GuestAccountLines {
     val uidRows = passwdLines.filter { it.split(':').getOrNull(2) == GUEST_UID.toString() }
     if (uidRows.size != 1) throw IllegalStateException("legacy profile uid is ambiguous")
@@ -704,12 +859,13 @@ class ProotSessionLauncher(
       legacyUsername == GUEST_ROOT_USER ||
       fields[4] != legacyUsername ||
       fields[5] != "/home/$legacyUsername" ||
-      fields[6] != "/bin/sh" ||
+      // Remote access gives the profile user its login shell.
+      fields[6] !in setOf("/bin/sh", "/usr/local/bin/horus-ssh-shell") ||
       passwdLines.count { it.substringBefore(':') == legacyUsername } != 1
     ) {
       throw IllegalStateException("legacy profile account does not match the prior format")
     }
-    if (passwdLines.any { it.substringBefore(':') == PROFILE_USERNAME && it != uidRows.single() }) {
+    if (passwdLines.any { it.substringBefore(':') == profileUsername && it != uidRows.single() }) {
       throw IllegalStateException("fixed profile username is already occupied")
     }
     if (groupLines.any { line ->
@@ -721,7 +877,7 @@ class ProotSessionLauncher(
     }
 
     val legacyGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == legacyUsername }
-    val profileGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == PROFILE_USERNAME }
+    val profileGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == profileUsername }
     val gidRows = groupLines.filter { it.split(':').getOrNull(2) == GUEST_GID.toString() }
     if (legacyGroupIndexes.size > 1) throw IllegalStateException("legacy profile group is ambiguous")
     var migratedGroups = groupLines
@@ -739,7 +895,7 @@ class ProotSessionLauncher(
         throw IllegalStateException("legacy profile group does not match the prior format")
       }
       migratedGroups = groupLines.mapIndexed { row, line ->
-        if (row == index) listOf(PROFILE_USERNAME, groupFields[1], groupFields[2], "").joinToString(":") else line
+        if (row == index) listOf(profileUsername, groupFields[1], groupFields[2], "").joinToString(":") else line
       }
     } else if (profileGroupIndexes.isNotEmpty()) {
       // A prior interrupted migration may already have renamed the group but
@@ -748,7 +904,7 @@ class ProotSessionLauncher(
       if (
         profileGroupIndexes.size != 1 ||
         gidRows.size != 1 ||
-        profileGroup != "$PROFILE_USERNAME:x:$GUEST_GID:"
+        profileGroup != "$profileUsername:x:$GUEST_GID:"
       ) {
         throw IllegalStateException("fixed profile group conflicts with migration")
       }
@@ -758,13 +914,13 @@ class ProotSessionLauncher(
     }
 
     val legacyShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == legacyUsername }
-    val profileShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == PROFILE_USERNAME }
+    val profileShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == profileUsername }
     if (legacyShadowIndexes.size > 1 || profileShadowIndexes.size > 1 ||
       (legacyShadowIndexes.isNotEmpty() && profileShadowIndexes.isNotEmpty())
     ) {
       throw IllegalStateException("legacy profile shadow entry is ambiguous")
     }
-    val lockedShadowEntry = "$PROFILE_USERNAME:!:19000:0:99999:7:::"
+    val lockedShadowEntry = "$profileUsername:!:19000:0:99999:7:::"
     val migratedShadow = when {
       profileShadowIndexes.isNotEmpty() -> {
         if (profileShadowIndexes.size != 1 || shadowLines[profileShadowIndexes.single()] != lockedShadowEntry) {
@@ -789,7 +945,7 @@ class ProotSessionLauncher(
 
     val migratedPasswd = passwdLines.map { line ->
       if (line == uidRows.single()) {
-        listOf(PROFILE_USERNAME, fields[1], fields[2], fields[3], PROFILE_USERNAME, "/home/$PROFILE_USERNAME", fields[6]).joinToString(":")
+        listOf(profileUsername, fields[1], fields[2], fields[3], profileUsername, "/home/$profileUsername", fields[6]).joinToString(":")
       } else {
         line
       }
@@ -800,10 +956,9 @@ class ProotSessionLauncher(
   private fun guestHomePathFor(username: String): String = "/home/$username"
 
   /**
-   * Give every interactive guest the same small zsh theme. Alpine's pinned
-   * minirootfs does not include zsh, so the profile is ready for the first
-   * `apk add zsh` and automatically hands future login shells to zsh once it
-   * exists. User content outside these bounded blocks is preserved.
+   * Give every interactive guest the same small zsh theme. Neither pinned
+   * rootfs includes zsh, so the profile is ready for the first install and
+   * automatically hands future login shells to zsh once it exists. User content outside these bounded blocks is preserved.
    */
   private fun prepareZshProfile(guestHomeDir: File) {
     val profile = File(guestHomeDir, PROFILE_NAME)
@@ -999,7 +1154,7 @@ class ProotSessionLauncher(
       .any { it.isFile && it.canExecute() }
     val userBin = File(guestHomeDir, ".local/bin")
     if (!rootfsZsh) return false
-    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL) return hasAlpineBaseUtilities(rootfsDir)
+    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL) return hasBaseUtilities(rootfsDir)
     val readyMarker = File(guestHomeDir, ".cache/horus/$target.ready")
     if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB) {
       val rootfsGh = listOf(File(rootfsDir, "bin/gh"), File(rootfsDir, "usr/bin/gh"))
@@ -1013,7 +1168,9 @@ class ProotSessionLauncher(
       return readyMarker.isFile && hasClaudeLauncher(guestHomeDir)
     }
     val rootfsNode = File(rootfsDir, "usr/bin/node").let { it.isFile && it.canExecute() }
-    val rootfsNpm = File(rootfsDir, "usr/bin/npm").let { it.isFile && it.canExecute() }
+    // apk installs npm in /usr/bin; on Debian it is npm's own release in /usr/local/bin.
+    val rootfsNpm = listOf(File(rootfsDir, "usr/bin/npm"), File(rootfsDir, "usr/local/bin/npm"))
+      .any { it.isFile && it.canExecute() }
     val launcher = when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex"
@@ -1052,7 +1209,7 @@ class ProotSessionLauncher(
     return Files.isRegularFile(ps, java.nio.file.LinkOption.NOFOLLOW_LINKS)
   }
 
-  private fun hasAlpineBaseUtilities(rootfsDir: File): Boolean =
+  private fun hasBaseUtilities(rootfsDir: File): Boolean =
     listOf("rg", "curl", "jq", "python3").all { name ->
       File(rootfsDir, "usr/bin/$name").let { it.isFile && it.canExecute() }
     } && File(rootfsDir, "lib/ld-linux-aarch64.so.1").isFile
@@ -1073,10 +1230,18 @@ class ProotSessionLauncher(
     const val GUEST_ROOT_USER = "root"
     const val GUEST_UID = 1000
     const val GUEST_GID = 1000
-    private const val PROFILE_USERNAME = TerminalGuestIdentity.PROFILE_USERNAME
     private val GUEST_ACCOUNT_MUTATION_LOCK = Any()
     const val GUEST_PATH = "/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     const val GUEST_LANG = "C.UTF-8"
+    const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
+    const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
+    const val GUEST_AGENT_HOMES_PATH = "/usr/local/lib/horus/agent-homes"
+    private val AGENT_STUB_TARGETS = setOf(
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
+    )
+    private val ROOT_HELPER_FILES = listOf("sudo" to GUEST_SUDO_PATH, "sudo-helper" to GUEST_ROOT_HELPER_PATH)
     const val HOST_PROC = "/proc"
     const val HOST_DEV = "/dev"
     const val GUEST_PROC = "/proc"
@@ -1174,30 +1339,30 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
     private val CODEX_AGENT_INSTRUCTIONS_BLOCK = """
       $CODEX_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - Codex runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - Codex runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - Codex runs as the dedicated non-root `harness_codex` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Codex. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching Codex. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Codex's Linux sandbox is unavailable under Android PRoot. Horus launches the CLI with `--sandbox danger-full-access`; do not assume Codex's own sandbox isolates commands from files accessible to this harness user.
       $CODEX_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     private val CLAUDE_AGENT_INSTRUCTIONS_BLOCK = """
       $CLAUDE_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - Claude Code runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - Claude Code runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - Claude Code runs as the dedicated non-root `harness_claude` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Claude Code. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching Claude Code. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $CLAUDE_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     private val OPENCODE_AGENT_INSTRUCTIONS_BLOCK = """
       $OPENCODE_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - OpenCode runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - OpenCode runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - OpenCode runs as the dedicated non-root `harness_opencode` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $OPENCODE_AGENT_INSTRUCTIONS_END
     """.trimIndent()
@@ -1208,6 +1373,144 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
         sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?\${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
       fi
+    """.trimIndent()
+    /**
+     * The guest's package manager and the packages each target needs from
+     * it: apk on Alpine, apt on Debian. Detected inside the guest, so the
+     * same script serves either rootfs. apt runs as root under PRoot, where
+     * it cannot drop to its _apt sandbox user, and refreshes its lists at
+     * most once a day.
+     */
+    /** npm release installed on Debian, and its registry `dist.integrity`. */
+    internal const val UPSTREAM_NPM_VERSION = "11.12.1"
+    internal const val UPSTREAM_NPM_INTEGRITY =
+      "sha512-zcoUuF1kezGSAo0CqtvoLXX3mkRqzuqYdL6Y5tdo8g69NVV3CkjQ6ZBhBgB4d7vGkPcV6TcvLi3GRKPDFX+xTA=="
+
+    internal val PACKAGE_MANAGER_SCRIPT = """
+      if [ -x /usr/bin/apt-get ]; then
+        horus_pkg=apt
+        # Debian splits venv (and its ensurepip) out of python3.
+        pkgs_shell="ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh"
+        has_python_venv() {
+          for venv_dir in /usr/lib/python3.*/ensurepip; do [ -d "${'$'}venv_dir" ] && return 0; done
+          return 1
+        }
+        pkgs_github="ca-certificates git openssh-client gh zsh"
+        pkgs_claude="bash curl ca-certificates git openssh-client zsh"
+        # npm itself comes from npm's own release; see install_upstream_npm.
+        pkgs_node="bash ca-certificates git openssh-client nodejs zsh"
+        pkgs_procps="procps"
+        # Rewritten every time so an older Horus's settings are replaced.
+        mkdir -p /etc/apt/apt.conf.d /etc/dpkg/dpkg.cfg.d
+        printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Acquire::Languages "none";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+        # Every file dpkg writes is a trapped syscall under PRoot. Skip its
+        # per-file fsync (a broken install is simply provisioned again) and
+        # the docs, manuals, and translations nothing here reads.
+        printf '%s\n' force-unsafe-io \
+          'path-exclude=/usr/share/doc/*' 'path-include=/usr/share/doc/*/copyright' \
+          'path-exclude=/usr/share/man/*' 'path-exclude=/usr/share/info/*' \
+          'path-exclude=/usr/share/locale/*' 'path-include=/usr/share/locale/locale.alias' \
+          'path-exclude=/usr/share/lintian/*' > /etc/dpkg/dpkg.cfg.d/99horus
+        export DEBIAN_FRONTEND=noninteractive
+      else
+        horus_pkg=apk
+        pkgs_shell="ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh"
+        pkgs_github="ca-certificates git openssh-client-default github-cli zsh"
+        pkgs_claude="bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++"
+        pkgs_node="bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++"
+        pkgs_procps="procps-ng"
+        has_python_venv() { true; }
+      fi
+      # The latest progress line, for the app to show while tools install.
+      pkg_progress=/root/.cache/horus/provision-progress
+      pkg_status=/root/.cache/horus/pkg-status
+      # Turns apt's Status-Fd lines, or apk's "(12/47) Installing ..." log
+      # lines, into "Downloading packages… 37%" and "Installing packages…
+      # 64%", printed and kept in pkg_progress.
+      watch_packages() {
+        watch_last=
+        while sleep 1; do
+          if [ "${'$'}horus_pkg" = apt ]; then
+            watch_line=${'$'}(tail -n 1 "${'$'}pkg_status" 2>/dev/null) || continue
+          else
+            watch_line=${'$'}(grep -o '^([0-9]*/[0-9]*)' "${'$'}pkg_log" 2>/dev/null | tail -n 1 | tr -d '()') || continue
+          fi
+          watch_text=${'$'}(printf '%s\n' "${'$'}watch_line" | awk -F: '
+            /^dlstatus:/ { printf "Downloading packages… %d%%\n", ${'$'}3; exit }
+            /^pmstatus:/ { for (i = 3; i <= NF; i++) if (${'$'}i ~ /^[0-9]+(\.[0-9]+)?${'$'}/) { printf "Installing packages… %d%%\n", ${'$'}i; exit } }
+            /^[0-9]+\/[0-9]+${'$'}/ { split(${'$'}0, part, "/"); if (part[2] > 0) printf "Installing packages… %d%%\n", part[1] * 100 / part[2]; exit }
+          ')
+          if [ -n "${'$'}watch_text" ] && [ "${'$'}watch_text" != "${'$'}watch_last" ]; then
+            printf '%s\n' "${'$'}watch_text"
+            printf '%s\n' "${'$'}watch_text" > "${'$'}pkg_progress"
+            watch_last=${'$'}watch_text
+          fi
+        done
+      }
+      apt_with_status() { apt-get -o APT::Status-Fd=3 "${'$'}@" 3>>"${'$'}pkg_status"; }
+      # pkg_install LOG PACKAGE... installs with the guest's package manager.
+      # Callers pass a package list unquoted, so each package is one argument.
+      pkg_install() {
+        pkg_log=${'$'}1
+        shift
+        : > "${'$'}pkg_status"
+        : > "${'$'}pkg_progress"
+        watch_packages &
+        pkg_watch_pid=${'$'}!
+        if [ "${'$'}horus_pkg" = apt ]; then
+          pkg_result=0
+          if [ -z "${'$'}(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]; then
+            run_logged "${'$'}pkg_log" apt-get update || pkg_result=${'$'}?
+          fi
+          if [ "${'$'}pkg_result" -eq 0 ]; then
+            run_logged "${'$'}pkg_log" apt_with_status install -y --no-install-recommends "${'$'}@" || pkg_result=${'$'}?
+          fi
+        else
+          if run_logged "${'$'}pkg_log" apk add --no-cache --no-progress "${'$'}@"; then pkg_result=0; else pkg_result=${'$'}?; fi
+        fi
+        kill "${'$'}pkg_watch_pid" 2>/dev/null || true
+        wait "${'$'}pkg_watch_pid" 2>/dev/null || true
+        : > "${'$'}pkg_progress"
+        return "${'$'}pkg_result"
+      }
+      # Debian's npm (9.2) needs ~400 node-* packages, and its cache moves
+      # files with link, then unlink and chmod in parallel, which races
+      # under PRoot's link2symlink (npm ERR! ENOENT ... rename). Install
+      # npm's own release instead: one pinned tarball, checked against its
+      # registry checksum, with its dependencies bundled.
+      upstream_npm_dir=/usr/local/lib/node_modules/npm
+      has_upstream_npm() {
+        [ -x /usr/local/bin/npm ] && grep -q '"version": "$UPSTREAM_NPM_VERSION"' "${'$'}upstream_npm_dir/package.json" 2>/dev/null
+      }
+      install_upstream_npm() {
+        npm_registry=${'$'}{npm_config_registry:-https://registry.npmjs.org}
+        npm_registry=${'$'}{npm_registry%/}
+        npm_work=${'$'}(mktemp -d /root/.cache/horus/npm.XXXXXX) || return 1
+        if node -e '
+          const [url, integrity, out] = process.argv.slice(1);
+          (async () => {
+            const response = await fetch(url, {signal: AbortSignal.timeout(300000)});
+            if (!response.ok) throw new Error("npm download failed: HTTP " + response.status);
+            const body = Buffer.from(await response.arrayBuffer());
+            const digest = "sha512-" + require("crypto").createHash("sha512").update(body).digest("base64");
+            if (digest !== integrity) throw new Error("npm download failed its checksum");
+            require("fs").writeFileSync(out, body);
+          })().catch(error => { console.error(error.message); process.exit(1); });
+        ' "${'$'}npm_registry/npm/-/npm-$UPSTREAM_NPM_VERSION.tgz" "$UPSTREAM_NPM_INTEGRITY" "${'$'}npm_work/npm.tgz" &&
+          mkdir -p "${'$'}npm_work/npm" /usr/local/lib/node_modules /usr/local/bin &&
+          tar -xzf "${'$'}npm_work/npm.tgz" -C "${'$'}npm_work/npm" --strip-components=1 &&
+          rm -rf "${'$'}upstream_npm_dir" &&
+          mv "${'$'}npm_work/npm" "${'$'}upstream_npm_dir" &&
+          printf '#!/bin/sh\nexec node %s/bin/npm-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npm &&
+          printf '#!/bin/sh\nexec node %s/bin/npx-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npx &&
+          chmod 755 /usr/local/bin/npm /usr/local/bin/npx; then
+          npm_result=0
+        else
+          npm_result=1
+        fi
+        rm -rf "${'$'}npm_work"
+        return "${'$'}npm_result"
+      }
     """.trimIndent()
     // npm may successfully install the JS wrapper while skipping its optional
     // native package. Install the exact declared alias as a required package
@@ -1315,6 +1618,13 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           exit 1
         fi
       )
+      # The backup outlives its install so sessions started from it keep
+      # running. Once a later check finds the new package stamped, drop it.
+      prune_codex_backup() (
+        exec 8>"${'$'}HOME/.cache/horus/codex-install.lock"
+        flock -n 8 || exit 0
+        if codex_stamped; then rm -rf "${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"; fi
+      )
       install_codex_package() (
         mkdir -p "${'$'}HOME/.cache/horus" || exit 1
         # App provisioning and SSH share this lock, including crash recovery.
@@ -1350,6 +1660,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
       mkdir -p /root/.local/bin /root/.cache/horus
       $APK_MIRROR_SCRIPT
+      $PACKAGE_MANAGER_SCRIPT
       provision_stage=/root/.cache/horus/provision-stage
       mark_provision_stage() {
         printf '%s\n' "${'$'}1" > "${'$'}provision_stage"
@@ -1386,10 +1697,13 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         claude_base=https://downloads.claude.ai/claude-code-releases
         claude_arch=${'$'}(uname -m)
         if [ "${'$'}claude_arch" = aarch64 ]; then claude_arch=arm64; fi
+        # install.sh fetches the musl build on Alpine and the glibc one elsewhere.
+        claude_libc=
+        if [ -e /lib/ld-musl-aarch64.so.1 ] || [ -e /lib/ld-musl-x86_64.so.1 ]; then claude_libc=-musl; fi
         claude_version=${'$'}(curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/latest" 2>/dev/null) || return 0
         curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/${'$'}claude_version/manifest.json" 2>/dev/null |
           tr -d ' \n' |
-          sed -n "s/.*\"linux-${'$'}claude_arch-musl\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
+          sed -n "s/.*\"linux-${'$'}claude_arch${'$'}claude_libc\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
           awk '${'$'}1 > 0 { printf "%d\n", (${'$'}1 + 1023) / 1024 }' || true
       }
       # Compressed size of every tarball `npm install <package>` downloads:
@@ -1471,9 +1785,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         if ! command -v zsh >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 ||
           [ ! -x /usr/bin/rg ] || [ ! -x /usr/bin/curl ] || [ ! -x /usr/bin/jq ] ||
           [ ! -x /usr/bin/python3 ] || [ ! -e /lib/ld-linux-aarch64.so.1 ] ||
-          [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ]; then
+          [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ] || ! has_python_venv; then
           mark_provision_stage apk
-          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh; then
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_shell; then
             # PRoot cannot create zsh's versioned hardlink (bin/zsh-5.9) on
             # this Android filesystem. Continue only when both the shell and
             # base utilities extracted successfully for visible clone sessions.
@@ -1489,7 +1803,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       elif [ "${'$'}target" = github ]; then
         if ! command -v zsh >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 || [ ! -f /root/.cache/horus/github.ready ]; then
           mark_provision_stage github
-          if ! run_logged /root/.cache/horus/github-install.log apk add --no-cache --no-progress ca-certificates git openssh-client-default github-cli zsh; then
+          if ! pkg_install /root/.cache/horus/github-install.log ${'$'}pkgs_github; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 || ! gh --version >/dev/null 2>&1; then
               mark_provision_stage github_failed
               exit 26
@@ -1499,17 +1813,28 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       elif [ "${'$'}target" = claude ]; then
         if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f /root/.cache/horus/claude.ready ]; then
           mark_provision_stage apk
-          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++; then
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_claude; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
               mark_provision_stage apk_failed
               exit 21
             fi
           fi
         fi
-      elif ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-        mark_provision_stage apk
-        if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++; then
-          if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+      else
+        # Debian's npm is installed separately below, so only apk's counts here.
+        if ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
+          mark_provision_stage apk
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_node; then
+            if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
+              mark_provision_stage apk_failed
+              exit 21
+            fi
+          fi
+        fi
+        # Also replaces the npm 9 that pre-release Debian builds installed with apt.
+        if [ "${'$'}horus_pkg" = apt ] && ! has_upstream_npm; then
+          mark_provision_stage apk
+          if ! install_upstream_npm >>/root/.cache/horus/alpine-bootstrap.log 2>&1; then
             mark_provision_stage apk_failed
             exit 21
           fi
@@ -1519,10 +1844,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       # `ps -p PID -o lstart=`, which BusyBox ps does not support.
       if [ "${'$'}target" = codex ] && ! ps -p "${'$'}${'$'}" -o lstart= >/dev/null 2>&1; then
         mark_provision_stage apk
-        if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress procps-ng; then
+        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_procps; then
           mark_provision_stage apk_failed
           exit 21
         fi
+      fi
+      # sudo's root helper is Python. The Bare terminal installs it with its
+      # tools; install it with whatever opens first, so sudo works from the
+      # first sign-in. A failure leaves sudo unavailable, not the app.
+      if [ "${'$'}target" != shell ] && [ ! -x /usr/bin/python3 ]; then
+        pkg_install /root/.cache/horus/alpine-bootstrap.log python3 || true
       fi
       mark_provision_stage base_ready
 
@@ -1541,9 +1872,11 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         fi
       fi
       $CODEX_INSTALL_SCRIPT
-      if [ "${'$'}target" = codex ] && ! codex_stamped; then
+      if [ "${'$'}target" = codex ] && codex_stamped; then
+        prune_codex_backup || true
+      elif [ "${'$'}target" = codex ]; then
         mark_provision_stage codex
-        if ! run_logged /root/.cache/horus/codex-install.log install_codex_package; then
+        if ! run_downloading Codex "${'$'}(npm_download_kb @openai/codex)" /root/.npm /root/.cache/horus/codex-install.log install_codex_package; then
           mark_provision_stage codex_failed
           exit 23
         fi
@@ -1567,9 +1900,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           fi
         fi
       fi
-      if [ "${'$'}target" = opencode ] && {
-        [ ! -f "${'$'}target_marker" ] || [ "${'$'}opencode_payload_valid" != true ];
-      }; then
+      # A payload that answers --version only needs a fresh stamp (written
+      # below), so a missing marker never removes a working OpenCode offline.
+      if [ "${'$'}target" = opencode ] && [ "${'$'}opencode_payload_valid" != true ]; then
         mark_provision_stage opencode
         # npm/postinstall can retain an existing corrupted selected binary.
         # Remove only the replaceable package, preserving ~/.config/opencode.
@@ -1738,7 +2071,15 @@ EOF
         chgrp "${'$'}session_gid" /workspace
         chmod 2770 /workspace
       fi
-      exec /bin/busybox su -p -c '
+      # sudo cannot become root under PRoot once the session drops to its
+      # user; a helper started now, while still root, runs its commands.
+      if [ "${'$'}{HORUS_ROOT_HELPER:-0}" = 1 ] && [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        mkdir -p /run/horus-sudo
+        export HORUS_SUDO_SOCKET="/run/horus-sudo/s${'$'}${'$'}"
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+      fi
+      unset HORUS_ROOT_HELPER
+      user_script='
         cd "${'$'}HORUS_SESSION_PWD"
         umask 0002
         export HOME="/home/${'$'}HORUS_GUEST_USERNAME"
@@ -1747,13 +2088,20 @@ EOF
         export XDG_CONFIG_HOME="${'$'}HOME/.config"
         export XDG_DATA_HOME="${'$'}HOME/.local/share"
         export XDG_CACHE_HOME="${'$'}HOME/.cache"
+        export USER="${'$'}HORUS_GUEST_USERNAME" LOGNAME="${'$'}HORUS_GUEST_USERNAME"
         if [ "${'$'}{HORUS_TOOLCHAIN_TARGET:-}" = codex ]; then
           export NPM_CONFIG_PREFIX="${'$'}HOME/.local"
           export npm_config_prefix="${'$'}HOME/.local"
         fi
         unset HORUS_BOOTSTRAP
         exec /bin/sh -c "${'$'}HORUS_SESSION_COMMAND"
-      ' "${'$'}session_username"
+      '
+      if [ -x /bin/busybox ]; then
+        exec /bin/busybox su -p -c "${'$'}user_script" "${'$'}session_username"
+      fi
+      # Debian has no BusyBox; util-linux setpriv changes ids without PAM,
+      # which PRoot's emulated root cannot satisfy.
+      exec setpriv --reuid="${'$'}session_uid" --regid="${'$'}session_gid" --clear-groups -- /bin/sh -c "${'$'}user_script"
     """.trimIndent()
     // The embedded Codex script supplies its own indent, including its first
     // line, so the outer trimIndent() keeps heredoc terminators at column zero.
@@ -1768,25 +2116,50 @@ EOF
       export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       stage() { printf 'HORUS_REMOTE_STAGE=%s\n' "${'$'}1"; }
       mkdir -p /root/.cache/horus
-      if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] || [ ! -x /usr/lib/ssh/sftp-server ] ||
-        [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1; then
+      if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] ||
+        { [ ! -x /usr/lib/ssh/sftp-server ] && [ ! -x /usr/lib/openssh/sftp-server ]; } ||
+        [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1 ||
+        [ ! -x /usr/bin/python3 ]; then
         stage installing
-        if ! apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server rsync zsh; then
+        if [ -x /usr/bin/apt-get ]; then
+          mkdir -p /etc/apt/apt.conf.d
+          [ -f /etc/apt/apt.conf.d/99horus ] ||
+            printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+          remote_install() {
+            DEBIAN_FRONTEND=noninteractive apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
+          }
+        else
+          # python3 runs sudo's root helper for SSH logins.
+          remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server python3 rsync zsh; }
+        fi
+        if ! remote_install; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
             stage install_failed
             exit 30
           fi
         fi
       fi
-      keydir="${'$'}home/.config/horus"
+      if [ ! -e /usr/lib/ssh/sftp-server ] && [ -x /usr/lib/openssh/sftp-server ]; then
+        mkdir -p /usr/lib/ssh
+        ln -s /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server
+      fi
+      # The app binds the phone's one host key here; without it, 1.0.4's
+      # per-home key.
+      keydir="${'$'}{5:-${'$'}home/.config/horus}"
       hostkey="${'$'}keydir/ssh_host_ed25519_key"
       mkdir -p "${'$'}keydir" "${'$'}home/.ssh" "${'$'}home/.cache/horus"
       if [ ! -s "${'$'}hostkey" ]; then
-        rm -f "${'$'}hostkey"
-        if ! dropbearkey -t ed25519 -f "${'$'}hostkey" >/dev/null 2>&1; then
+        rm -f "${'$'}hostkey" "${'$'}hostkey.new"
+        # dropbearkey publishes with link(2), which PRoot turns into a
+        # symlink chain. Copy the key in so the app finds a plain file.
+        if ! dropbearkey -t ed25519 -f "${'$'}hostkey.new" >/dev/null 2>&1 ||
+          ! cat "${'$'}hostkey.new" > "${'$'}hostkey.tmp" || ! mv -f "${'$'}hostkey.tmp" "${'$'}hostkey"; then
+          rm -f "${'$'}hostkey.new" "${'$'}hostkey.tmp"
           stage hostkey_failed
           exit 31
         fi
+        rm -f "${'$'}hostkey.new" "${'$'}hostkey.new.pub"
       fi
       touch "${'$'}home/.ssh/authorized_keys"
       chown "${'$'}uid:${'$'}gid" "${'$'}home" "${'$'}home/.ssh" "${'$'}home/.ssh/authorized_keys" "${'$'}keydir" "${'$'}hostkey" 2>/dev/null || true
@@ -1810,6 +2183,9 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       # A script loses dropbear's "-" login marker in ${'$'}0; an interactive
       # login is the call without arguments (commands arrive as -c ...).
       if [ "${'$'}#" -eq 0 ]; then
+        # The host key no longer changes with the user, so say who this is.
+        horus_os=${'$'}(. /etc/os-release 2>/dev/null && printf '%s' "${'$'}PRETTY_NAME")
+        printf 'Horus: %s on %s\n' "${'$'}(id -un)" "${'$'}{horus_os:-Linux}" >&2
         if command -v zsh >/dev/null 2>&1; then exec zsh -l; fi
         exec /bin/sh -l
       fi
@@ -1837,13 +2213,36 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
         opencode) name="OpenCode" ;;
         *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
       esac
+      # Prefer the app's own install, run in its harness home, so SSH shares
+      # the app's login, settings, and trusted folders.
+      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
+      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
+        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
+        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
+        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
+        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
+      fi
+      # On Debian the user cannot run apt; Horus's app tiles install the
+      # system packages as root, and these need only what is already there.
+      system_packages() {
+        if command -v apk >/dev/null 2>&1; then apk add --no-cache --no-progress "${'$'}@"; else true; fi
+      }
       install_claude() {
-        apk add --no-cache --no-progress bash curl ca-certificates git libgcc libstdc++ &&
+        system_packages bash curl ca-certificates git libgcc libstdc++ &&
           curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
           bash "${'$'}cache/claude-install.sh"
       }
+      # Debian's Node.js comes from the app tile's root provisioning. Say so
+      # rather than blaming the connection.
+      node_packages() {
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
+        exit 1
+      }
       install_npm_agent() {
-        apk add --no-cache --no-progress bash ca-certificates git nodejs npm libgcc libstdc++ &&
+        node_packages &&
           npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
       }
       # npm's bin links lose their execute bit under PRoot; launch the entry
@@ -1855,14 +2254,11 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       }
 ${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
       install_codex() {
-        if ! test -x /usr/bin/node || ! command -v npm >/dev/null 2>&1; then
-          apk add --no-cache --no-progress bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
-        fi
-        install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
+        node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
       }
       install_opencode() {
         install_npm_agent opencode-ai || return 1
-        # On Alpine the package picks a native binary named opencode.exe.
+        # The package may pick a native binary named opencode.exe (it does on Alpine).
         entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
         [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
         test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
@@ -1913,6 +2309,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       fi
       HORUS_ZSH
       mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh
+      # Debian's zsh reads only /etc/zsh/zshrc, not zshrc.d; load it there.
+      if [ -x /usr/bin/apt-get ] && [ -f /etc/zsh/zshrc ] && ! grep -q 'horus-zshrc.d' /etc/zsh/zshrc; then
+        printf '%s\n' '# horus-zshrc.d: load the snippets Horus keeps in /etc/zsh/zshrc.d' \
+          'for horus_rc in /etc/zsh/zshrc.d/*.zsh(N); do source "${'$'}horus_rc"; done; unset horus_rc' >> /etc/zsh/zshrc
+      fi
+      # sudo for SSH logins, as for the app's own terminal (see sudo-helper).
+      if [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        mkdir -p /run/horus-sudo
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+      fi
       stage serving
       # Everything below execs in place, so this pid becomes dropbear's; the
       # app kills it and its sessions on stop (PRoot does not take them down).
@@ -1924,7 +2330,11 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       # dropbear re-execs itself per connection with fexecve(), which PRoot
       # cannot follow. It skips that when it cannot open argv[0], so start it
       # by bare name from / and let each connection run in the forked child.
-      exec /bin/busybox su -s /bin/sh -c 'cd / && PATH=/usr/sbin:/usr/bin:/sbin:/bin exec dropbear -F -E -s -w -K 30 -p "127.0.0.1:${'$'}HORUS_REMOTE_PORT" -r "${'$'}HORUS_REMOTE_HOSTKEY" -P "${'$'}HOME/.cache/horus/dropbear.pid"' "${'$'}user"
+      dropbear_script='cd / && PATH=/usr/sbin:/usr/bin:/sbin:/bin exec dropbear -F -E -s -w -K 30 -p "127.0.0.1:${'$'}HORUS_REMOTE_PORT" -r "${'$'}HORUS_REMOTE_HOSTKEY" -P "${'$'}HOME/.cache/horus/dropbear.pid"'
+      if [ -x /bin/busybox ]; then
+        exec /bin/busybox su -s /bin/sh -c "${'$'}dropbear_script" "${'$'}user"
+      fi
+      exec setpriv --reuid="${'$'}uid" --regid="${'$'}gid" --clear-groups -- env HOME="${'$'}home" USER="${'$'}user" LOGNAME="${'$'}user" SHELL=/bin/sh /bin/sh -c "${'$'}dropbear_script"
     """.trimIndent()
     private const val RESOLV_CONF_DIRECTORY = "etc"
     private const val RESOLV_CONF_NAME = "resolv.conf"

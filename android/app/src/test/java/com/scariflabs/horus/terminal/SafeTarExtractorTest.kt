@@ -6,28 +6,39 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.junit.runners.Parameterized
 
 /**
  * Path-safety and format coverage for the rootfs extractor. Every attack
  * entry is built as real tar bytes by [TarFixture]; nothing here trusts the
- * extractor to be its own fixture.
+ * extractor to be its own fixture. Every case runs once per archive format,
+ * so xz gets the same attack coverage as gzip.
  */
-class SafeTarGzExtractorTest {
+@RunWith(Parameterized::class)
+class SafeTarExtractorTest(private val format: ArchiveFormat) {
+  companion object {
+    @JvmStatic
+    @Parameterized.Parameters(name = "{0}")
+    fun formats(): List<ArchiveFormat> = ArchiveFormat.entries
+  }
+
   @get:Rule
   val temp = TemporaryFolder()
 
   private var fixtureNumber = 0
   private lateinit var extractionRoot: File
 
-  private fun extractFrom(entries: List<TarFixture.Entry>): SafeTarGzExtractor.Summary {
+  private fun extractFrom(entries: List<TarFixture.Entry>): SafeTarExtractor.Summary {
     val suffix = fixtureNumber++
-    val archive = temp.newFile("fixture-$suffix.tar.gz")
-    archive.writeBytes(TarFixture.buildGzip(entries))
+    val archive = temp.newFile("fixture-$suffix.tar")
+    archive.writeBytes(TarFixture.build(entries, format))
     extractionRoot = temp.newFolder("root-$suffix")
-    return SafeTarGzExtractor().extract(archive, extractionRoot)
+    return SafeTarExtractor().extract(archive, extractionRoot, format)
   }
 
   @Test
@@ -59,7 +70,7 @@ class SafeTarGzExtractorTest {
 
   @Test
   fun `rejects absolute entry names`() {
-    val error = assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+    val error = assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(listOf(TarFixture.Entry.File("/etc/evil", byteArrayOf(1))))
     }
     assertTrue(error.message!!.contains("unsafe entry name"))
@@ -67,11 +78,11 @@ class SafeTarGzExtractorTest {
 
   @Test
   fun `rejects traversal entry names`() {
-    val error = assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+    val error = assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(listOf(TarFixture.Entry.File("../evil", byteArrayOf(1))))
     }
     assertTrue(error.message!!.contains("unsafe entry name"))
-    val dotted = assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+    val dotted = assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(listOf(TarFixture.Entry.File("safe/../../evil", byteArrayOf(1))))
     }
     assertTrue(dotted.message!!.contains("unsafe entry name"))
@@ -81,7 +92,7 @@ class SafeTarGzExtractorTest {
   fun `rejects a symlink redirect outside the root`() {
     // First entry plants a symlink pointing outside; the second tries to
     // write through it. The canonical parent check must reject the write.
-    val error = assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+    val error = assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(
         listOf(
           TarFixture.Entry.Dir("etc"),
@@ -96,7 +107,7 @@ class SafeTarGzExtractorTest {
 
   @Test
   fun `rejects a hardlink target outside the root`() {
-    val error = assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+    val error = assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(
         listOf(
           TarFixture.Entry.File("keep", byteArrayOf(1)),
@@ -155,20 +166,39 @@ class SafeTarGzExtractorTest {
   }
 
   @Test
-  fun `rejects unknown entry types and non-gzip input`() {
-    assertThrows(SafeTarGzExtractor.UnsafeArchiveException::class.java) {
+  fun `rejects unknown entry types and input in the wrong format`() {
+    assertThrows(SafeTarExtractor.UnsafeArchiveException::class.java) {
       extractFrom(listOf(TarFixture.Entry.Raw(TarFixture.header("weird", typeFlag = 'Z'))))
     }
-    val archive = temp.newFile("not-gzip.tar.gz")
-    archive.writeBytes("definitely not gzip".toByteArray())
+    val garbage = temp.newFile("garbage.tar")
+    garbage.writeBytes("definitely not compressed".toByteArray())
     assertThrows(Exception::class.java) {
-      SafeTarGzExtractor().extract(archive, temp.newFolder("root2"))
+      SafeTarExtractor().extract(garbage, temp.newFolder("root2"), format)
+    }
+    // A valid archive in the other format is still rejected: the catalog
+    // entry decides the decompressor, the file contents never do.
+    val other = ArchiveFormat.entries.single { it != format }
+    val mismatched = temp.newFile("mismatched.tar")
+    mismatched.writeBytes(TarFixture.build(listOf(TarFixture.Entry.File("a", byteArrayOf(1))), other))
+    assertThrows(Exception::class.java) {
+      SafeTarExtractor().extract(mismatched, temp.newFolder("root3"), format)
+    }
+  }
+
+  @Test
+  fun `an xz stream needing more decoder memory than the cap is rejected`() {
+    assumeTrue(format == ArchiveFormat.TAR_XZ)
+    // Preset 6 (what debuerreotype and `xz` default to) needs about 9 MiB.
+    val archive = temp.newFile("big-dictionary.tar.xz")
+    archive.writeBytes(TarFixture.buildXz(listOf(TarFixture.Entry.File("a", byteArrayOf(1)))))
+    assertThrows(org.tukaani.xz.MemoryLimitException::class.java) {
+      SafeTarExtractor(xzMemoryLimitKiB = 1024).extract(archive, temp.newFolder("capped"), format)
     }
   }
 
   @Test
   fun `sanitize rules are total`() {
-    val extractor = SafeTarGzExtractor()
+    val extractor = SafeTarExtractor()
     assertEquals("safe/path", extractor.sanitizeRelativeName("safe/path"))
     assertEquals("safe/path", extractor.sanitizeRelativeName("safe/path/"))
     assertNullish(extractor.sanitizeRelativeName(""))
