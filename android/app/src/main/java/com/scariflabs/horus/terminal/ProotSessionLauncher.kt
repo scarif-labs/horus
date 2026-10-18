@@ -1098,7 +1098,7 @@ class ProotSessionLauncher(
     }.getOrDefault(false)
   }
 
-  private fun openCodePayloadStamp(guestHomeDir: File): String? {
+  internal fun openCodePayloadStamp(guestHomeDir: File): String? {
     val entry = listOf(
       File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode"),
       File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode.exe"),
@@ -1658,6 +1658,159 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         fi
       )
     """.trimIndent()
+    // npm can skip the optional package that carries OpenCode's native binary,
+    // and the wrapper's postinstall fetches that binary separately, so an
+    // install can succeed while `bin/opencode.exe` is missing or is not a
+    // runnable Linux binary. Install the exact platform package the wrapper
+    // declares and place its binary where the launcher and the Kotlin
+    // readiness check expect it. The package is staged and only promoted once
+    // its payload runs, so a failed attempt never removes a working install.
+    internal val OPENCODE_INSTALL_SCRIPT = """
+      opencode_package="${'$'}HOME/.local/lib/node_modules/opencode-ai"
+      opencode_entry="${'$'}opencode_package/bin/opencode"
+      opencode_previous="${'$'}HOME/.local/lib/node_modules/.opencode.previous"
+      opencode_ready="${'$'}HOME/.cache/horus/opencode.ready"
+
+      opencode_entry_path() {
+        if [ -f "${'$'}opencode_entry" ]; then printf '%s\n' "${'$'}opencode_entry"
+        elif [ -f "${'$'}opencode_entry.exe" ]; then printf '%s\n' "${'$'}opencode_entry.exe"
+        fi
+      }
+      opencode_is_elf() {
+        [ -f "${'$'}1" ] &&
+          [ "${'$'}(head -c 4 "${'$'}1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+      }
+      # Validate a package root without assuming it already lives in ${'$'}HOME.
+      opencode_works_at() {
+        opencode_probe="${'$'}1/bin/opencode"
+        [ -f "${'$'}opencode_probe" ] || opencode_probe="${'$'}1/bin/opencode.exe"
+        [ -f "${'$'}opencode_probe" ] || return 1
+        opencode_is_elf "${'$'}opencode_probe" || return 1
+        timeout -s KILL 20 "${'$'}opencode_probe" --version >/dev/null 2>&1
+      }
+      opencode_stamp() {
+        opencode_stamped_entry=${'$'}(opencode_entry_path) || return 1
+        opencode_is_elf "${'$'}opencode_stamped_entry" || return 1
+        stat -L -c '%s:%Y:%i:%d' "${'$'}opencode_stamped_entry" || return 1
+      }
+      opencode_stamped() {
+        opencode_identity=${'$'}(opencode_stamp) && [ -n "${'$'}opencode_identity" ] &&
+          [ "${'$'}(cat "${'$'}opencode_ready" 2>/dev/null)" = "ready:${'$'}opencode_identity" ]
+      }
+      mark_opencode_ready() {
+        opencode_identity=${'$'}(opencode_stamp) && [ -n "${'$'}opencode_identity" ] || {
+          rm -f "${'$'}opencode_ready"
+          return 1
+        }
+        printf 'ready:%s\n' "${'$'}opencode_identity" > "${'$'}opencode_ready.tmp" &&
+          mv -f "${'$'}opencode_ready.tmp" "${'$'}opencode_ready"
+      }
+      restore_opencode_package() {
+        if [ ! -e "${'$'}opencode_package" ] && [ -d "${'$'}opencode_previous" ]; then
+          mv "${'$'}opencode_previous" "${'$'}opencode_package" || return 1
+        fi
+      }
+      opencode_platform_name() {
+        opencode_arch=${'$'}(uname -m)
+        case "${'$'}opencode_arch" in
+          aarch64|arm64) opencode_arch=arm64 ;;
+          x86_64|amd64) opencode_arch=x64 ;;
+        esac
+        opencode_libc=
+        if [ -e /lib/ld-musl-aarch64.so.1 ] || [ -e /lib/ld-musl-x86_64.so.1 ] ||
+          [ -f /etc/alpine-release ]; then
+          opencode_libc=-musl
+        fi
+        printf 'opencode-linux-%s%s\n' "${'$'}opencode_arch" "${'$'}opencode_libc"
+      }
+      opencode_platform_spec() {
+        node --input-type=commonjs -e '
+          const fs = require("fs");
+          const wrapper = JSON.parse(fs.readFileSync(process.argv[1] + "/package.json"));
+          const version = (wrapper.optionalDependencies || {})[process.argv[2]];
+          if (version) console.log(process.argv[2] + "@" + version);
+        ' "${'$'}1" "${'$'}2" 2>/dev/null
+      }
+      # Install the platform package the wrapper declares and copy its native
+      # binary into the wrapper layout the launcher expects.
+      recover_opencode_platform() {
+        opencode_recover_root="${'$'}1"
+        opencode_recover_wrapper="${'$'}opencode_recover_root/lib/node_modules/opencode-ai"
+        opencode_platform=${'$'}(opencode_platform_name)
+        opencode_spec=${'$'}(opencode_platform_spec "${'$'}opencode_recover_wrapper" "${'$'}opencode_platform") || true
+        if [ -z "${'$'}opencode_spec" ]; then
+          case "${'$'}opencode_platform" in
+            *-musl)
+              opencode_platform="${'$'}{opencode_platform%-musl}"
+              opencode_spec=${'$'}(opencode_platform_spec "${'$'}opencode_recover_wrapper" "${'$'}opencode_platform") || true
+              ;;
+          esac
+        fi
+        [ -n "${'$'}opencode_spec" ] || return 1
+        opencode_platform_dir="${'$'}opencode_recover_root/lib/node_modules/${'$'}{opencode_spec%@*}"
+        if [ ! -f "${'$'}opencode_platform_dir/package.json" ]; then
+          npm install --global --force --prefix "${'$'}opencode_recover_root" --include=optional \
+            --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}opencode_spec" || return 1
+        fi
+        opencode_native=
+        for candidate in "${'$'}opencode_platform_dir/bin/opencode" "${'$'}opencode_platform_dir/bin/opencode.exe"; do
+          if [ -f "${'$'}candidate" ]; then opencode_native="${'$'}candidate"; break; fi
+        done
+        [ -n "${'$'}opencode_native" ] || return 1
+        mkdir -p "${'$'}opencode_recover_wrapper/bin" || return 1
+        # A wrapper that shipped a non-runnable bin/opencode must not shadow it.
+        rm -f "${'$'}opencode_recover_wrapper/bin/opencode" "${'$'}opencode_recover_wrapper/bin/opencode.exe" || return 1
+        cp "${'$'}opencode_native" "${'$'}opencode_recover_wrapper/bin/opencode.exe" || return 1
+        chmod u+rx "${'$'}opencode_recover_wrapper/bin/opencode.exe" || return 1
+      }
+      stage_opencode_package() (
+        opencode_stage="${'$'}HOME/.local/.opencode-stage"
+        rm -rf "${'$'}opencode_stage" || exit 1
+        mkdir -p "${'$'}opencode_stage" || exit 1
+        trap 'rm -rf "${'$'}opencode_stage"' EXIT
+        npm install --global --force --prefix "${'$'}opencode_stage" --include=optional \
+          --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai || exit 1
+        opencode_wrapper="${'$'}opencode_stage/lib/node_modules/opencode-ai"
+        if ! opencode_works_at "${'$'}opencode_wrapper"; then
+          recover_opencode_platform "${'$'}opencode_stage" || exit 1
+        fi
+        opencode_works_at "${'$'}opencode_wrapper" || exit 1
+        mkdir -p "${'$'}{opencode_package%/opencode-ai}" || exit 1
+        rm -rf "${'$'}opencode_previous" || exit 1
+        # Keep the durable backup after success: running sessions may still use it.
+        if [ -e "${'$'}opencode_package" ]; then mv "${'$'}opencode_package" "${'$'}opencode_previous" || exit 1; fi
+        trap 'restore_opencode_package; rm -rf "${'$'}opencode_stage"' EXIT
+        trap 'exit 1' HUP INT TERM
+        mv "${'$'}opencode_wrapper" "${'$'}opencode_package" || exit 1
+        if ! mark_opencode_ready; then
+          rm -rf "${'$'}opencode_package"
+          restore_opencode_package
+          exit 1
+        fi
+      )
+      prune_opencode_backup() (
+        exec 8>"${'$'}HOME/.cache/horus/opencode-install.lock"
+        flock -n 8 || exit 0
+        if opencode_stamped; then rm -rf "${'$'}opencode_previous"; fi
+      )
+      install_opencode_package() (
+        mkdir -p "${'$'}HOME/.cache/horus" || exit 1
+        # App provisioning and SSH share this lock, including crash recovery.
+        exec 8>"${'$'}HOME/.cache/horus/opencode-install.lock"
+        flock 8 || exit 1
+        restore_opencode_package || exit 1
+        if opencode_stamped; then exit 0; fi
+        # A healthy payload without its marker is restamped offline, not removed.
+        if opencode_works_at "${'$'}opencode_package"; then
+          mark_opencode_ready || exit 1
+          exit 0
+        fi
+        if ! stage_opencode_package; then
+          printf '%s\n' 'OpenCode recovery failed; the previous package was preserved. Check connectivity/free storage and retry.' >&2
+          exit 1
+        fi
+      )
+    """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
       export HOME=/root
@@ -1913,50 +2066,15 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           exit 23
         fi
       fi
-      opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
-      if [ ! -f "${'$'}opencode_entry" ]; then
-        opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
-      fi
-      opencode_payload_valid=false
-      opencode_payload_stamp=
-      if [ "${'$'}target" = opencode ] && [ -f "${'$'}opencode_entry" ]; then
-        if [ ! -x "${'$'}opencode_entry" ]; then chmod u+rx "${'$'}opencode_entry" || true; fi
-        if [ -x "${'$'}opencode_entry" ]; then
-          opencode_payload_stamp=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}opencode_entry" 2>/dev/null || true)
-          if [ -n "${'$'}opencode_payload_stamp" ] && [ "${'$'}(cat "${'$'}target_marker" 2>/dev/null || true)" = "ready:${'$'}opencode_payload_stamp" ]; then
-            # The ready stamp records the payload already validated after
-            # install. Avoid starting a second OpenCode process on every tap.
-            opencode_payload_valid=true
-          elif "${'$'}opencode_entry" --version >/dev/null 2>&1; then
-            opencode_payload_valid=true
-          fi
-        fi
-      fi
-      # A payload that answers --version only needs a fresh stamp (written
-      # below), so a missing marker never removes a working OpenCode offline.
-      if [ "${'$'}target" = opencode ] && [ "${'$'}opencode_payload_valid" != true ]; then
+      $OPENCODE_INSTALL_SCRIPT
+      if [ "${'$'}target" = opencode ] && opencode_stamped; then
+        prune_opencode_backup || true
+      elif [ "${'$'}target" = opencode ]; then
         mark_provision_stage opencode
-        # npm/postinstall can retain an existing corrupted selected binary.
-        # Remove only the replaceable package, preserving ~/.config/opencode.
-        rm -f "${'$'}target_marker"
-        if ! rm -rf /root/.local/lib/node_modules/opencode-ai; then
+        if ! run_downloading OpenCode "${'$'}(npm_download_kb opencode-ai)" /root/.npm /root/.cache/horus/opencode-install.log install_opencode_package; then
           mark_provision_stage opencode_failed
           exit 24
         fi
-        if ! run_downloading OpenCode "${'$'}(npm_download_kb opencode-ai)" /root/.npm /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
-          mark_provision_stage opencode_failed
-          exit 24
-        fi
-        opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
-        if [ ! -f "${'$'}opencode_entry" ]; then
-          opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
-        fi
-        if ! { test -f "${'$'}opencode_entry" && { [ -x "${'$'}opencode_entry" ] || chmod u+rx "${'$'}opencode_entry"; } && "${'$'}opencode_entry" --version >/dev/null; }; then
-          mark_provision_stage opencode_failed
-          exit 24
-        fi
-        opencode_payload_stamp=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}opencode_entry" 2>/dev/null || true)
-        opencode_payload_valid=true
       fi
 
       if [ "${'$'}target" != shell ] && [ "${'$'}target" != github ]; then
@@ -2060,10 +2178,14 @@ EOF
           exit 23
         fi
       else
+        if ! opencode_stamped; then
+          mark_provision_stage opencode_failed
+          exit 24
+        fi
         test -x /root/.local/bin/opencode
       fi
-      if [ "${'$'}target" = opencode ] && [ -n "${'$'}opencode_payload_stamp" ]; then
-        printf 'ready:%s\n' "${'$'}opencode_payload_stamp" > "${'$'}target_marker"
+      if [ "${'$'}target" = opencode ]; then
+        : # install_opencode_package already recorded validated readiness atomically.
       elif [ "${'$'}target" = codex ]; then
         : # install_codex_package already recorded validated readiness atomically.
       elif [ "${'$'}target" != shell ]; then
@@ -2273,10 +2395,6 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
         printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
         exit 1
       }
-      install_npm_agent() {
-        node_packages &&
-          npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
-      }
       # npm's bin links lose their execute bit under PRoot; launch the entry
       # points through small scripts instead, as the app does.
       write_launcher() {
@@ -2285,18 +2403,25 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
           chmod 755 "${'$'}launcher"
       }
 ${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
+${OPENCODE_INSTALL_SCRIPT.prependIndent("      ")}
       install_codex() {
         node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
       }
       install_opencode() {
-        install_npm_agent opencode-ai || return 1
+        node_packages || return 1
+        install_opencode_package || return 1
         # The package may pick a native binary named opencode.exe (it does on Alpine).
         entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
         [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
         test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
       }
       agent_ready() {
-        test -x "${'$'}launcher" && { [ "${'$'}tool" != codex ] || codex_stamped; }
+        test -x "${'$'}launcher" || return 1
+        case "${'$'}tool" in
+          codex) codex_stamped ;;
+          opencode) opencode_stamped ;;
+          *) true ;;
+        esac
       }
       if ! agent_ready; then
         mkdir -p "${'$'}HOME/.local/bin" "${'$'}cache"

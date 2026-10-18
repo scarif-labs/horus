@@ -1060,21 +1060,27 @@ class ProotSessionLauncherTest {
       val guestBin = File(guestRoot, ".local/bin").apply { mkdirs() }
       val payloadDir = File(guestRoot, ".local/lib/node_modules/opencode-ai/bin").apply { mkdirs() }
       val cacheDir = File(guestRoot, ".cache/horus").apply { mkdirs() }
-      val versionLog = File(base, "version.log")
       val npmLog = File(base, "npm.log")
       val packageLog = File(base, "package-manager.log")
-      val entry = File(payloadDir, "opencode")
-      val entryPath = entry.absolutePath
-      entry.writeText("#!/bin/sh\nif [ \"${'$'}1\" = --version ]; then printf 'version\\n' >> '${versionLog.absolutePath}'; fi\n")
-      entry.setExecutable(true)
+      val entry = File(payloadDir, "opencode.exe")
+      fun payload(file: File) {
+        file.writeBytes(byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00))
+        file.setExecutable(true)
+      }
       fun command(name: String, body: String) {
         File(guestBin, name).apply {
           writeText("#!/bin/sh\n$body\n")
           setExecutable(true)
         }
       }
+      payload(entry)
+      File(guestRoot, ".local/lib/node_modules/opencode-ai/package.json").writeText(
+        "{\"version\":\"1.19.0\",\"optionalDependencies\":{\"opencode-linux-x64\":\"1.19.0\",\"opencode-linux-x64-musl\":\"1.19.0\",\"opencode-linux-arm64\":\"1.19.0\",\"opencode-linux-arm64-musl\":\"1.19.0\"}}\n",
+      )
       command("zsh", "exit 0")
       command("node", "exit 0")
+      // recovery probes the payload through timeout; never start a real app here.
+      command("timeout", "exit 0")
       // This fast-path fixture has a ready Node/npm toolchain on either host
       // distribution. Never let a missing fixture invoke the host's apt/apk.
       for (manager in listOf("apt-get", "apk")) {
@@ -1090,14 +1096,26 @@ class ProotSessionLauncherTest {
         parentFile!!.mkdirs()
         writeText("{\"version\": \"${ProotSessionLauncher.UPSTREAM_NPM_VERSION}\"}\n")
       }
+      val wrapperJson =
+        "{\"version\":\"1.19.0\",\"optionalDependencies\":{\"opencode-linux-x64\":\"1.19.0\",\"opencode-linux-x64-musl\":\"1.19.0\",\"opencode-linux-arm64\":\"1.19.0\",\"opencode-linux-arm64-musl\":\"1.19.0\"}}"
       command(
         "npm",
-        "printf 'npm\\n' >> '${npmLog.absolutePath}'\n" +
-          "[ ! -e '${entryPath}' ] || exit 92\nmkdir -p '${payloadDir.absolutePath}'\n" +
-          "cat > '${entryPath}' <<'HORUS_TEST_ENTRY'\n#!/bin/sh\nif [ \"${'$'}1\" = --version ]; then printf 'version\\n' >> '${versionLog.absolutePath}'; fi\nHORUS_TEST_ENTRY\nchmod u+rx '${entryPath}'",
+        "printf 'npm %s\\n' \"${'$'}*\" >> '${npmLog.absolutePath}'\n" +
+          "prefix=; last=\n" +
+          "while [ \"${'$'}#\" -gt 0 ]; do if [ \"${'$'}1\" = --prefix ]; then shift; prefix=${'$'}1; fi; last=${'$'}1; shift; done\n" +
+          "case \"${'$'}last\" in\n" +
+          "  opencode-ai)\n" +
+          "    root=\"${'$'}prefix/lib/node_modules/opencode-ai\"; mkdir -p \"${'$'}root/bin\"\n" +
+          "    printf '%s\\n' '$wrapperJson' > \"${'$'}root/package.json\" ;;\n" +
+          "  opencode-linux-*@1.19.0)\n" +
+          "    name=${'$'}{last%@*}; root=\"${'$'}prefix/lib/node_modules/${'$'}name\"; mkdir -p \"${'$'}root/bin\"\n" +
+          "    printf '%s\\n' '{\"version\":\"1.19.0\"}' > \"${'$'}root/package.json\"\n" +
+          "    printf '\\177ELF\\002\\001\\001\\000' > \"${'$'}root/bin/opencode\"; chmod u+rx \"${'$'}root/bin/opencode\" ;;\n" +
+          "  *) exit 99 ;;\n" +
+          "esac",
       )
       val launcher = File(guestBin, "opencode")
-      val expectedLauncher = "#!/bin/sh\nexec \"${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode\" \"${'$'}@\"\n"
+      val expectedLauncher = "#!/bin/sh\nexec \"${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode.exe\" \"${'$'}@\"\n"
       launcher.writeText(expectedLauncher)
       launcher.setExecutable(true)
       Files.setLastModifiedTime(launcher.toPath(), FileTime.fromMillis(1_000_000_000_000L))
@@ -1125,7 +1143,6 @@ class ProotSessionLauncherTest {
           .apply {
             environment()["HORUS_TOOLCHAIN_TARGET"] = "opencode"
             environment()["HORUS_TEST_STAMP"] = "123:456:789:1"
-            environment()["HORUS_TEST_ENTRY"] = entryPath
           }
           .start()
         if (!process.waitFor(10, TimeUnit.SECONDS)) {
@@ -1145,8 +1162,7 @@ class ProotSessionLauncherTest {
         assertFalse(internalName, firstOutput.contains(internalName))
       }
       assertEquals("ready:123:456:789:1\n", File(cacheDir, "opencode.ready").readText())
-      assertEquals(0L, versionLog.length())
-      assertEquals(0L, npmLog.length())
+      assertFalse(npmLog.exists())
       assertEquals(expectedLauncher, launcher.readText())
       assertEquals(1_000_000_000_000L, Files.getLastModifiedTime(launcher.toPath()).toMillis())
 
@@ -1155,34 +1171,35 @@ class ProotSessionLauncherTest {
       val repairOutput = runProvision()
       assertTrue(repairOutput.contains("HORUS_TOOLCHAIN_READY"))
       assertEquals(expectedLauncher, launcher.readText())
-      assertEquals(0L, versionLog.length())
-      assertEquals(0L, npmLog.length())
+      assertFalse(npmLog.exists())
       assertTrue(Files.getLastModifiedTime(launcher.toPath()).toMillis() > 1_000_000_000_000L)
 
       File(cacheDir, "opencode.ready").delete()
       entry.delete()
       val installOutput = runProvision()
       assertTrue(installOutput.contains("HORUS_TOOLCHAIN_READY"))
-      assertEquals("npm\n", npmLog.readText())
-      assertEquals("version\n", versionLog.readText())
+      assertEquals(2, npmLog.readLines().size)
+      assertTrue(npmLog.readText().contains("--include=optional"))
+      assertEquals("ready:123:456:789:1\n", File(cacheDir, "opencode.ready").readText())
       assertTrue(entry.isFile && entry.canExecute())
+      assertEquals(expectedLauncher, launcher.readText())
       val config = File(guestRoot, ".config/opencode/user.json").apply {
         parentFile!!.mkdirs(); writeText("preserve user config")
       }
       entry.writeText("#!/bin/sh\nexit 91\n")
       File(cacheDir, "opencode.ready").writeText("ready:old-payload\n")
       assertTrue(runProvision().contains("HORUS_TOOLCHAIN_READY"))
-      assertEquals("npm\nnpm\n", npmLog.readText())
-      assertEquals("version\nversion\n", versionLog.readText())
+      assertEquals(4, npmLog.readLines().size)
+      assertTrue(entry.isFile && entry.canExecute())
       assertEquals("preserve user config", config.readText())
 
       // A working payload without its marker is restamped offline, never removed.
       File(cacheDir, "opencode.ready").delete()
       command("npm", "printf 'npm\\n' >> '${npmLog.absolutePath}'\nexit 1")
       assertTrue(runProvision().contains("HORUS_TOOLCHAIN_READY"))
-      assertEquals("npm\nnpm\n", npmLog.readText())
-      assertTrue(entry.isFile && entry.canExecute())
+      assertEquals(4, npmLog.readLines().size)
       assertEquals("ready:123:456:789:1\n", File(cacheDir, "opencode.ready").readText())
+      assertTrue(entry.isFile && entry.canExecute())
     } finally {
       base.deleteRecursively()
     }
@@ -1699,6 +1716,7 @@ class ProotSessionLauncherTest {
         val body = lines.subList(start + 1, end).joinToString("\n") + "\n"
         if (delimiter == "HORUS_INSTALLER") {
           assertTrue("shared Codex functions must survive interpolation", body.contains(ProotSessionLauncher.CODEX_INSTALL_SCRIPT))
+          assertTrue("shared OpenCode functions must survive interpolation", body.contains(ProotSessionLauncher.OPENCODE_INSTALL_SCRIPT))
           assertTrue(body.contains("install_codex() {"))
           assertTrue(body.contains("exec \"\$launcher\" \"\$@\""))
         }
