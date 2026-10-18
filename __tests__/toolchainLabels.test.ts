@@ -1,4 +1,4 @@
-import {formatSessionAge} from '../src/terminal/toolchainLabels';
+import {formatSessionAge, toolchainInstallLabel} from '../src/terminal/toolchainLabels';
 
 describe('formatSessionAge', () => {
   const now = 1_700_000_000_000;
@@ -22,5 +22,11 @@ describe('formatSessionAge', () => {
 
   test('treats a start time in the future as just started', () => {
     expect(formatSessionAge(now + 5 * minute)).toBe('just started');
+  });
+});
+
+describe('toolchainInstallLabel', () => {
+  test('returns human-readable name for antigravity', () => {
+    expect(toolchainInstallLabel('antigravity')).toBe('Antigravity');
   });
 });

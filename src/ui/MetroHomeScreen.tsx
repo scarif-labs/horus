@@ -204,11 +204,14 @@ export function MetroHomeScreen({githubAccount, onOpen, onOpenGithubLogin, onOpe
           <View testID="metro-harnesses">
             <Text style={styles.sectionLabel}>OPEN A SESSION</Text>
             <View style={styles.toolRow}>
+              <AppTile logo="antigravity" title="Antigravity" onPress={() => onOpen({title: 'Antigravity', eyebrow: 'GOOGLE AGENT', command: buildZshCommand('agy'), toolchain: 'antigravity'})} />
               <AppTile logo="claude" title="Claude Code" onPress={() => onOpen({title: 'Claude Code', eyebrow: 'AI WORKBENCH', command: buildZshCommand('claude'), toolchain: 'claude'})} />
-              <AppTile logo="codex" title="Codex" onPress={() => onOpen({title: 'Codex', eyebrow: 'AI WORKBENCH', command: buildZshCommand('codex'), toolchain: 'codex'})} />
             </View>
             <View style={styles.toolRow}>
+              <AppTile logo="codex" title="Codex" onPress={() => onOpen({title: 'Codex', eyebrow: 'AI WORKBENCH', command: buildZshCommand('codex'), toolchain: 'codex'})} />
               <AppTile logo="opencode" title="OpenCode" onPress={() => onOpen({title: 'OpenCode', eyebrow: 'AI WORKBENCH', command: buildZshScriptCommand('opencode'), toolchain: 'opencode'})} />
+            </View>
+            <View style={styles.toolRow}>
               <AppTile icon=">_" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
             </View>
           </View>

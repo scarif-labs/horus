@@ -1181,7 +1181,8 @@ class TerminalRuntimeModule(
 
   private fun isNativeHarnessTarget(target: String?): Boolean = target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
     target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
+    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ||
+    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY
 
   override fun invalidate() {
     invalidated.set(true)

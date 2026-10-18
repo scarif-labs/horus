@@ -15,6 +15,7 @@ internal object TerminalHarnessUsers {
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE to 61_001,
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX to 61_002,
     TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE to 61_003,
+    TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY to 61_004,
   )
 
   fun forTarget(target: String?, profileUsername: String): TerminalHarnessUser? {

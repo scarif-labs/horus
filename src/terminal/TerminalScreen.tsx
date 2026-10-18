@@ -134,6 +134,7 @@ function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'claude') return 'toolchain_install_failed';
   if (target === 'codex') return 'toolchain_codex_install_failed';
   if (target === 'opencode') return 'toolchain_opencode_install_failed';
+  if (target === 'antigravity') return 'toolchain_antigravity_install_failed';
   return 'toolchain_install_failed';
 }
 
@@ -281,7 +282,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // wait for a completion marker, and the GitHub login flow, keep the JS path
   // because they scan output in JS.
   const nativeHarness = Platform.OS === 'android' && !Platform.isTesting &&
-    (toolchain === 'claude' || toolchain === 'codex' || toolchain === 'opencode' ||
+    (toolchain === 'claude' || toolchain === 'codex' || toolchain === 'opencode' || toolchain === 'antigravity' ||
       (toolchain === 'shell' && completionMarker === undefined));
   const nativeTerminalInput = Platform.OS === 'android' && !Platform.isTesting;
   const nativeOpenCode = nativeHarness && toolchain === 'opencode';

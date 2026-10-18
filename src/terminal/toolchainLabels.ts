@@ -5,6 +5,7 @@ function toolchainName(target: TerminalToolchainTarget, shellLabel: string): str
   if (target === 'claude') return 'Claude Code';
   if (target === 'codex') return 'Codex';
   if (target === 'opencode') return 'OpenCode';
+  if (target === 'antigravity') return 'Antigravity';
   if (target === 'github') return 'GitHub CLI';
   return shellLabel;
 }

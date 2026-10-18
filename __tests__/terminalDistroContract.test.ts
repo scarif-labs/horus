@@ -66,6 +66,7 @@ describe('rootfs id and request id validation', () => {
 
   it('accepts only the mirrored native error-code set', () => {
     expect(isValidTerminalRuntimeErrorCode('digest_mismatch')).toBe(true);
+    expect(isValidTerminalRuntimeErrorCode('toolchain_antigravity_install_failed')).toBe(true);
     expect(isValidTerminalRuntimeErrorCode('size_mismatch')).toBe(false);
     expect(isValidTerminalRuntimeErrorCode('')).toBe(false);
   });

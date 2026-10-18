@@ -1,4 +1,4 @@
-import {CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from '../terminal/commandFactory';
+import {ANTIGRAVITY_COMMAND, CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from '../terminal/commandFactory';
 import type {MetroLaunchTarget} from '../ui/MetroHomeScreen';
 
 export const WORKSPACE_PROJECTS_DIRECTORY = '/workspace/projects';
@@ -11,7 +11,13 @@ export function workspaceProjectDirectory(name: string): string | undefined {
 
 export function harnessSessionTarget(harness: MetroLaunchTarget, name: string, directory: string): MetroLaunchTarget {
   const toolchain = harness.toolchain ?? 'shell';
-  const command = toolchain === 'opencode' ? 'opencode' : toolchain === 'claude' ? CLAUDE_COMMAND : 'codex';
+  const command = toolchain === 'antigravity'
+    ? ANTIGRAVITY_COMMAND
+    : toolchain === 'opencode'
+    ? 'opencode'
+    : toolchain === 'claude'
+    ? CLAUDE_COMMAND
+    : 'codex';
   const script = `mkdir -p ${shellQuote(directory)} && cd ${shellQuote(directory)} && exec ${command}`;
   return {
     title: harness.title,

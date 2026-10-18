@@ -609,6 +609,16 @@ class ProotSessionLauncherTest {
         "opencode-ai",
         ".claude/CLAUDE.md",
       ),
+      HarnessCase(
+        TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
+        "antigravity",
+        ".gemini/GEMINI.md",
+        ProotSessionLauncher.ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN,
+        ProotSessionLauncher.ANTIGRAVITY_AGENT_INSTRUCTIONS_END,
+        "harness_antigravity",
+        "agy",
+        ".claude/CLAUDE.md",
+      ),
     )
 
     val base = Files.createTempDirectory("horus-agent-global-guidance").toFile()
@@ -670,6 +680,7 @@ class ProotSessionLauncherTest {
     val cases = listOf(
       SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "claude", ".claude", "Claude Code"),
       SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE, "opencode", ".config", "OpenCode"),
+      SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY, "antigravity", ".gemini", "Antigravity"),
     )
     val base = Files.createTempDirectory("horus-agent-guidance-symlink").toFile()
     try {
@@ -1047,6 +1058,19 @@ class ProotSessionLauncherTest {
           rootfs,
           home,
           TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
+        ),
+      )
+      val agyBin = File(home, ".local/bin/agy").apply {
+        requireNotNull(parentFile).mkdirs()
+        writeText("#!/bin/sh\nexec agy \"\$@\"\n")
+        setExecutable(true)
+      }
+      File(home, ".cache/horus/antigravity.ready").apply { requireNotNull(parentFile).mkdirs(); writeText("ready\n") }
+      assertTrue(
+        launcher(base, hostProc).hasProvisionedToolchain(
+          rootfs,
+          home,
+          TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
         ),
       )
     } finally {

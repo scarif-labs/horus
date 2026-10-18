@@ -34,6 +34,7 @@ object TerminalRuntimeContract {
   const val TOOLCHAIN_TARGET_CLAUDE = "claude"
   const val TOOLCHAIN_TARGET_CODEX = "codex"
   const val TOOLCHAIN_TARGET_OPENCODE = "opencode"
+  const val TOOLCHAIN_TARGET_ANTIGRAVITY = "antigravity"
 
   private val TOOLCHAIN_TARGETS = setOf(
     TOOLCHAIN_TARGET_SHELL,
@@ -41,6 +42,7 @@ object TerminalRuntimeContract {
     TOOLCHAIN_TARGET_CLAUDE,
     TOOLCHAIN_TARGET_CODEX,
     TOOLCHAIN_TARGET_OPENCODE,
+    TOOLCHAIN_TARGET_ANTIGRAVITY,
   )
 
   fun isValidRuntimeState(state: String?): Boolean = RUNTIME_STATES.contains(state)

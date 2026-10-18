@@ -45,7 +45,7 @@ type PendingCompletion =
 
 function isHarnessTarget(target: MetroLaunchTarget): boolean {
   return target.sessionId === undefined && (
-    target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode'
+    target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode' || target.toolchain === 'antigravity'
   );
 }
 

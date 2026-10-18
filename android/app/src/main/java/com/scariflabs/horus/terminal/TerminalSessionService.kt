@@ -1253,6 +1253,7 @@ class TerminalSessionService : Service() {
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "Claude Code"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "Codex"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "OpenCode"
+    TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> "Antigravity"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "GitHub CLI"
     else -> "Bare terminal"
   }
@@ -1394,6 +1395,7 @@ class TerminalSessionService : Service() {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude-install.log"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex-install.log"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode-install.log"
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> "antigravity-install.log"
       else -> "alpine-bootstrap.log"
     }
     val targetLog = File(logDirectory, logName).let { file ->
@@ -1414,6 +1416,7 @@ class TerminalSessionService : Service() {
       "claude_failed" -> "toolchain_install_failed"
       "codex_failed" -> "toolchain_codex_install_failed"
       "opencode_failed" -> "toolchain_opencode_install_failed"
+      "antigravity_failed" -> "toolchain_antigravity_install_failed"
       "normalize_failed" -> "toolchain_normalization_failed"
       "verify_failed" -> "toolchain_incomplete"
       "apk_failed" -> "toolchain_install_failed"
@@ -1571,7 +1574,8 @@ class TerminalSessionService : Service() {
   private fun isHarnessTarget(target: String?): Boolean =
     target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
       target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
+      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ||
+      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY
 
   private fun sessionStartedAt(record: TerminalSessionJournal.Record): String = DateUtils.formatDateTime(
     this,

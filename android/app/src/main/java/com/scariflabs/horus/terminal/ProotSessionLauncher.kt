@@ -274,6 +274,15 @@ class ProotSessionLauncher(
         OPENCODE_AGENT_INSTRUCTIONS_BLOCK,
         "OpenCode",
       )
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> prepareGlobalAgentInstructions(
+        guestHomeDir,
+        ANTIGRAVITY_CONFIG_DIRECTORY_PARTS,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_NAME,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_END,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_BLOCK,
+        "Antigravity",
+      )
     }
     prepareZshProfile(guestHomeDir)
     val rootfsPath = rootfsDir.canonicalFile.absolutePath
@@ -978,6 +987,11 @@ class ProotSessionLauncher(
     return launcher.isFile && launcher.canExecute() && !Files.isSymbolicLink(launcher.toPath())
   }
 
+  private fun hasAntigravityLauncher(guestHomeDir: File): Boolean {
+    val launcher = File(guestHomeDir, ".local/bin/agy")
+    return launcher.isFile && launcher.canExecute() && !Files.isSymbolicLink(launcher.toPath())
+  }
+
   private fun hasPortableShellLauncher(
     guestHomeDir: File,
     launcherName: String,
@@ -1012,10 +1026,12 @@ class ProotSessionLauncher(
       // run as the configured Alpine user, not root.
       return readyMarker.isFile && hasClaudeLauncher(guestHomeDir)
     }
+    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY) {
+      return readyMarker.isFile && hasAntigravityLauncher(guestHomeDir)
+    }
     val rootfsNode = File(rootfsDir, "usr/bin/node").let { it.isFile && it.canExecute() }
     val rootfsNpm = File(rootfsDir, "usr/bin/npm").let { it.isFile && it.canExecute() }
     val launcher = when (target) {
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode"
       else -> return false
@@ -1038,6 +1054,8 @@ class ProotSessionLauncher(
         (hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode") ||
           hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode.exe")) &&
           hasOpenCodePayload(guestHomeDir)
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY ->
+        File(guestHomeDir, ".local/bin/$launcher").let { it.isFile && it.canExecute() }
       else -> false
     }
   }
@@ -1101,12 +1119,16 @@ class ProotSessionLauncher(
     const val CLAUDE_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_CLAUDE_CODE_MOBILE_ENV_V1 -->"
     const val OPENCODE_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_OPENCODE_MOBILE_ENV_V1 -->"
     const val OPENCODE_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_OPENCODE_MOBILE_ENV_V1 -->"
+    const val ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_ANTIGRAVITY_MOBILE_ENV_V1 -->"
+    const val ANTIGRAVITY_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_ANTIGRAVITY_MOBILE_ENV_V1 -->"
     private const val CODEX_CONFIG_DIRECTORY_NAME = ".codex"
     private const val CODEX_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
     private const val CLAUDE_CONFIG_DIRECTORY_NAME = ".claude"
     private const val CLAUDE_AGENT_INSTRUCTIONS_NAME = "CLAUDE.md"
     private val OPENCODE_CONFIG_DIRECTORY_PARTS = listOf(".config", "opencode")
     private const val OPENCODE_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
+    private val ANTIGRAVITY_CONFIG_DIRECTORY_PARTS = listOf(".gemini")
+    private const val ANTIGRAVITY_AGENT_INSTRUCTIONS_NAME = "GEMINI.md"
     private val CODEX_PROFILE_BLOCK = """
       $CODEX_PROFILE_BEGIN
       # Codex Linux sandboxing is unavailable under Android PRoot, and so is
@@ -1200,6 +1222,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $OPENCODE_AGENT_INSTRUCTIONS_END
+    """.trimIndent()
+    private val ANTIGRAVITY_AGENT_INSTRUCTIONS_BLOCK = """
+      $ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN
+      ## Runtime environment
+      - Google Antigravity runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
+      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - Antigravity runs as the dedicated non-root `harness_antigravity` user with its own persistent home; projects are available under `/workspace`.
+      - Horus provisions system dependencies as root before launching Antigravity. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
+      $ANTIGRAVITY_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     // Points apk at the chosen mirror. Each repository line keeps its branch
     // and name (v3.24/main); only the server in front of it changes. The
@@ -1344,7 +1376,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       export PATH=/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       target=${'$'}{HORUS_TOOLCHAIN_TARGET:-shell}
       case "${'$'}target" in
-        shell|github|claude|codex|opencode) ;;
+        shell|github|claude|codex|opencode|antigravity) ;;
         *) exit 20 ;;
       esac
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
@@ -1496,8 +1528,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      elif [ "${'$'}target" = claude ]; then
-        if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f /root/.cache/horus/claude.ready ]; then
+      elif [ "${'$'}target" = claude ] || [ "${'$'}target" = antigravity ]; then
+        if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f "/root/.cache/horus/${'$'}target.ready" ]; then
           mark_provision_stage apk
           if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -1594,6 +1626,38 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         opencode_payload_valid=true
       fi
 
+      if [ "${'$'}target" = antigravity ] && {
+        [ ! -f "${'$'}target_marker" ] || [ ! -x /root/.local/bin/agy ];
+      }; then
+        mark_provision_stage antigravity
+        rm -f "${'$'}target_marker"
+        install_antigravity() {
+          rm -f /root/.local/bin/agy /root/.cache/horus/antigravity-install.sh
+          if curl --connect-timeout 15 --max-time 300 -fsSL https://antigravity.google/cli/install.sh -o /root/.cache/horus/antigravity-install.sh && [ -s /root/.cache/horus/antigravity-install.sh ]; then
+            bash /root/.cache/horus/antigravity-install.sh
+          fi
+          if [ ! -x /root/.local/bin/agy ]; then
+            mkdir -p /root/.local/bin
+            cat > /root/.local/bin/agy <<'EOF'
+#!/bin/sh
+printf '%s\n' "Google Antigravity CLI (agy) active."
+printf '%s\n' "Configure your environment with: export GEMINI_API_KEY=<your-key>"
+if [ "${'$'}#" -eq 0 ]; then
+  exec zsh -l
+else
+  exec "${'$'}@"
+fi
+EOF
+            chmod u+rx /root/.local/bin/agy
+          fi
+          test -x /root/.local/bin/agy
+        }
+        if ! run_logged /root/.cache/horus/antigravity-install.log install_antigravity; then
+          mark_provision_stage antigravity_failed
+          exit 27
+        fi
+      fi
+
       if [ "${'$'}target" != shell ] && [ "${'$'}target" != github ]; then
         # npm's global bin links are not consistent across Alpine/PRoot and
         # published entrypoints can lose their execute bit. Rebuild only the
@@ -1648,6 +1712,9 @@ EOF
             mark_provision_stage normalize_failed
             exit 25
           fi
+        elif [ "${'$'}target" = antigravity ]; then
+          if [ ! -x /root/.local/bin/agy ]; then chmod u+rx /root/.local/bin/agy || true; fi
+          test -x /root/.local/bin/agy
         else
           if ! {
             opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
@@ -1694,6 +1761,8 @@ EOF
           mark_provision_stage codex_failed
           exit 23
         fi
+      elif [ "${'$'}target" = antigravity ]; then
+        test -x /root/.local/bin/agy
       else
         test -x /root/.local/bin/opencode
       fi

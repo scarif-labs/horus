@@ -47,6 +47,6 @@ data class DistroStorePaths(val base: File) {
   )
 
   private companion object {
-    val HARNESS_HOME_KEYS = listOf("claude", "codex", "opencode")
+    val HARNESS_HOME_KEYS = listOf("claude", "codex", "opencode", "antigravity")
   }
 }

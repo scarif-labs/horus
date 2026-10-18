@@ -16,6 +16,7 @@ export function buildZshCommand(command?: string): string {
  * pid and concurrent sessions never share a socket.
  */
 export const CLAUDE_COMMAND = 'claude --messaging-socket-path "/tmp/claude-messaging-$(id -u)/$$.sock"';
+export const ANTIGRAVITY_COMMAND = 'agy';
 
 /** Runs a fixed guest script without loading interactive or login startup files. */
 export function buildZshScriptCommand(command: string): string {

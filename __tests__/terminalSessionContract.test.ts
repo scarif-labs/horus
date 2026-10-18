@@ -109,6 +109,12 @@ describe('request builders', () => {
       columns: 80,
       toolchain: 'github',
     });
+    expect(buildStartSessionRequest('req-2-antigravity', {toolchain: 'antigravity'})).toEqual({
+      requestId: 'req-2-antigravity',
+      rows: 24,
+      columns: 80,
+      toolchain: 'antigravity',
+    });
     expect(buildStartSessionRequest('req-2-utility', {toolchain: 'shell', countsAgainstSessionLimit: false})).toEqual({
       requestId: 'req-2-utility',
       rows: 24,

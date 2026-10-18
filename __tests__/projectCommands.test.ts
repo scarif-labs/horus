@@ -110,4 +110,14 @@ describe('harnessSessionTarget', () => {
       returnTo: 'home',
     });
   });
+
+  it('starts Antigravity through zsh with AGY command', () => {
+    expect(harnessSessionTarget({title: 'Antigravity', eyebrow: 'HARNESS', toolchain: 'antigravity'}, 'demo', directory)).toEqual({
+      title: 'Antigravity',
+      eyebrow: 'demo',
+      command: `${preamble} exec zsh -lic 'mkdir -p '\\''/workspace/projects/demo'\\'' && cd '\\''/workspace/projects/demo'\\'' && exec agy'`,
+      toolchain: 'antigravity',
+      returnTo: 'home',
+    });
+  });
 });
