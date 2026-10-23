@@ -141,7 +141,6 @@ def serve(conn, allowed_uid):
         os.close(master)
     else:
         send(conn, {'ok': True})
-    log('uid %d runs %s' % (uid, ' '.join(argv)[:200]))
     # Relay the caller's signals until the command ends. If the caller goes
     # away (its terminal closed), hang up on the command like a terminal would.
     caller_gone = False

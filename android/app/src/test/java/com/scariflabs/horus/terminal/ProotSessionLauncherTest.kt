@@ -1776,6 +1776,7 @@ class ProotSessionLauncherTest {
         assertTrue("${file.name} is not executable", file.isFile && file.canExecute())
         assertTrue(file.readText().startsWith("#!/usr/bin/python3\n"))
       }
+      assertFalse("sudo helper must not persist command arguments", helper.readText().contains("log('uid %d runs %s'"))
 
       val remote = launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
       assertTrue(remote[remote.indexOf("horus-remote-access") - 1].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
