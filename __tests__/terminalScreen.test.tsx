@@ -1261,6 +1261,18 @@ describe('TerminalScreen', () => {
     };
 
     expect(renderer.root.findByProps({testID: 'terminal-key-transcript-history'}).props.accessibilityLabel).toBe('Open transcript history');
+    for (const testID of [
+      'terminal-key-esc', 'terminal-key-slash', 'terminal-key-dash',
+      'terminal-keyboard-toggle', 'terminal-key-arrow-up', 'terminal-key-paste',
+      'terminal-key-transcript-history', 'terminal-key-tab', 'terminal-key-ctrl',
+      'terminal-key-alt', 'terminal-key-arrow-left', 'terminal-key-arrow-down',
+      'terminal-key-arrow-right', 'terminal-key-return',
+    ]) {
+      expect(renderer.root.findByProps({testID}).findByType(Text).props).toMatchObject({
+        maxFontSizeMultiplier: 1.1,
+        numberOfLines: 1,
+      });
+    }
     await press('terminal-key-transcript-history');
     expect(renderer.root.findByProps({testID: 'terminal-key-transcript-history'}).props.accessibilityLabel).toBe('Close transcript history');
     await press('terminal-key-transcript-history');

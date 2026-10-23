@@ -30,7 +30,7 @@ function TerminalToolbarButton({active = false, accessibilityLabel, disabled, la
       onPress={onPress}
       style={[styles.keyButton, active && styles.modifierButtonActive]}
       testID={testID}>
-      <Text style={[styles.keyButtonText, active && styles.modifierButtonTextActive]}>{label}</Text>
+      <Text maxFontSizeMultiplier={1.1} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -87,7 +87,7 @@ function TerminalReturnLowerHalf({disabled, onPress, pressed, setPressed}: Termi
       <View pointerEvents="none" style={styles.returnKeyNotch} testID="terminal-key-return-notch" />
       {/* An image, not ↵: the UI font draws that glyph below the baseline. */}
       <Image source={RETURN_ICON} style={styles.returnKeyIcon} />
-      <Text style={styles.returnKeyText}>RETURN</Text>
+      <Text maxFontSizeMultiplier={1.1} numberOfLines={1} style={styles.returnKeyText}>RETURN</Text>
     </RNPressable>
   );
 }
