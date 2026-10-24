@@ -58,6 +58,61 @@ class ProvisioningDiagnosticsTest {
     assertEquals("cancelled", result?.outcome)
     assertTrue(interrupted)
   }
+  @Test fun cancellationBeforeSpawnDoesNotStartAProcess() {
+    var spawned = false
+    val result = ProvisioningProcess.run(launch("exit 0"), 1000,
+      started = { spawned = true }, cancelled = { true })
+    assertFalse(spawned)
+    assertEquals("cancelled", result.outcome)
+  }
+  @Test fun cancellationAtRegistrationCannotReportSuccess() {
+    var cancelled = false
+    var owned: Process? = null
+    val result = ProvisioningProcess.run(launch("exit 0"), 1000,
+      started = { owned = it; cancelled = true },
+      finished = { assertFalse(it.isAlive); owned = null }, cancelled = { cancelled })
+    assertEquals("cancelled", result.outcome)
+    assertNull(owned)
+  }
+  @Test fun interruptedBeforeSpawnPreservesInterruptAndDoesNotLaunch() {
+    var spawned = false
+    Thread.currentThread().interrupt()
+    try {
+      assertEquals("cancelled", ProvisioningProcess.run(launch("exit 0"), 1000,
+        started = { spawned = true }).outcome)
+      assertFalse(spawned)
+      assertTrue(Thread.currentThread().isInterrupted)
+    } finally { Thread.interrupted() }
+  }
+  @Test fun registrationExceptionStillStopsAndReleasesProcess() {
+    var owned: Process? = null
+    try {
+      ProvisioningProcess.run(launch("exec sleep 30"), 1000,
+        started = { owned = it; throw IllegalStateException("fixture") },
+        finished = { assertFalse(it.isAlive); owned = null })
+      fail("registration exception should propagate")
+    } catch (_: IllegalStateException) { assertNull(owned) }
+  }
+  @Test fun cancellationObservedAfterSuccessfulExitCannotReportSuccess() {
+    var checks = 0
+    val result = ProvisioningProcess.run(launch("exit 0"), 1000,
+      cancelled = { ++checks >= 3 })
+    assertEquals("cancelled", result.outcome)
+    assertFalse(result.succeeded)
+  }
+  @Test(timeout = 5000) fun unfinishedCleanupRetainsOwnershipAndOnlyWaitsOnce() {
+    var owned: Process? = null
+    var stops = 0
+    var released = false
+    try {
+      val result = ProvisioningProcess.run(launch("exec sleep 60"), 1,
+        started = { owned = it }, stop = { stops++ }, finished = { released = true })
+      assertEquals("timed_out", result.outcome)
+      assertEquals(1, stops)
+      assertFalse(released)
+      assertTrue(owned!!.isAlive)
+    } finally { owned?.destroyForcibly()?.waitFor() }
+  }
   @Test fun successRemainsSuccess() {
     val result = run("echo HORUS_INSTALL_STAGE=ready; exit 0")
     assertTrue(result.succeeded)

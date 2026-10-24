@@ -124,8 +124,10 @@ internal object ProvisioningProcess {
     started: (Process) -> Unit = {},
     finished: (Process) -> Unit = {},
     stop: (Process) -> Unit = ::stop,
+    cancelled: () -> Boolean = { false },
   ): ProvisioningResult {
     val output = ProvisioningOutput()
+    if (Thread.currentThread().isInterrupted || cancelled()) return output.result("cancelled", null)
     val process = try {
       ProcessBuilder(launch.argv).apply {
         launch.workingDirectory?.let(::directory)
@@ -136,8 +138,9 @@ internal object ProvisioningProcess {
         }
         redirectErrorStream(true)
       }.start()
-    } catch (_: Exception) { return output.result("spawn_failed", null) }
-    started(process)
+    } catch (_: Exception) {
+      return output.result(if (Thread.currentThread().isInterrupted || cancelled()) "cancelled" else "spawn_failed", null)
+    }
     val drain = Thread {
       try {
         val reader = process.inputStream.reader(Charsets.UTF_8)
@@ -153,16 +156,23 @@ internal object ProvisioningProcess {
     }.apply { name = "horus-toolchain-output"; isDaemon = true }
     drain.start()
     var outcome = "failed"
+    var stopRequested = false
+    fun requestStop() { stopRequested = true; stop(process) }
     try {
-      outcome = if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-        stop(process); "timed_out"
-      } else if (process.exitValue() == 0) "succeeded" else "failed"
+      started(process)
+      outcome = if (Thread.currentThread().isInterrupted || cancelled()) {
+        requestStop(); "cancelled"
+      } else if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+        requestStop(); "timed_out"
+      } else if (Thread.currentThread().isInterrupted || cancelled()) "cancelled" else if (process.exitValue() == 0) "succeeded" else "failed"
     } catch (_: InterruptedException) {
-      stop(process)
+      requestStop()
       outcome = "cancelled"
       Thread.currentThread().interrupt()
     } finally {
-      finished(process)
+      // An exception in registration must not abandon a process either.
+      if (process.isAlive && !stopRequested) requestStop()
+      if (!process.isAlive) finished(process)
       // Give already-exited output a bounded drain window; descendants may keep the pipe open.
       if (!Thread.currentThread().isInterrupted) runCatching { drain.join(500) }
       runCatching { process.inputStream.close() }
@@ -171,10 +181,17 @@ internal object ProvisioningProcess {
     val result = output.result(outcome, runCatching { process.exitValue() }.getOrNull())
     return if (result.succeeded && result.stage?.endsWith("_failed") == true) result.copy(outcome = "incomplete") else result
   }
-  private fun stop(process: Process) {
-    runCatching { process.destroy() }
-    if (runCatching { process.waitFor(2000, TimeUnit.MILLISECONDS) }.getOrDefault(false)) return
-    runCatching { process.destroyForcibly() }
-    runCatching { process.waitFor(2000, TimeUnit.MILLISECONDS) }
+  // The native supervisor owns escalation and reaping. Killing the supervisor
+  // would discard that ownership and let a PRoot tracee escape.
+  internal fun stop(process: Process) {
+    var interrupted = Thread.interrupted()
+    try {
+      runCatching { process.destroy() }
+      val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(6)
+      while (process.isAlive && System.nanoTime() < deadline) {
+        try { process.waitFor(50, TimeUnit.MILLISECONDS) }
+        catch (_: InterruptedException) { interrupted = true }
+      }
+    } finally { if (interrupted) Thread.currentThread().interrupt() }
   }
 }

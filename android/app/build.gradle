@@ -175,6 +175,20 @@ tasks.register("buildHorusPtyHelper", Exec) {
             ptyOutput.absolutePath
 }
 
+// Executable subreaper, packaged in executable APK-native storage.
+def provisionSupervisorSource = file("src/main/cpp/provision_supervisor.c")
+tasks.register("buildProvisionSupervisor", Exec) {
+    def outputDir = new File(ptyHelperStagingDir, "arm64-v8a")
+    inputs.file(provisionSupervisorSource)
+    outputs.file(new File(outputDir, "libhorus_provision.so"))
+    doFirst { outputDir.mkdirs() }
+    commandLine resolveNdkClang(),
+            "--target=aarch64-linux-android${rootProject.ext.minSdkVersion}",
+            "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-fPIE", "-pie",
+            "-Wl,-z,max-page-size=16384", provisionSupervisorSource.absolutePath,
+            "-o", new File(outputDir, "libhorus_provision.so").absolutePath
+}
+
 // React Native's CMake entry point checks for app-level Codegen at CMake
 // configure time.  The React Gradle plugin already makes preBuild generate
 // Codegen, but AGP can configure an existing .cxx graph before that generated
@@ -249,7 +263,7 @@ tasks.configureEach { nativeTask ->
 // Ensure every APK variant that packages native libraries has built the
 // runtime and generated its digest manifest first.
 tasks.named("preBuild").configure {
-    dependsOn("generateAlpineRuntimeManifest", verifyAppCodegenArtifacts, "buildHorusPtyHelper")
+    dependsOn("generateAlpineRuntimeManifest", verifyAppCodegenArtifacts, "buildHorusPtyHelper", "buildProvisionSupervisor")
 }
 
 tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

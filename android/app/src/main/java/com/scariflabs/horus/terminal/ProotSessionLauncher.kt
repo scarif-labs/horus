@@ -104,7 +104,9 @@ class ProotSessionLauncher(
     term = term,
     command = listOf(GUEST_SHELL, "-c", TOOLCHAIN_PROVISION_SCRIPT),
     toolchainTarget = target,
-  )
+  ).let { launch ->
+    launch.copy(argv = listOf(File(runtime.libraryDir, "libhorus_provision.so").absolutePath) + launch.argv)
+  }
 
   /**
    * Runs the idempotent target installer in the visible PTY, then hands the

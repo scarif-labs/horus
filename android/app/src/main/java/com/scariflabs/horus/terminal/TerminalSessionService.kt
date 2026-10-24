@@ -328,9 +328,8 @@ class TerminalSessionService : Service() {
     stopping = true
     TerminalDebugLog.record(this, "service_destroyed")
     handler.removeCallbacks(turnTick)
-    stopProvisionProcess()
+    cancelProvisioning()
     if (remoteServerDelegate.isInitialized()) runCatching { remoteServer.close() }
-    provisionExecutor.shutdownNow()
     worker.shutdownNow()
     if (supervisorDelegate.isInitialized()) {
       runCatching { supervisor.shutdownAll("service_destroyed") }
@@ -643,6 +642,12 @@ class TerminalSessionService : Service() {
       sendResponse(reply, errorResponse(requestId, "invalid_request"))
       return
     }
+    // Admission precedes readiness and log mutation. A previous supervisor
+    // can still own cleanup after a bounded caller wait has expired.
+    if (provisionInProgress.get() || provisionProcess.get()?.isAlive == true) {
+      sendResponse(reply, provisionError(requestId, "install_in_progress", ProvisioningResult("not_started")))
+      return
+    }
     when (val built = specFactory.buildProvision(target!!)) {
       is TerminalSessionSpecFactory.ProvisionBuildOutcome.Ready -> {
         sendResponse(reply, successResponse(requestId))
@@ -713,9 +718,12 @@ class TerminalSessionService : Service() {
     timeoutMs: Long,
   ): ProvisioningResult = ProvisioningProcess.run(
     launch, timeoutMs,
+    // run() checks cancellation immediately after registration: onDestroy
+    // either sees this handle or is observed by that post-registration check.
     started = { provisionProcess.set(it) },
     finished = { provisionProcess.compareAndSet(it, null) },
     stop = ::stopProvisionProcess,
+    cancelled = { stopping },
   )
 
   private fun provisionError(requestId: String, errorCode: String, diagnostics: ProvisioningResult): Bundle =
@@ -728,16 +736,20 @@ class TerminalSessionService : Service() {
       }
     }
 
-  private fun stopProvisionProcess() {
-    provisionProcess.getAndSet(null)?.let(::stopProvisionProcess)
+  private fun cancelProvisioning() {
+    stopProvisionProcess()
+    // shutdownNow returns work cancelled before its worker could start. Run
+    // that task's stopping branch so its caller still receives a response;
+    // stopping is already true, so it performs no disk work or process spawn.
+    provisionExecutor.shutdownNow().forEach { task -> runCatching { task.run() } }
   }
 
-  private fun stopProvisionProcess(process: Process) {
-    runCatching { process.destroy() }
-    if (runCatching { process.waitFor(PROVISION_STOP_WAIT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)) return
-    runCatching { process.destroyForcibly() }
-    runCatching { process.waitFor(PROVISION_STOP_WAIT_MS, TimeUnit.MILLISECONDS) }
+  private fun stopProvisionProcess() {
+    // Do not block Android's main thread; the interrupted worker awaits cleanup.
+    provisionProcess.get()?.let { runCatching { it.destroy() } }
   }
+
+  private fun stopProvisionProcess(process: Process) = ProvisioningProcess.stop(process)
 
   private fun handleWrite(data: Bundle, reply: Messenger) {
     val requestId = requestId(data)
@@ -1093,6 +1105,7 @@ class TerminalSessionService : Service() {
 
   private fun stopServicePermanently() {
     stopping = true
+    cancelProvisioning()
     runCatching { remoteStore.setEnabled(false) }
     if (remoteServerDelegate.isInitialized()) runCatching { remoteServer.close() }
     sessionRecords.clear()
@@ -1597,7 +1610,6 @@ class TerminalSessionService : Service() {
     // Debian's first tools install under PRoot can pass five minutes on a
     // slow phone, and stopping it mid-dpkg left installs failing after.
     const val TOOLCHAIN_PROVISION_TIMEOUT_MS = 900_000L
-    const val PROVISION_STOP_WAIT_MS = 2_000L
     const val MAX_CLASSIFICATION_BYTES = 16 * 1024L
     const val LOG_TAG = "HorusTerminal"
     const val MAX_ERROR_LOG_CHARS = 160

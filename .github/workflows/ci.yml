@@ -52,7 +52,9 @@ jobs:
           test "$status" -eq 1
           grep -q 'HORUS_FORCE_TS_UNIT_FAILURE' failure-probe.log
       - name: Host native regressions
-        run: bash scripts/native/test-unix-socket-translation.sh
+        run: |
+          bash scripts/native/test-unix-socket-translation.sh
+          bash scripts/native/test-provision-supervisor.sh
       - name: Retain Jest report
         if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
