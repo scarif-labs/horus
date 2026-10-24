@@ -92,7 +92,8 @@ test('oversized, control-filled, unknown and repeated output is bounded and neve
 });
 
 test('invalid UTF-8 decoded output is sanitized before native response display and issue drafting', async () => {
-  const raw = Buffer.from([0xff, 0xfe, 0xc0, 0x0a]).toString('utf8') + 'ENOSPC password=SYNTHETIC_SECRET';
+  const raw = new TextDecoder('utf-8').decode(Uint8Array.from([0xff, 0xfe, 0xc0, 0x0a])) + 'ENOSPC password=SYNTHETIC_SECRET';
+  expect(raw).toContain('\ufffd');
   const result = await provisionAlpineToolchain('diagnostic-1', 'shell', {
     provisionToolchain: jest.fn(async () => ({...wire, log: raw})),
   });
