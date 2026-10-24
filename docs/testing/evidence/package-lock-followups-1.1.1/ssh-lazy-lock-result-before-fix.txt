@@ -1,0 +1,3 @@
+helper_finished_while_rootfs_lock_held=true
+helper_exit=0
+execution_identity=root guest; production system_packages helper, real apk busybox; no SSH login
