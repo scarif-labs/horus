@@ -1038,6 +1038,68 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun productionLoggerWatchdogDoesNotRetainThePackageLock() {
+    val base = Files.createTempDirectory("horus-logger-lock").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val generated = launcher(base, File(base, "proc").apply { mkdirs() })
+        .toolchainProvisionLaunchSpec(rootfs, home, "shell").argv.last()
+      val logger = generated.substring(generated.indexOf("run_logged() {"), generated.indexOf("# The installers download silently"))
+      // Let the watchdog actually start sleep before killing its shell. This
+      // deterministically exercises the descendant that otherwise races startup.
+      val script = packageFixture(base, "exit 0") + "\n" + logger + "\n" +
+        "kill() { /bin/sleep 0.2; command kill \"\$@\"; }\n" +
+        "pkg_install '${File(base, "install.log").path}' gzip\n" +
+        "exec 7>>'${File(base, "var/lib/horus/packages.lock").path}'; flock -n 7\n"
+      val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+      assertTrue("logger fixture timed out", process.waitFor(15, TimeUnit.SECONDS))
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals("watchdog's sleep kept the lock open: $output", 0, process.exitValue())
+    } finally { base.deleteRecursively() }
+  }
+
+  @Test
+  fun sshLazySystemPackagesEmbedAndReleaseTheSharedRootfsLock() {
+    val base = Files.createTempDirectory("horus-ssh-lazy-lock").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val dev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(dev, it).writeText("") }
+      File(dev, "pts").mkdirs()
+      val argv = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = dev)
+        .remoteAccessLaunchSpec(rootfs, home, null, "validation").argv
+      val script = argv[argv.indexOf("horus-remote-access") - 1]
+      val helperStart = script.indexOf("system_packages() {")
+      val lockStart = script.lastIndexOf("pkg_lock_file=/var/lib/horus/packages.lock", helperStart)
+      assertTrue("shared lock must be inside the generated installer", lockStart > script.lastIndexOf("HORUS_INSTALLER", helperStart))
+      val helper = script.substring(lockStart, script.indexOf("install_claude() {"))
+        .replace("/var/lib/horus", File(base, "var/lib/horus").path)
+      val bin = File(base, "bin").apply { mkdirs() }
+      // Success and distinct package failures must all release the lock and
+      // retain the package status, including when the caller enables errexit.
+      for (packageStatus in listOf(0, 23, 127)) {
+        File(bin, "apk").apply { writeText("#!/bin/sh\nexit $packageStatus\n"); setExecutable(true) }
+        val process = ProcessBuilder("/bin/sh", "-c",
+          "set -eu\nPATH='${bin.path}':\$PATH\n$helper\n" +
+            "if system_packages busybox; then status=0; else status=\$?; fi\n" +
+            "[ \"\$status\" -eq $packageStatus ] || exit 99\n" +
+            "exec 7>>\"\$pkg_lock_file\"; flock -n 7\n",
+        ).redirectErrorStream(true).start()
+        try {
+          assertTrue("package status $packageStatus timed out", process.waitFor(10, TimeUnit.SECONDS))
+          assertEquals(process.inputStream.bufferedReader().readText(), 0, process.exitValue())
+        } finally {
+          if (process.isAlive) process.destroyForcibly()
+        }
+      }
+    } finally { base.deleteRecursively() }
+  }
+
+  @Test
   fun runLoggedShowsTheLastLinesBeforeTheCommandExits() {
     val base = Files.createTempDirectory("horus-run-logged").toFile()
     try {

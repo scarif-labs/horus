@@ -1,0 +1,4 @@
+helper_finished_while_rootfs_lock_held=false
+helper_exit=pending
+execution_identity=root guest; production system_packages helper, real apk busybox; no SSH login
+PASS actual guest UID 1000 also waits on shared rootfs lock and completes real apk operation
