@@ -72,9 +72,10 @@ async function createGrid(alternate = true, mouseTrackingMode: TerminalFrame['mo
   const onSwipe = jest.fn();
   const onMouseWheel = jest.fn();
   const onTap = jest.fn();
+  const onLongPress = jest.fn();
   const props = {
     frame: {...frame, alternate, mouseTrackingMode, mouseEncoding}, cellWidth: 8, running: true,
-    onCellWidth: jest.fn(), onLayout: jest.fn(), onLinkPress: jest.fn(), onTap, onSwipe, onMouseWheel,
+    onCellWidth: jest.fn(), onLayout: jest.fn(), onLinkPress: jest.fn(), onTap, onLongPress, onSwipe, onMouseWheel,
   };
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalGrid {...props} />); });
@@ -85,7 +86,7 @@ async function createGrid(alternate = true, mouseTrackingMode: TerminalFrame['mo
       await jest.runAllTimersAsync();
     });
   };
-  return {renderer, props, output, onSwipe, onMouseWheel, onTap, unmount};
+  return {renderer, props, output, onSwipe, onMouseWheel, onTap, onLongPress, unmount};
 }
 
 test('keeps a snapshot row key when the row shifts after scrollback trim', async () => {
@@ -367,5 +368,51 @@ test('only a drag stops following the tail; a scroll event during a flood does n
   // Coming back to the tail resumes following.
   await ReactTestRenderer.act(async () => { list().onScroll(scrollTo(80 * TERMINAL_CELL_HEIGHT)); });
   expect(onScrollStateChange).toHaveBeenLastCalledWith(false);
+  await grid.unmount();
+});
+
+test.each([false, true])('a held touch asks to copy text instead of tapping (alternate: %s)', async alternate => {
+  const grid = await createGrid(alternate);
+  grid.output().onTouchStart(touch(40, 100));
+  jest.advanceTimersByTime(499);
+  expect(grid.onLongPress).not.toHaveBeenCalled();
+  jest.advanceTimersByTime(1);
+  expect(grid.onLongPress).toHaveBeenCalledTimes(1);
+  grid.output().onTouchEnd(touch(42, 102));
+  grid.output().onResponderRelease(touch(42, 102));
+  expect(grid.onTap).not.toHaveBeenCalled();
+  expect(grid.onLongPress).toHaveBeenCalledTimes(1);
+  await grid.unmount();
+});
+
+test('a short tap, a drag, or a cancelled touch never asks to copy', async () => {
+  const grid = await createGrid(false);
+  grid.output().onTouchStart(touch(40, 100));
+  jest.advanceTimersByTime(200);
+  grid.output().onTouchEnd(touch(40, 100));
+  expect(grid.onTap).toHaveBeenCalledTimes(1);
+
+  grid.output().onTouchStart(touch(40, 100));
+  grid.output().onTouchMove(touch(40, 160));
+  jest.advanceTimersByTime(1000);
+  grid.output().onTouchEnd(touch(40, 160));
+
+  grid.output().onTouchStart(touch(40, 100));
+  grid.output().onTouchCancel();
+  jest.advanceTimersByTime(1000);
+
+  expect(grid.onLongPress).not.toHaveBeenCalled();
+  expect(grid.onTap).toHaveBeenCalledTimes(1);
+  expect(jest.getTimerCount()).toBe(0);
+  await grid.unmount();
+});
+
+test('a full-screen app with mouse reporting keeps its held touches', async () => {
+  const grid = await createGrid(true, 'any', 'sgr');
+  grid.output().onTouchStart(touch(40, 100));
+  jest.advanceTimersByTime(1000);
+  grid.output().onTouchEnd(touch(40, 100));
+  expect(grid.onLongPress).not.toHaveBeenCalled();
+  expect(grid.onTap).toHaveBeenCalledTimes(1);
   await grid.unmount();
 });

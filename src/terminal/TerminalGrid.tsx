@@ -16,6 +16,7 @@ export const TERMINAL_CELL_HEIGHT = 18;
 const TERMINAL_LINK_FOREGROUND = uiColors.accent;
 const FONT_SAMPLE = 'MMMMMMMMMMMMMMMMMMMM';
 const TAP_SLOP = 12;
+const LONG_PRESS_MS = 500;
 const SWIPE_DISTANCE = 24;
 const SWIPE_REPEAT_DISTANCE = 96;
 const SWIPE_REPEAT_INTERVAL_MS = 120;
@@ -92,6 +93,7 @@ type SwipeDirection = 'up' | 'down';
 type TerminalTouch = Pick<NativeTouchEvent, 'identifier' | 'pageX' | 'pageY'> & {
   dragged: boolean;
   paged: boolean;
+  longPressed: boolean;
   lastPageY: number;
   lastPageAt: number;
   mouseTrackingMode: TerminalFrame['mouseTrackingMode'];
@@ -114,6 +116,8 @@ type Props = Readonly<{
   onLayout: (event: LayoutChangeEvent) => void;
   onLinkPress: (url: string) => void;
   onTap: () => void;
+  /** A held touch that did not move; the screen offers its text to copy. */
+  onLongPress?: () => void;
   onSwipe: (direction: SwipeDirection) => void;
   onMouseWheel?: (event: TerminalMouseWheel) => void;
   onScrollStateChange?: (scrolling: boolean) => void;
@@ -311,7 +315,7 @@ const TerminalRowView = React.memo(({row, rowKey, columns, cellWidth, links, onL
 });
 
 /** Each glyph occupies the parser's columns, never Android's wrapped prose. */
-export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', onNativeScreenChange, onCellWidth, onLayout, onLinkPress, onTap, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
+export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeColumns = 80, cellWidth, running, placeholder = 'Starting terminal…', onNativeScreenChange, onCellWidth, onLayout, onLinkPress, onTap, onLongPress, onSwipe, onMouseWheel, onScrollStateChange}: Props): React.JSX.Element {
   const list = React.useRef<FlatList<TerminalRow>>(null);
   const nativeScroll = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const rowKeyState = React.useRef<TerminalRowKeyState>({keys: new WeakMap(), next: 0});
@@ -328,6 +332,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const nativeScreen = React.useRef<NativeScreenState>({hasContent: false, alternate: false});
   nativeFrameMetaRef.current = nativeFrameMeta;
   const touchStart = React.useRef<TerminalTouch | null>(null);
+  const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const nativeScrollOffset = React.useRef(0);
   const nativeExpandedScrollOffset = React.useRef(0);
   const nativeViewportHeight = React.useRef(0);
@@ -365,6 +370,13 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     state.next += 1;
     return key;
   }, []);
+  const clearLongPress = React.useCallback(() => {
+    if (longPressTimer.current === null) return;
+    clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+  }, []);
+  React.useEffect(() => clearLongPress, [clearLongPress]);
+
   React.useEffect(() => {
     followTail.current = true;
     touchStart.current = null;
@@ -527,18 +539,29 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   }, [onNativeScreenChange]);
 
   const handleTouchStart = React.useCallback((event: GestureResponderEvent) => {
+    clearLongPress();
     if (event.nativeEvent.touches.length > 1) {
       touchStart.current = null;
       return;
     }
     const touch = event.nativeEvent.changedTouches[0] ?? event.nativeEvent;
-    touchStart.current = {
+    const start: TerminalTouch = {
       identifier: touch.identifier, pageX: touch.pageX, pageY: touch.pageY,
-      dragged: false, paged: false, lastPageY: touch.pageY, lastPageAt: 0,
+      dragged: false, paged: false, longPressed: false, lastPageY: touch.pageY, lastPageAt: 0,
       mouseTrackingMode: alternate ? mouseTrackingMode : 'none',
       mouseEncoding: alternate ? mouseEncoding : 'default',
     };
-  }, [alternate, mouseEncoding, mouseTrackingMode]);
+    touchStart.current = start;
+    // A full-screen app with mouse reporting (htop, the coding agents) keeps
+    // its touches, so a held finger there is not a copy request.
+    if (onLongPress === undefined || start.mouseTrackingMode !== 'none') return;
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
+      if (touchStart.current !== start || start.dragged) return;
+      start.longPressed = true;
+      onLongPress();
+    }, LONG_PRESS_MS);
+  }, [alternate, clearLongPress, mouseEncoding, mouseTrackingMode, onLongPress]);
 
   const shouldCaptureTouchMove = React.useCallback((event: GestureResponderEvent) => {
     const start = touchStart.current;
@@ -557,7 +580,10 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (touch === undefined) return;
     const deltaX = touch.pageX - start.pageX;
     const deltaY = touch.pageY - start.pageY;
-    if (deltaX * deltaX + deltaY * deltaY > TAP_SLOP * TAP_SLOP) start.dragged = true;
+    if (deltaX * deltaX + deltaY * deltaY > TAP_SLOP * TAP_SLOP) {
+      start.dragged = true;
+      clearLongPress();
+    }
     if (!alternate || Math.abs(deltaY) <= Math.abs(deltaX)) return;
 
     const pageDelta = touch.pageY - start.lastPageY;
@@ -587,15 +613,16 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     } else {
       onSwipe(pageDelta > 0 ? 'down' : 'up');
     }
-  }, [alternate, cellWidth, frame?.columns, frame?.rows, nativeColumns, nativeRows, onMouseWheel, onSwipe]);
+  }, [alternate, cellWidth, clearLongPress, frame?.columns, frame?.rows, nativeColumns, nativeRows, onMouseWheel, onSwipe]);
 
   const handleTouchEnd = React.useCallback((event: GestureResponderEvent) => {
     // The final position may be newer than the last delivered move. Consume
     // one eligible step before clearing, then ignore duplicate end callbacks.
     handleTouchMove(event);
+    clearLongPress();
     const start = touchStart.current;
     touchStart.current = null;
-    if (start === null) return;
+    if (start === null || start.longPressed) return;
 
     const touch = event.nativeEvent.changedTouches.find(({identifier}) => identifier === start.identifier);
     if (touch === undefined) return;
@@ -622,11 +649,12 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       return;
     }
     onTap();
-  }, [cellWidth, handleTouchMove, nativeSession, nativeSessionId, onLinkPress, onTap]);
+  }, [cellWidth, clearLongPress, handleTouchMove, nativeSession, nativeSessionId, onLinkPress, onTap]);
 
   const handleTouchCancel = React.useCallback(() => {
+    clearLongPress();
     touchStart.current = null;
-  }, []);
+  }, [clearLongPress]);
 
   return (
     <View

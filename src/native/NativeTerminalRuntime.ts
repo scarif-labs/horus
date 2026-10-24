@@ -580,6 +580,11 @@ export interface Spec extends TurboModule {
    * native session's current frame, or null. Call only on a tap.
    */
   terminalLinkAt(sessionId: string, row: number, column: number): Promise<string | null>;
+  /**
+   * Plain text of a native session's scrollback and screen, soft-wrapped
+   * rows joined, for the "Copy text" view; or null. Call only on request.
+   */
+  terminalScreenText(sessionId: string): Promise<string | null>;
   /** The text of an exited native session's last screen, once; or null. */
   takeExitScreen(sessionId: string): Promise<string | null>;
   /** The clipboard's text, or null when it holds none (or too much). */

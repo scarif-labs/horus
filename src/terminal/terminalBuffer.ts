@@ -45,6 +45,16 @@ export type TerminalCell = Readonly<{
 }>;
 export type TerminalRow = Readonly<{text: string; cells: readonly TerminalCell[]; wrapped: boolean}>;
 export type TerminalMouseTrackingMode = 'none' | 'x10' | 'vt200' | 'drag' | 'any';
+
+/**
+ * Plain text of terminal rows: a wrapped row continues the one above (soft
+ * wrap) instead of starting a new line, and trailing blanks are trimmed.
+ */
+export function terminalRowsText(rows: readonly TerminalRow[]): string {
+  return rows
+    .map((row, index) => (index > 0 && row.wrapped ? '' : '\n') + row.text)
+    .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
+}
 export type TerminalFrame = TerminalSize & Readonly<{
   lines: readonly TerminalRow[];
   alternate: boolean;

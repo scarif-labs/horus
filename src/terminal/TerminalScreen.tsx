@@ -24,7 +24,7 @@ import {
   type TerminalSessionAttachment,
   type TerminalSessionExitView,
 } from './session/sessionClient';
-import {TerminalCellBuffer, terminalSize, TERMINAL_BACKGROUND, type TerminalFrame, type TerminalSize} from './terminalBuffer';
+import {TerminalCellBuffer, terminalRowsText, terminalSize, TERMINAL_BACKGROUND, type TerminalFrame, type TerminalSize} from './terminalBuffer';
 import {TerminalGrid, TERMINAL_CELL_HEIGHT, type NativeScreenState} from './TerminalGrid';
 import {terminalMouseWheelSequence, type TerminalMouseWheel} from './terminalMouse';
 import {
@@ -45,6 +45,7 @@ import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastI
 import {SessionLimitOverlay} from './SessionLimitOverlay';
 import {readTerminalPaste} from './terminalPaste';
 import {TerminalControls, type TerminalArrow} from './TerminalControls';
+import {TerminalCopyView} from './TerminalCopyView';
 import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
 import {InstallFailedOverlay, installFailureIssueUrl} from './InstallFailedOverlay';
 import {classifyInstallFailure, cleanInstallLog, INSTALL_LOG_TAIL_CHARS, type InstallFailure, type InstallFailureKind} from './installFailure';
@@ -269,6 +270,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [installDownload, setInstallDownload] = React.useState<string | undefined>(undefined);
   // Set when an app quits on its own, to show why and offer a restart.
   const [appExit, setAppExit] = React.useState<AppExit | undefined>(undefined);
+  // Text shown in the "Copy text" view, or undefined while it is closed.
+  const [copyText, setCopyText] = React.useState<string | undefined>(undefined);
   // Set when a first-run install fails, to explain why and offer a retry.
   const [installFailure, setInstallFailure] = React.useState<InstallFailure | undefined>(undefined);
   // The end of the install output, kept for the failure screen: a native
@@ -428,10 +431,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     if ((toolchain !== 'shell' || completionMarker === undefined) && exit.reason === 'process_exit') {
       // Read the last screen before the buffer is reused; a native
       // session's lives in the native engine until taken once.
-      const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
-        // A wrapped row continues the one above (soft wrap), not a new line.
-        .map((line, index) => (index > 0 && line.wrapped ? '' : '\n') + line.text)
-        .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
+      const snapshot = nativeHarness ? undefined : displayBufferRef.current?.snapshot();
+      const localScreen = snapshot === undefined ? undefined : terminalRowsText(snapshot.lines);
       const exitInfo: AppExit = {
         ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
         ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
@@ -1025,6 +1026,22 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setKeyboardVisible(false);
   }, [nativeTerminalInput]);
 
+  // A long press opens the scrollback and screen as selectable text. A native
+  // session's rows live in the native engine; others in the display buffer.
+  const openCopyView = React.useCallback(() => {
+    const sessionId = nativeSessionId;
+    const snapshot = sessionId === undefined ? displayBufferRef.current?.snapshot() : undefined;
+    const text = sessionId !== undefined && nativeTerminalRuntime !== null
+      ? nativeTerminalRuntime.terminalScreenText(sessionId).catch(() => null)
+      : Promise.resolve(snapshot === undefined ? null : terminalRowsText(snapshot.lines));
+    void text.then(value => {
+      if (!mountedRef.current) return;
+      hideTerminalKeyboard();
+      setCopyText(value ?? '');
+    });
+  }, [hideTerminalKeyboard, nativeSessionId]);
+  const closeCopyView = React.useCallback(() => setCopyText(undefined), []);
+
   const toggleTerminalKeyboard = React.useCallback(() => {
     if (keyboardVisible) {
       hideTerminalKeyboard();
@@ -1119,6 +1136,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               onCellWidth={measureCellWidth}
               onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
+              onLongPress={openCopyView}
               onSwipe={handleOutputSwipe}
               onMouseWheel={handleOutputMouseWheel}
               onScrollStateChange={handleOutputScrollStateChange}
@@ -1164,6 +1182,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
                 toolchain={toolchain}
               />
             ) : null}
+            {copyText !== undefined ? <TerminalCopyView onClose={closeCopyView} text={copyText} /> : null}
             <SessionLimitOverlay
               client={client}
               onBack={onHome ?? onBack}
@@ -1228,8 +1247,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             </Text>
           ) : null}
           {error !== undefined && !sessionLimitReached && !installFailureVisible ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
-          {/* The limit, exit, and install-failure screens cover the terminal; nothing to type into. */}
-          {sessionLimitReached || appExitVisible || installFailureVisible ? null : <TerminalControls
+          {/* The limit, exit, install-failure, and copy screens cover the terminal; nothing to type into. */}
+          {sessionLimitReached || appExitVisible || installFailureVisible || copyText !== undefined ? null : <TerminalControls
             altActive={altActive}
             ctrlActive={ctrlActive}
             keyboardVisible={keyboardVisible}

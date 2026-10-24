@@ -1320,6 +1320,20 @@ class TerminalRuntimeModule(
   }
 
   /**
+   * Plain text of a native session's scrollback and screen for the "Copy
+   * text" view, with soft-wrapped rows joined; or null. Called only when the
+   * user asks to copy.
+   */
+  override fun terminalScreenText(sessionId: String, promise: Promise) {
+    if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId)) {
+      promise.resolve(null)
+      return
+    }
+    val lines = NativeTerminalEngineRegistry.get(sessionId)?.currentFrame()?.lines
+    promise.resolve(lines?.let { exitScreenText(it.map { row -> row.text }, MAX_COPY_TEXT_LINES) })
+  }
+
+  /**
    * Keeps the text of a native session's last screen once it exits, so the
    * app can show why it quit. Held in memory only, for a few sessions, until
    * the screen takes it.
@@ -1570,6 +1584,7 @@ class TerminalRuntimeModule(
     const val MAX_PASTE_CHARS = 262_144
     const val MAX_EXIT_SCREEN_LINES = 40
     const val MAX_EXIT_SCREENS = 4
+    const val MAX_COPY_TEXT_LINES = 1_000
     const val LOG_TAG = "HorusTerminal"
     const val GUEST_FILE_IDLE_SECONDS = 30L
     const val GUEST_FILE_QUEUE_CAPACITY = 8
@@ -1579,8 +1594,8 @@ class TerminalRuntimeModule(
 }
 
 /**
- * Plain text of a native screen for the "last screen" box, from each row's
- * cells. The engine does not record soft wraps, so a row joins the next when
+ * Plain text of a native screen for the "last screen" box and the "Copy text"
+ * view, from each row's cells. The engine does not record soft wraps, so a row joins the next when
  * text runs through the edge: the row's last cell and the next row's first
  * cell are both visible characters that are not box drawing. That keeps
  * "Login w|ith" whole without gluing a full-width border to the next line.
