@@ -1,4 +1,6 @@
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
+import {isValidTerminalRuntimeErrorCode} from './distroContract';
+import {readProvisionDiagnostics, safeExitCode, safeProvisionStage, sanitizeProvisionLog, type ProvisioningDiagnostics} from './provisioningDiagnostics';
 import {toolchainInstallLabel} from './toolchainLabels';
 
 /** Why a first-run install stopped, as far as Horus can tell. */
@@ -6,6 +8,8 @@ export type InstallFailureKind = 'offline' | 'network' | 'storage' | 'permission
 
 export type InstallFailure = Readonly<{
   kind: InstallFailureKind;
+  errorCode?: string;
+  diagnostics?: ProvisioningDiagnostics;
   /** The last provisioning stage, e.g. `codex_failed`. */
   stage?: string;
   /** The end of the install log, cleaned for reading. */
@@ -59,6 +63,8 @@ export function installFailureCopy(failure: InstallFailure, toolchain: TerminalT
   const title = `Couldn’t install ${label}`;
   // Claude Code always downloads from Anthropic; the others can use a mirror.
   const mirror = toolchain === 'claude' ? '' : ' You can also pick another mirror in Settings › Downloads.';
+  if (failure.diagnostics?.outcome === 'timed_out') return {title, reason: 'The installation took too long.', advice: 'Try again. If it keeps failing, report the diagnostics below.'};
+  if (failure.diagnostics?.outcome === 'cancelled') return {title, reason: 'The installation was cancelled.', advice: 'Try again when you’re ready.'};
   switch (failure.kind) {
     case 'offline':
       return {title, reason: 'Your phone is offline.', advice: `Horus downloads ${label} the first time you open it. Turn on Wi-Fi or mobile data, then try again.`};
@@ -75,4 +81,27 @@ export function installFailureCopy(failure: InstallFailure, toolchain: TerminalT
     case 'unknown':
       return {title, reason: 'The installer stopped before it finished.', advice: 'Try again. If it keeps failing, report it with the log below.'};
   }
+}
+
+/** Safe for both the onboarding screen and a shareable report; no raw values survive. */
+export function installFailureDetails(failure: InstallFailure): string {
+  const diagnostics = failure.diagnostics === undefined ? undefined : readProvisionDiagnostics(failure.diagnostics);
+  const stage = safeProvisionStage(diagnostics?.stage ?? failure.stage);
+  const code = isValidTerminalRuntimeErrorCode(failure.errorCode) || ['unavailable', 'invalid_response'].includes(failure.errorCode ?? '') ? failure.errorCode : undefined;
+  return [
+    ...(code === undefined ? [] : [`Error: ${code}`]),
+    ...(diagnostics === undefined ? [] : [`Outcome: ${diagnostics.outcome}`]),
+    `Stage: ${stage ?? 'unavailable'}`,
+    `Process exit: ${safeExitCode(diagnostics?.exitCode) ?? 'unavailable'}`,
+    ...(diagnostics?.commandExitCode === undefined ? [] : [`Command exit: ${diagnostics.commandExitCode}`]),
+    sanitizeProvisionLog(diagnostics?.log ?? failure.log),
+  ].join('\n');
+}
+
+export function provisioningInstallFailure(errorCode: string | undefined, diagnostics: ProvisioningDiagnostics | undefined): InstallFailure {
+  return {
+    kind: classifyInstallFailure(diagnostics?.log ?? '', diagnostics?.stage, undefined),
+    ...(errorCode === undefined ? {} : {errorCode}),
+    ...(diagnostics === undefined ? {} : {diagnostics}),
+  };
 }

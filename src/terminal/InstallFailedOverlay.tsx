@@ -5,12 +5,14 @@ import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {HORUS_ISSUES_URL} from './AppExitedOverlay';
 import {HarnessMark} from './harnessLogos';
-import {installFailureCopy, type InstallFailure} from './installFailure';
+import {installFailureCopy, installFailureDetails, type InstallFailure} from './installFailure';
 import {uiColors} from './palette';
 import {toolchainInstallLabel} from './toolchainLabels';
 
-// GitHub rejects very long prefilled URLs; the end of the log is what counts.
-const MAX_ISSUE_LOG_CHARS = 3000;
+// Metadata is also untrusted at this sharing boundary. No free-form values enter the URL.
+function safeVersion(value: string | undefined): string {
+  return value !== undefined && /^\d{1,3}(?:\.\d{1,3}){0,3}$/.test(value) ? value : 'unknown';
+}
 
 /** A new-issue link prefilled with what Horus knows about the failed install. */
 export function installFailureIssueUrl(
@@ -22,14 +24,14 @@ export function installFailureIssueUrl(
   const body = [
     `${label} failed to install in Horus.`,
     '',
-    `- Horus: ${environment.appVersion ?? 'unknown'}`,
-    `- Android: ${environment.androidVersion}`,
-    `- Reason: ${failure.kind}${failure.stage === undefined ? '' : ` (${failure.stage})`}`,
+    `- Horus: ${safeVersion(environment.appVersion)}`,
+    `- Android: ${safeVersion(environment.androidVersion)}`,
+    `- Reason: ${['offline', 'network', 'storage', 'permissions', 'node_version', 'packages', 'unknown'].includes(failure.kind) ? failure.kind : 'unknown'}`,
     '',
-    'Install log (check it for anything private before posting):',
+    'Sanitized installation diagnostics (review before posting):',
     '',
     '```',
-    failure.log?.slice(-MAX_ISSUE_LOG_CHARS) ?? '(empty)',
+    installFailureDetails(failure),
     '```',
     '',
   ].join('\n');
@@ -58,17 +60,15 @@ export function InstallFailedOverlay({failure, toolchain, onRetry, onReport, onB
           <Text style={styles.title}>{copy.title}</Text>
           <Text style={styles.reason} testID="terminal-install-failed-reason">{copy.reason}</Text>
           <Text style={styles.advice} testID="terminal-install-failed-advice">{copy.advice}</Text>
-          {failure.log === undefined ? null : (
-            <View style={styles.logBox}>
-              <Text style={styles.logLabel}>INSTALL LOG</Text>
-              <ScrollView
-                nestedScrollEnabled
-                ref={scroll => { scroll?.scrollToEnd({animated: false}); }}
-                style={styles.logScroll}>
-                <Text selectable style={styles.log} testID="terminal-install-failed-log">{failure.log}</Text>
-              </ScrollView>
-            </View>
-          )}
+          <View style={styles.logBox}>
+            <Text style={styles.logLabel}>INSTALL DIAGNOSTICS</Text>
+            <ScrollView
+              nestedScrollEnabled
+              ref={scroll => { scroll?.scrollToEnd({animated: false}); }}
+              style={styles.logScroll}>
+              <Text selectable style={styles.log} testID="terminal-install-failed-log">{installFailureDetails(failure)}</Text>
+            </ScrollView>
+          </View>
           <Pressable accessibilityRole="button" onPress={onRetry} style={styles.primary} testID="terminal-install-retry">
             <Text style={styles.primaryText}>TRY AGAIN</Text>
           </Pressable>

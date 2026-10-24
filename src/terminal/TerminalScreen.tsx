@@ -47,6 +47,7 @@ import {readTerminalPaste} from './terminalPaste';
 import {TerminalControls, type TerminalArrow} from './TerminalControls';
 import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
 import {InstallFailedOverlay, installFailureIssueUrl} from './InstallFailedOverlay';
+import {sanitizeProvisionLog, safeExitCode, safeProvisionStage} from './provisioningDiagnostics';
 import {classifyInstallFailure, cleanInstallLog, INSTALL_LOG_TAIL_CHARS, type InstallFailure, type InstallFailureKind} from './installFailure';
 import {readDeviceSnapshot} from '../device/deviceSnapshot';
 
@@ -370,12 +371,26 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
    * login) report through onCommandFailure instead. Android's own view of the
    * network settles "offline" without guessing from the log.
    */
-  const showInstallFailure = React.useCallback((kind?: InstallFailureKind) => {
+  const showInstallFailure = React.useCallback((kind?: InstallFailureKind, exit?: TerminalSessionExitView, errorCode?: string) => {
     if (completionMarker !== undefined) return;
     const rawLog = installLogRef.current;
     const stage = installStageRef.current;
     const log = cleanInstallLog(rawLog);
-    setInstallFailure({kind: kind ?? classifyInstallFailure(rawLog, stage, undefined), ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log})});
+    const commandExit = Array.from(rawLog.matchAll(/^HORUS_INSTALL_COMMAND_EXIT=(\d{1,3})\r?$/gm)).pop()?.[1];
+    const commandExitCode = safeExitCode(Number(commandExit));
+    const exitCode = safeExitCode(exit?.exitCode);
+    setInstallFailure({
+      kind: kind ?? classifyInstallFailure(rawLog, stage, undefined),
+      ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log}),
+      ...(errorCode === undefined ? {} : {errorCode}),
+      diagnostics: {
+        outcome: errorCode !== undefined ? 'not_started' : exit?.reason === 'user_stop' ? 'cancelled' : exitCode === 0 ? 'incomplete' : 'failed',
+        ...(safeProvisionStage(stage) === undefined ? {} : {stage: safeProvisionStage(stage)}),
+        ...(safeExitCode(exitCode) === undefined ? {} : {exitCode: safeExitCode(exitCode)}),
+        ...(commandExitCode === undefined ? {} : {commandExitCode}),
+        log: sanitizeProvisionLog(rawLog),
+      },
+    });
     void readDeviceSnapshot().then(snapshot => {
       if (!mountedRef.current || snapshot?.online !== false) return;
       setInstallFailure(current => current === undefined ? current : {...current, kind: 'offline'});
@@ -418,7 +433,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       activeSessionRef.current = undefined;
       setState('error');
       setError(toolchainInstallError(toolchain));
-      showInstallFailure();
+      showInstallFailure(undefined, exit);
       deliverCommandFailure();
       return;
     }
@@ -603,7 +618,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         setState('error');
         setError(started.errorCode);
         const failureKind = toolchain === 'shell' ? undefined : startInstallFailureKind(started.errorCode);
-        if (failureKind !== undefined) showInstallFailure(failureKind);
+        if (failureKind !== undefined) showInstallFailure(failureKind, undefined, started.errorCode);
         deliverCommandFailure();
         return;
       }
@@ -659,7 +674,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           const outputText = textDecoder.decode(chunk.bytes);
           if (scanInstallMarker) {
             installLogRef.current = `${installLogRef.current}${outputText}`.slice(-INSTALL_LOG_TAIL_CHARS);
-            const stage = lastInstallStage(outputText);
+            const stage = safeProvisionStage(lastInstallStage(installLogRef.current));
             if (stage !== undefined && stage !== installStageRef.current) {
               installStageRef.current = stage;
               setInstallStage(stage);

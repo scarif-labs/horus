@@ -1066,7 +1066,10 @@ class TerminalRuntimeModule(
     }
 
   private fun provisionResponse(response: Bundle, requestId: String): WritableMap =
-    sessionResponseBase(response, requestId)
+    sessionResponseBase(response, requestId).apply {
+      ProvisioningResult.STRING_FIELDS.forEach { key -> response.getString(key)?.let { putString(key, it) } }
+      ProvisioningResult.INT_FIELDS.forEach { key -> if (response.containsKey(key)) putInt(key, response.getInt(key)) }
+    }
 
   private fun isSessionSuccess(response: Bundle): Boolean =
     response.getString(TerminalSessionServiceProtocol.KEY_STATUS) == TerminalSessionServiceProtocol.STATUS_SUCCESS

@@ -584,10 +584,13 @@ describe('TerminalScreen', () => {
     expect(has('terminal-error')).toBe(false);
     expect(renderer.root.findByProps({testID: 'terminal-install-failed-reason'}).props.children).toBe('The download didn’t get through.');
     const log = renderer.root.findByProps({testID: 'terminal-install-failed-log'}).props.children as string;
-    expect(log).toContain('npm error code EAI_AGAIN');
+    expect(log).toContain('Could not resolve a download host.');
+    expect(log).toContain('Process exit: 23');
+    expect(log).toContain('Command exit: 1');
+    expect(log).not.toContain('registry.npmjs.org');
     expect(log).not.toContain('HORUS_');
     expect(log).not.toContain('1 MB');
-    expect(log).toContain('Downloading Codex… 2 MB');
+    expect(log).not.toContain('Downloading Codex… 2 MB');
 
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'terminal-install-back'}).props.onPress();
@@ -656,7 +659,7 @@ describe('TerminalScreen', () => {
     expect(subscriptions).toBe(2);
     expect(has('terminal-install-failed')).toBe(true);
     expect(has('terminal-app-exited')).toBe(false);
-    expect(renderer.root.findByProps({testID: 'terminal-install-failed-log'}).props.children).toContain('EAI_AGAIN');
+    expect(renderer.root.findByProps({testID: 'terminal-install-failed-log'}).props.children).toContain('Could not resolve a download host.');
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 

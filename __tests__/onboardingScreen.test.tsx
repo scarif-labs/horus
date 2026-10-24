@@ -1,6 +1,8 @@
 import React from 'react';
-import {Text} from 'react-native';
+import {Linking, Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
+import {setupOnboardingProfile} from '../src/profile/onboardingSetup';
+import * as runtimeStatus from '../src/terminal/runtimeStatus';
 import type {LinuxDistro, NewProfileUser} from '../src/profile/profileStore';
 import type {DownloadSources} from '../src/terminal/downloadSources';
 import {OnboardingScreen, type OnboardingActions, type ProfileSetupResult, type RootfsSetupResult} from '../src/ui/OnboardingScreen';
@@ -109,6 +111,36 @@ describe('OnboardingScreen', () => {
     await press('onboarding-done');
     expect(actions.done).toHaveBeenCalledTimes(1);
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
+  test('carries a controlled native failure through setup, UI and a sanitized issue draft', async () => {
+    const actual = runtimeStatus.provisionAlpineToolchain;
+    const provision = jest.spyOn(runtimeStatus, 'provisionAlpineToolchain').mockImplementation((requestId, target) => actual(requestId, target, {
+      provisionToolchain: async () => ({requestId, status: 'error', errorCode: 'toolchain_install_failed', outcome: 'failed', stage: 'apk_failed', exitCode: 23, commandExitCode: 7, log: 'ENOSPC --password SYNTHETIC_SECRET /private/user'}),
+    }));
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue();
+    const actions = fakeActions({saveProfile: (user, options) => setupOnboardingProfile(user, 'failure-path', options)});
+    const {renderer, has, startWith, enterAccount, press} = await render(actions);
+    try {
+      await startWith('debian');
+      await enterAccount({password: 'SYNTHETIC_ACCOUNT_PASSWORD'});
+      await press('permissions-continue');
+      expect(has('setup-tools-failed')).toBe(true);
+      expect(has('onboarding-keys')).toBe(false);
+      const text = renderer.root.findByProps({testID: 'setup-tools-diagnostics'}).props.children;
+      for (const value of ['toolchain_install_failed', 'failed', 'apk_failed', 'Process exit: 23', 'Command exit: 7', 'No space left on device.']) expect(text).toContain(value);
+      expect(text).not.toContain('SYNTHETIC');
+      await press('setup-tools-report');
+      const report = decodeURIComponent(String(open.mock.calls[0][0]));
+      expect(report).toContain('Process exit: 23');
+      expect(report).toContain('No space left on device.');
+      expect(report).not.toContain('SYNTHETIC');
+      expect(report).not.toContain('/private');
+      expect(actions.done).not.toHaveBeenCalled();
+    } finally {
+      provision.mockRestore(); open.mockRestore();
+      await ReactTestRenderer.act(async () => { renderer.unmount(); });
+    }
   });
 
   test('installs Debian and creates the Debian user when Debian is picked', async () => {

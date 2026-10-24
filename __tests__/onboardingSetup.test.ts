@@ -47,7 +47,16 @@ describe('setupOnboardingProfile', () => {
 
     const result = await setupOnboardingProfile(USER, 'setup-shell-2');
 
-    expect(result).toEqual({kind: 'error', stage: 'alpine-tools'});
+    expect(result).toEqual({kind: 'error', stage: 'alpine-tools', errorCode: 'internal_error'});
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  test('retains diagnostic metadata without saving a profile or reporting tools ready', async () => {
+    const diagnostics = {outcome: 'failed', stage: 'apk_failed', exitCode: 23, commandExitCode: 7, log: 'No space left on device.'} as const;
+    provision.mockResolvedValue({kind: 'error', requestId: 'setup-failure', errorCode: 'toolchain_install_failed', diagnostics});
+    const onToolsReady = jest.fn();
+    expect(await setupOnboardingProfile(USER, 'setup-failure', {onToolsReady})).toEqual({kind: 'error', stage: 'alpine-tools', errorCode: 'toolchain_install_failed', diagnostics});
+    expect(onToolsReady).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });
 

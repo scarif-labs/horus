@@ -1,0 +1,62 @@
+[
+  {
+    "raw": "ENOSPC --password SYNTHETIC_SECRET /data/private",
+    "safe": "No space left on device."
+  },
+  {
+    "raw": "could not get lock /root/secret",
+    "safe": "Another package installation holds the package database lock."
+  },
+  {
+    "raw": "dpkg was interrupted --password secret",
+    "safe": "Debian package configuration was interrupted."
+  },
+  {
+    "raw": "EACCES /data/user/0/secret",
+    "safe": "Permission denied while installing packages."
+  },
+  {
+    "raw": "curl: (6) Could not resolve host: secret.invalid",
+    "safe": "Could not resolve a download host."
+  },
+  {
+    "raw": "ETIMEDOUT https://private.invalid/token",
+    "safe": "A download connection timed out."
+  },
+  {
+    "raw": "ENETUNREACH private-env",
+    "safe": "Network is unreachable while downloading packages."
+  },
+  {
+    "raw": "EBADENGINE token=private",
+    "safe": "EBADENGINE: incompatible Node.js version."
+  },
+  {
+    "raw": "Unsupported platform secret",
+    "safe": "A required platform package is unavailable."
+  },
+  {
+    "raw": "web page instead of an installer https://secret",
+    "safe": "The download returned a web page instead of an installer."
+  },
+  {
+    "raw": "curl: (22) sensitive URL",
+    "safe": "The download server returned an HTTP error."
+  },
+  {
+    "raw": "command not found: secret-command",
+    "safe": "A required installation command or file was not found."
+  },
+  {
+    "raw": "npm error SECRET=123",
+    "safe": "The package manager reported an installation error."
+  },
+  {
+    "raw": "",
+    "safe": "No diagnostic output was captured."
+  },
+  {
+    "raw": "PASSWORD=SYNTHETIC_SECRET\nunknown --token private",
+    "safe": "Installer output was omitted because it contained no recognized safe diagnostic message."
+  }
+]

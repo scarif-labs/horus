@@ -649,49 +649,49 @@ class TerminalSessionService : Service() {
         return
       }
       is TerminalSessionSpecFactory.ProvisionBuildOutcome.Failure -> {
-        sendResponse(reply, errorResponse(requestId, built.errorCode))
+        sendResponse(reply, provisionError(requestId, built.errorCode, ProvisioningResult("not_started")))
         return
       }
       is TerminalSessionSpecFactory.ProvisionBuildOutcome.Work -> {
         if (!provisionInProgress.compareAndSet(false, true)) {
-          sendResponse(reply, errorResponse(requestId, "install_in_progress"))
+          sendResponse(reply, provisionError(requestId, "install_in_progress", ProvisioningResult("not_started")))
           return
         }
         if (!retainForWork()) {
           provisionInProgress.set(false)
-          sendResponse(reply, errorResponse(requestId, "internal_error"))
+          sendResponse(reply, provisionError(requestId, "internal_error", ProvisioningResult("not_started")))
           return
         }
         syncWakeLock(true)
         try {
           provisionExecutor.execute {
+            var diagnostics = ProvisioningResult("not_started")
             val response = try {
               if (stopping) {
-                errorResponse(requestId, "internal_error")
+                provisionError(requestId, "internal_error", diagnostics.copy(outcome = "cancelled"))
               } else {
-                File(built.guestHomeDir, ".cache/horus/provision-stage").delete()
-                val completed = runBoundedProvision(built.launch, TOOLCHAIN_PROVISION_TIMEOUT_MS)
-                if (completed && built.launcher.hasProvisionedToolchain(
-                    built.rootfsDir,
-                    built.guestHomeDir,
-                    built.target,
-                  )
-                ) {
+                val stageFile = File(built.guestHomeDir, ".cache/horus/provision-stage")
+                // Never attribute a previous attempt's stage or private log to this failure.
+                check(!stageFile.exists() || stageFile.delete())
+                val logFile = provisionLog(built.guestHomeDir, built.target)
+                val previousLog = logFile.lastModified() to logFile.length()
+                diagnostics = runBoundedProvision(built.launch, TOOLCHAIN_PROVISION_TIMEOUT_MS)
+                val freshTail = if (previousLog != (logFile.lastModified() to logFile.length())) readPrivateTail(logFile) else null
+                diagnostics = diagnostics.withPrivateFallback(readPrivateTail(stageFile).trim(), freshTail)
+                val ready = diagnostics.succeeded && built.launcher.hasProvisionedToolchain(
+                  built.rootfsDir, built.guestHomeDir, built.target,
+                )
+                if (ready) {
                   successResponse(requestId)
                 } else {
-                  val failureCode = classifyProvisionFailure(built.guestHomeDir, built.target)
-                  errorResponse(
-                    requestId,
-                    if (failureCode == "toolchain_incomplete" && !completed) {
-                      "toolchain_install_failed"
-                    } else {
-                      failureCode
-                    },
-                  )
+                  if (diagnostics.succeeded) diagnostics = diagnostics.copy(outcome = "incomplete")
+                  provisionError(requestId, diagnostics.errorCode(), diagnostics)
                 }
               }
             } catch (_: Exception) {
-              errorResponse(requestId, "internal_error")
+              provisionError(requestId, "internal_error", diagnostics.copy(
+                outcome = if (diagnostics.succeeded) "incomplete" else diagnostics.outcome,
+              ))
             } finally {
               provisionInProgress.set(false)
               enqueueWorker { refreshSessionNotifications() }
@@ -702,7 +702,7 @@ class TerminalSessionService : Service() {
         } catch (_: RuntimeException) {
           provisionInProgress.set(false)
           enqueueWorker { refreshSessionNotifications() }
-          sendResponse(reply, errorResponse(requestId, "internal_error"))
+          sendResponse(reply, provisionError(requestId, "internal_error", ProvisioningResult("not_started")))
         }
       }
     }
@@ -711,54 +711,22 @@ class TerminalSessionService : Service() {
   private fun runBoundedProvision(
     launch: ProotSessionLauncher.LaunchSpec,
     timeoutMs: Long,
-  ): Boolean {
-    val process = ProcessBuilder(launch.argv).apply {
-      launch.workingDirectory?.let(::directory)
-      environment().clear()
-      launch.environment.forEach { entry ->
-        val separator = entry.indexOf('=')
-        if (separator > 0) environment()[entry.substring(0, separator)] = entry.substring(separator + 1)
-      }
-      redirectErrorStream(true)
-    }.start()
-    provisionProcess.set(process)
-    val drain = Thread {
-      try {
-        process.inputStream.use { input ->
-          val buffer = ByteArray(4096)
-          while (input.read(buffer) >= 0) {
-            // Provisioning output is intentionally drained but never bridged
-            // into the visible terminal or Android logs.
-          }
+  ): ProvisioningResult = ProvisioningProcess.run(
+    launch, timeoutMs,
+    started = { provisionProcess.set(it) },
+    finished = { provisionProcess.compareAndSet(it, null) },
+    stop = ::stopProvisionProcess,
+  )
+
+  private fun provisionError(requestId: String, errorCode: String, diagnostics: ProvisioningResult): Bundle =
+    errorResponse(requestId, errorCode).apply {
+      diagnostics.fields().forEach { (key, value) ->
+        when (value) {
+          is String -> putString(key, value)
+          is Int -> putInt(key, value)
         }
-      } catch (_: Exception) {
-        // Process teardown closes the stream.
-      }
-    }.apply {
-      name = "horus-toolchain-output"
-      isDaemon = true
-    }
-    drain.start()
-    return try {
-      if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-        stopProvisionProcess(process)
-        false
-      } else {
-        process.exitValue() == 0
-      }
-    } catch (_: InterruptedException) {
-      stopProvisionProcess(process)
-      Thread.currentThread().interrupt()
-      false
-    } finally {
-      provisionProcess.compareAndSet(process, null)
-      runCatching { process.inputStream.close() }
-      if (drain.isAlive) {
-        drain.interrupt()
-        runCatching { drain.join(PROVISION_DRAIN_WAIT_MS) }
       }
     }
-  }
 
   private fun stopProvisionProcess() {
     provisionProcess.getAndSet(null)?.let(::stopProvisionProcess)
@@ -1411,9 +1379,7 @@ class TerminalSessionService : Service() {
     else -> "internal_error"
   }
 
-  /** Classifies only stable failure categories; install logs stay app-private. */
-  private fun classifyProvisionFailure(home: File, target: String): String {
-    val logDirectory = File(home, ".cache/horus")
+  private fun provisionLog(home: File, target: String): File {
     val logName = when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "github-install.log"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude-install.log"
@@ -1421,29 +1387,7 @@ class TerminalSessionService : Service() {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode-install.log"
       else -> "alpine-bootstrap.log"
     }
-    val targetLog = File(logDirectory, logName).let { file ->
-      readPrivateTail(file)
-    }
-    when {
-      targetLog.contains("EBADENGINE", ignoreCase = true) -> return "toolchain_node_version"
-      targetLog.contains("ENOSPC", ignoreCase = true) -> return "toolchain_install_failed"
-      targetLog.contains("EACCES", ignoreCase = true) || targetLog.contains("permission denied", ignoreCase = true) -> return "toolchain_permissions"
-      targetLog.contains("ENETUNREACH", ignoreCase = true) || targetLog.contains("EAI_AGAIN", ignoreCase = true) || targetLog.contains("fetch failed", ignoreCase = true) -> return "toolchain_network"
-      targetLog.contains("EBADPLATFORM", ignoreCase = true) || targetLog.contains("Unsupported platform", ignoreCase = true) -> return "toolchain_install_failed"
-    }
-    val stage = File(logDirectory, "provision-stage").let { file ->
-      readPrivateTail(file).trim()
-    }
-    return when (stage) {
-      "github_failed" -> "toolchain_github_install_failed"
-      "claude_failed" -> "toolchain_install_failed"
-      "codex_failed" -> "toolchain_codex_install_failed"
-      "opencode_failed" -> "toolchain_opencode_install_failed"
-      "normalize_failed" -> "toolchain_normalization_failed"
-      "verify_failed" -> "toolchain_incomplete"
-      "apk_failed" -> "toolchain_install_failed"
-      else -> "toolchain_incomplete"
-    }
+    return File(home, ".cache/horus/$logName")
   }
 
   private fun readPrivateTail(file: File): String = runCatching {
@@ -1654,7 +1598,6 @@ class TerminalSessionService : Service() {
     // slow phone, and stopping it mid-dpkg left installs failing after.
     const val TOOLCHAIN_PROVISION_TIMEOUT_MS = 900_000L
     const val PROVISION_STOP_WAIT_MS = 2_000L
-    const val PROVISION_DRAIN_WAIT_MS = 500L
     const val MAX_CLASSIFICATION_BYTES = 16 * 1024L
     const val LOG_TAG = "HorusTerminal"
     const val MAX_ERROR_LOG_CHARS = 160

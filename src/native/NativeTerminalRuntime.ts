@@ -223,6 +223,11 @@ export type ProvisionToolchainResponse = {
   requestId: string;
   status: 'success' | 'error';
   errorCode?: TerminalRuntimeErrorCode;
+  outcome?: string;
+  stage?: string;
+  exitCode?: number;
+  commandExitCode?: number;
+  log?: string;
 };
 
 export type TerminalResetScope =

@@ -1,5 +1,9 @@
 import React from 'react';
-import {ActivityIndicator, Linking, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Linking, Platform, StyleSheet, Text, View} from 'react-native';
+import type {OnboardingSetupOutcome} from '../profile/onboardingSetup';
+import {installFailureDetails, provisioningInstallFailure} from '../terminal/installFailure';
+import {installFailureIssueUrl} from '../terminal/InstallFailedOverlay';
+import {readTerminalRuntimeStatus} from '../terminal/runtimeStatus';
 import {DISTRO_NAMES, type LinuxDistro, type NewProfileUser} from '../profile/profileStore';
 import {ALPINE_ROOTFS, DEBIAN_ROOTFS} from '../terminal/distroContract';
 import {ALPINE_MIRRORS, npmRegistryFor, rootfsUrl, type DownloadSources} from '../terminal/downloadSources';
@@ -22,7 +26,7 @@ import {
 export type OnboardingPermissions = BackgroundPermissionActions;
 
 export type RootfsSetupResult = Readonly<{kind: 'success'}> | Readonly<{kind: 'error'; errorCode: string}>;
-export type ProfileSetupResult = Readonly<{kind: 'success'}> | Readonly<{kind: 'error'; stage: 'alpine-tools' | 'profile'}>;
+export type ProfileSetupResult = OnboardingSetupOutcome;
 
 export type OnboardingActions = Readonly<{
   /** Downloads and installs the pinned rootfs of [distro], and makes it active. */
@@ -301,7 +305,7 @@ function PermissionCheck({allowed, detail, icon, label, onPress, testID}: Permis
 
 type ProfileState =
   | Readonly<{kind: 'idle' | 'tools' | 'saving'}>
-  | Readonly<{kind: 'failed'; stage: 'alpine-tools' | 'profile'}>;
+  | (Omit<Extract<ProfileSetupResult, {kind: 'error'}>, 'kind'> & Readonly<{kind: 'failed'}>);
 
 type SetupStepProps = Readonly<{
   step: number;
@@ -334,7 +338,7 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
         runningRef.current = false;
         if (!mountedRef.current) return;
         if (result.kind === 'success') onDone();
-        else setProfile({kind: 'failed', stage: result.stage});
+        else setProfile({...result, kind: 'failed'});
       });
   }, [actions, onDone, user]);
 
@@ -372,6 +376,19 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
     return () => clearInterval(timer);
   }, [actions.readToolsProgress, toolsRunning]);
 
+  const toolsFailure = profile.kind === 'failed' && profile.stage === 'alpine-tools'
+    ? provisioningInstallFailure(profile.errorCode, profile.diagnostics) : undefined;
+  const reportToolsFailure = () => {
+    if (toolsFailure === undefined) return;
+    void (async () => {
+      const status = await readTerminalRuntimeStatus().catch(() => undefined);
+      await Linking.openURL(installFailureIssueUrl('shell', toolsFailure, {
+        ...(status !== undefined && status.kind !== 'error' ? {appVersion: status.appVersion} : {}),
+        androidVersion: String(Platform.Version),
+      })).catch(() => undefined);
+    })();
+  };
+
   const linuxStatus: TaskStatus = rootfs.kind === 'ready' ? 'done' : rootfs.kind === 'failed' ? 'failed' : 'working';
   const toolsStatus: TaskStatus = rootfs.kind !== 'ready' ? 'waiting'
     : profile.kind === 'tools' || profile.kind === 'idle' ? 'working'
@@ -392,9 +409,11 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
         {rootfs.kind === 'failed' ? <RootfsFailure distro={distro} errorCode={rootfs.errorCode} mirror={mirror} onImport={() => onRootfs('import')} onMirror={chooseMirror} onRetry={() => onRootfs('download')} /> : null}
         {profile.kind === 'failed' && profile.stage === 'alpine-tools' ? (
           <View style={styles.problem} testID="setup-tools-failed">
-            <Text style={styles.problemTitle}>Tools need the internet</Text>
+            <Text style={styles.problemTitle}>Tools couldn’t be installed</Text>
+            <Text selectable style={styles.problemDetail} testID="setup-tools-diagnostics">{installFailureDetails(toolsFailure ?? {kind: 'unknown'})}</Text>
             <Text style={styles.problemDetail}>Skip for now and they’ll install when you first open a terminal.</Text>
             <PrimaryButton label="TRY AGAIN" onPress={() => saveProfile(false)} testID="setup-tools-retry" />
+            <SecondaryButton label="REPORT ISSUE ↗" onPress={reportToolsFailure} testID="setup-tools-report" />
             <SecondaryButton label="SKIP FOR NOW" onPress={() => saveProfile(true)} testID="setup-tools-skip" />
           </View>
         ) : null}
