@@ -1,4 +1,5 @@
 import {provisionAlpineToolchain} from '../src/terminal/runtimeStatus';
+import {installFailureDetails} from '../src/terminal/installFailure';
 import {installFailureIssueUrl} from '../src/terminal/InstallFailedOverlay';
 
 const wire = {
@@ -38,6 +39,16 @@ const {sanitizeProvisionLog, EMPTY_DIAGNOSTICS, OMITTED_DIAGNOSTICS} = jest.requ
 test.each(cases)('safe diagnostic projection: $safe', ({raw, safe}) => {
   expect(sanitizeProvisionLog(raw)).toBe(safe);
   expect(sanitizeProvisionLog(safe)).toBe(safe);
+  const failure = {kind: 'unknown' as const, log: raw};
+  const display = installFailureDetails(failure);
+  const report = decodeURIComponent(installFailureIssueUrl('shell', failure, {androidVersion: '36'}));
+  expect(display).toContain(safe);
+  expect(report).toContain(safe);
+  for (const text of [display, report]) {
+    expect(text).not.toMatch(/SYNTHETIC_|private\.invalid|\ufffd/);
+    expect(text).not.toContain('\u001b');
+    expect(text).not.toContain('\u0000');
+  }
 });
 
 test.each(['timed_out', 'cancelled', 'spawn_failed', 'not_started', 'incomplete'] as const)('preserves %s outcome through the bridge wrapper', async outcome => {
@@ -78,4 +89,20 @@ test('oversized, control-filled, unknown and repeated output is bounded and neve
   }, {appVersion: 'SECRET', androidVersion: 'SECRET'}));
   expect(body).not.toContain('SECRET');
   expect(body.length).toBeLessThan(2000);
+});
+
+test('invalid UTF-8 decoded output is sanitized before native response display and issue drafting', async () => {
+  const raw = Buffer.from([0xff, 0xfe, 0xc0, 0x0a]).toString('utf8') + 'ENOSPC password=SYNTHETIC_SECRET';
+  const result = await provisionAlpineToolchain('diagnostic-1', 'shell', {
+    provisionToolchain: jest.fn(async () => ({...wire, log: raw})),
+  });
+  expect(result).toMatchObject({kind: 'error', diagnostics: {log: 'No space left on device.'}});
+  if (result.kind !== 'error') throw new Error('Expected controlled failure');
+  const failure = {kind: 'unknown' as const, diagnostics: result.diagnostics};
+  const display = installFailureDetails(failure);
+  const report = decodeURIComponent(installFailureIssueUrl('shell', failure, {androidVersion: '36'}));
+  for (const text of [display, report]) {
+    expect(text).toContain('No space left on device.');
+    expect(text).not.toMatch(/SYNTHETIC_|\ufffd/);
+  }
 });

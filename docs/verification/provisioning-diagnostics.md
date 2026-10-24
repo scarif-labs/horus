@@ -33,7 +33,7 @@ Initial isolated-build setup failures (unpopulated submodule, Metro dependency s
 - `src/profile/onboardingSetup.ts:26` retains the code and diagnostics without saving the profile or calling tools-ready after failure. `src/ui/OnboardingScreen.tsx:338` retains them in state; lines 410–417 display them with retry, skip and a report-draft action.
 - `src/terminal/TerminalScreen.tsx:374` retains terminal-session exit and command status, handles split stage markers using the bounded tail, and gives output-free failures a fallback. `src/terminal/installFailure.ts:87` and `src/terminal/InstallFailedOverlay.tsx:19` share the same safe formatting for display and GitHub drafts. Reports allowlist metadata and re-project the output to fixed summaries even for older/raw terminal failures. No new raw log persistence or Android logging is added.
 
-Arbitrary output is deliberately omitted, rather than trusting a password/token pattern to discover every possible secret. A recognized error retains its fixed explanation; unknown nonempty output says it was omitted; genuinely empty output says no diagnostic output was captured. Unknown stages/statuses remain unavailable rather than fabricated. Native and TypeScript policies share a 15-case regression corpus.
+Arbitrary output is deliberately omitted, rather than trusting a password/token pattern to discover every possible secret. A recognized error retains its fixed explanation; unknown nonempty output says it was omitted; genuinely empty output says no diagnostic output was captured. Unknown stages/statuses remain unavailable rather than fabricated. Native and TypeScript policies share a 19-case regression corpus.
 
 ## Observed after results
 
@@ -75,6 +75,16 @@ Local raw test output is under ignored `artifacts/provisioning-diagnostics/`; it
 PR #94 and PR #70 remain unchanged. The tracked patch applies cleanly to PR #94 head `f62369ae224f4417eddc544ab095ead4f7d9e540` using an isolated index. The package-manager/SSH/logger shell scripts are unchanged. Full JVM coverage includes existing Debian, Alpine, existing-install and SSH launcher regressions; a combined PR #94 device install matrix was not rerun.
 
 This fixes the observed information-loss mechanisms, not the unknown underlying cause of every report in #36/#89/#90. Reporter reproduction on an affected installation is still needed. Unknown raw output is intentionally not shareable. Timeout/cancellation process-tree cleanup, full SSH login and authenticated agent workflows remain separate and unverified by this change. No issue is closed, no PR is merged, and no release is published.
+
+## Final publication review
+
+Current upstream `main` remains `a44907cf48c5600f13420fcd992b22eb1a30453a`. Final review added only tests/evidence; the production implementation and previously validated release APK are unchanged. The committed investigation is this repository document, not a dependency on a temporary worktree path.
+
+The shared native/TypeScript corpus now includes CSI color escapes, OSC hyperlinks, multiline synthetic secrets and malformed-decoding replacement characters. A native process emits actual invalid UTF-8 bytes (`ff fe c0 0a`) mixed with ANSI output and multiline synthetic secrets; the exported result contains only the fixed storage explanation. JS also exercises invalid-byte decoding through the bridge wrapper, UI formatter and issue draft. Existing extremely long/repeated output and genuinely empty-output cases remain covered. No raw secret, URL, escape, invalid character or command argument appears in displayed/shared diagnostics.
+
+Final local counts: **434/434 Jest tests (44 suites)**; **291 JVM tests: 287 passed, 4 skipped, 0 failures/errors (32 suites)**, including **13 diagnostics JVM tests**. Typecheck passes; lint has no errors and only the four existing `MetroHomeScreen.tsx` warnings. The successful-install/legacy-success/onboarding paths remain green. The prior **10/10 physical-device fixtures** remain separate evidence; this final review adds no new physical-install claims.
+
+The release APK was inspected to confirm no diagnostic test classes, synthetic payloads, diagnostic test-package ID, private log files, or corpus JSON were packaged. Test instrumentation exists only under `src/androidTest`; there are no production test hooks. The Git diff contains source/tests plus this document, with no logs, device identifiers, credentials or generated APKs. The full patch and final tests apply cleanly atop PR #94 using a temporary index and object store, without changing that branch or its checkout.
 
 ## Re-running the focused regressions
 

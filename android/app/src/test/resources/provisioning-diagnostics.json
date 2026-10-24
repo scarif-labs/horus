@@ -58,5 +58,21 @@
   {
     "raw": "PASSWORD=SYNTHETIC_SECRET\nunknown --token private",
     "safe": "Installer output was omitted because it contained no recognized safe diagnostic message."
+  },
+  {
+    "raw": "\u001b[31mENOSPC --password SYNTHETIC_ESCAPE_SECRET\u001b[0m",
+    "safe": "No space left on device."
+  },
+  {
+    "raw": "\u001b]8;;https://private.invalid/SYNTHETIC_LINK_SECRET\u0007Permission denied /private/user\u001b]8;;\u0007",
+    "safe": "Permission denied while installing packages."
+  },
+  {
+    "raw": "password:\nSYNTHETIC_MULTILINE_SECRET\nPRIVATE_ENV=SYNTHETIC_ENV_SECRET\n-----BEGIN SYNTHETIC PRIVATE MATERIAL-----\nSYNTHETIC_PRIVATE_BODY\n-----END SYNTHETIC PRIVATE MATERIAL-----",
+    "safe": "Installer output was omitted because it contained no recognized safe diagnostic message."
+  },
+  {
+    "raw": "\u0000\ufffd\ufffd\nENOSPC SYNTHETIC_INVALID_TEXT_SECRET\n",
+    "safe": "No space left on device."
   }
 ]

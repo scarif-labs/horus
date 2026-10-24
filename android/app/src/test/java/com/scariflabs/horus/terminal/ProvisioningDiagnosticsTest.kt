@@ -82,6 +82,12 @@ class ProvisioningDiagnosticsTest {
     assertEquals("toolchain_install_failed", ProvisioningResult("failed", stage = "codex_failed", log = "No space left on device.").errorCode())
     assertEquals("toolchain_install_failed", ProvisioningResult("failed", stage = "codex_failed", log = "A required platform package is unavailable.").errorCode())
   }
+  @Test fun invalidUtf8EscapesAndMultilineSecretsAreNeverExported() {
+    val result = run("printf '\\377\\376\\300\\n'; printf '\\033[31mENOSPC password=SYNTHETIC_ESCAPE_SECRET\\033[0m\\n'; printf 'password:\\nSYNTHETIC_MULTILINE_SECRET\\n'; exit 17")
+    assertEquals(17, result.exitCode)
+    assertEquals("No space left on device.", result.log)
+    assertEquals("No space left on device.", result.fields()["log"])
+  }
   @Test fun sharedSanitizationCasesMatchNativeBoundary() {
     val cases = JSONArray(javaClass.getResource("/provisioning-diagnostics.json")!!.readText())
     for (index in 0 until cases.length()) {
