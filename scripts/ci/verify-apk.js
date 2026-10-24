@@ -32,7 +32,7 @@ assert.match(signature.stderr, /DOES NOT VERIFY|Missing META-INF\/MANIFEST.MF|No
 const manifest = JSON.parse(run('unzip', ['-p', apk, 'assets/alpine-runtime/manifest.json']).toString());
 assert.equal(manifest.target.abi, 'arm64-v8a');
 assert.deepEqual(manifest.target.artifacts.map(artifact => artifact.jniName).sort(), ['libproot.so', 'libproot_loader.so']);
-for (const name of ['libproot.so', 'libproot_loader.so', 'libhorus_pty.so']) {
+for (const name of ['libproot.so', 'libproot_loader.so', 'libhorus_pty.so', 'libhorus_provision.so']) {
   const bytes = run('unzip', ['-p', apk, `lib/arm64-v8a/${name}`]);
   assert.equal(bytes.subarray(0, 4).toString('hex'), '7f454c46', `${name} is not ELF`);
   assert.equal(bytes[4], 2, `${name} is not ELF64`);
