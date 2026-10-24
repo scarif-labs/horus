@@ -2153,9 +2153,15 @@ EOF
       # sudo cannot become root under PRoot once the session drops to its
       # user; a helper started now, while still root, runs its commands.
       if [ "${'$'}{HORUS_ROOT_HELPER:-0}" = 1 ] && [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        umask 077
         mkdir -p /run/horus-sudo
+        chmod 700 /run/horus-sudo
+        rm -f /run/horus-sudo/helper.log
         export HORUS_SUDO_SOCKET="/run/horus-sudo/s${'$'}${'$'}"
-        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+        helper_log="/run/horus-sudo/helper-${'$'}${'$'}.log"
+        : > "${'$'}helper_log"
+        chmod 600 "${'$'}helper_log"
+        HORUS_SUDO_LOG="${'$'}helper_log" /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>/dev/null &
       fi
       unset HORUS_ROOT_HELPER
       user_script='
@@ -2409,9 +2415,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       fi
       # sudo for SSH logins, as for the app's own terminal (see sudo-helper).
       if [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        umask 077
         mkdir -p /run/horus-sudo
-        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+        chmod 700 /run/horus-sudo
+        rm -f /run/horus-sudo/helper.log
+        helper_log="/run/horus-sudo/ssh-${'$'}${'$'}.log"
+        : > "${'$'}helper_log"
+        chmod 600 "${'$'}helper_log"
+        HORUS_SUDO_LOG="${'$'}helper_log" /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>/dev/null &
       fi
+      umask 022
       stage serving
       # Everything below execs in place, so this pid becomes dropbear's; the
       # app kills it and its sessions on stop (PRoot does not take them down).

@@ -1838,9 +1838,22 @@ class ProotSessionLauncherTest {
         assertTrue("${file.name} is not executable", file.isFile && file.canExecute())
         assertTrue(file.readText().startsWith("#!/usr/bin/python3\n"))
       }
+      val helperSource = helper.readText()
+      assertTrue("sudo helper keeps a redacted success audit", helperSource.contains("log_success(uid, argv)"))
+      assertTrue("sudo helper failure logs omit exception contents", helperSource.contains("log_request_failure(error)"))
+      assertTrue("sudo helper caps each private log", helperSource.contains("MAX_LOG_BYTES = 64 * 1024"))
+      assertTrue(script.contains("chmod 700 /run/horus-sudo"))
+      assertTrue(script.contains("chmod 600 \"${'$'}helper_log\""))
+      assertTrue(script.contains("rm -f /run/horus-sudo/helper.log"))
 
       val remote = launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
-      assertTrue(remote[remote.indexOf("horus-remote-access") - 1].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
+      val remoteScript = remote[remote.indexOf("horus-remote-access") - 1]
+      assertTrue(remoteScript.contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
+      assertTrue(remoteScript.contains("chmod 700 /run/horus-sudo"))
+      assertTrue(remoteScript.contains("chmod 600 \"${'$'}helper_log\""))
+      assertTrue(remoteScript.contains("rm -f /run/horus-sudo/helper.log"))
+      assertTrue(remoteScript.contains("umask 077"))
+      assertTrue(remoteScript.contains("umask 022"))
 
       // A stale copy is replaced; a symlink planted on the way is never followed.
       sudo.writeText("old")
