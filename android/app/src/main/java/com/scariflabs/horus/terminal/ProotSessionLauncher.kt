@@ -550,38 +550,7 @@ class ProotSessionLauncher(
    * for JVM/unit-test launchers that do not model Android networking.
    */
   private fun prepareResolverFile(rootfsDir: File) {
-    val addresses = dnsServersProvider()
-      .asSequence()
-      .map(String::trim)
-      .filter { it.isNotEmpty() && !it.any { character -> character.isWhitespace() } }
-      .distinct()
-      .take(MAX_DNS_SERVERS)
-      .toList()
-    if (addresses.isEmpty()) return
-    val directory = File(rootfsDir, RESOLV_CONF_DIRECTORY)
-    if (!directory.isDirectory) {
-      throw IllegalStateException("guest resolver directory is missing")
-    }
-    val resolver = File(directory, RESOLV_CONF_NAME)
-    if (Files.isSymbolicLink(resolver.toPath())) {
-      throw IllegalStateException("guest resolver path is a symlink")
-    }
-    val content = addresses.joinToString(separator = "", postfix = "") { "nameserver $it\n" }
-    if (!resolver.exists() || resolver.readText() != content) {
-      var temporary: File? = null
-      try {
-        temporary = File.createTempFile("$RESOLV_CONF_NAME-", ".tmp", directory)
-        temporary.writeText(content)
-        Files.move(
-          temporary.toPath(),
-          resolver.toPath(),
-          StandardCopyOption.ATOMIC_MOVE,
-          StandardCopyOption.REPLACE_EXISTING,
-        )
-      } finally {
-        temporary?.takeIf { it.exists() }?.delete()
-      }
-    }
+    writeResolverFile(rootfsDir, dnsServersProvider())
   }
 
   /**
@@ -2429,6 +2398,48 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       fi
       exec setpriv --reuid="${'$'}uid" --regid="${'$'}gid" --clear-groups -- env HOME="${'$'}home" USER="${'$'}user" LOGNAME="${'$'}user" SHELL=/bin/sh /bin/sh -c "${'$'}dropbear_script"
     """.trimIndent()
+
+    /**
+     * Writes [dnsServers] as the guest `/etc/resolv.conf` of [rootfsDir].
+     * Running sessions pick the change up on their next lookup: musl reads
+     * the file on every query and glibc reloads it when it changes. An empty
+     * list leaves the file untouched.
+     */
+    fun writeResolverFile(rootfsDir: File, dnsServers: List<String>) {
+      val addresses = dnsServers
+        .asSequence()
+        .map(String::trim)
+        .filter { it.isNotEmpty() && !it.any { character -> character.isWhitespace() } }
+        .distinct()
+        .take(MAX_DNS_SERVERS)
+        .toList()
+      if (addresses.isEmpty()) return
+      val directory = File(rootfsDir, RESOLV_CONF_DIRECTORY)
+      if (!directory.isDirectory) {
+        throw IllegalStateException("guest resolver directory is missing")
+      }
+      val resolver = File(directory, RESOLV_CONF_NAME)
+      if (Files.isSymbolicLink(resolver.toPath())) {
+        throw IllegalStateException("guest resolver path is a symlink")
+      }
+      val content = addresses.joinToString(separator = "", postfix = "") { "nameserver $it\n" }
+      if (!resolver.exists() || resolver.readText() != content) {
+        var temporary: File? = null
+        try {
+          temporary = File.createTempFile("$RESOLV_CONF_NAME-", ".tmp", directory)
+          temporary.writeText(content)
+          Files.move(
+            temporary.toPath(),
+            resolver.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+          )
+        } finally {
+          temporary?.takeIf { it.exists() }?.delete()
+        }
+      }
+    }
+
     private const val RESOLV_CONF_DIRECTORY = "etc"
     private const val RESOLV_CONF_NAME = "resolv.conf"
     private const val MAX_DNS_SERVERS = 4

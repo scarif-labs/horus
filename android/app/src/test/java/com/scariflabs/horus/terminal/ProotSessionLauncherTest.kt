@@ -1722,6 +1722,25 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun networkChangeRewritesResolverAndEmptyListKeepsIt() {
+    val base = Files.createTempDirectory("horus-resolver-refresh").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      val resolver = File(rootfs, "etc/resolv.conf")
+      File(rootfs, "etc").mkdirs()
+      resolver.writeText("nameserver 192.168.1.1\n")
+
+      ProotSessionLauncher.writeResolverFile(rootfs, listOf("2001:db8::53", " 192.0.2.53 "))
+      assertEquals("nameserver 2001:db8::53\nnameserver 192.0.2.53\n", resolver.readText())
+
+      ProotSessionLauncher.writeResolverFile(rootfs, emptyList())
+      assertEquals("nameserver 2001:db8::53\nnameserver 192.0.2.53\n", resolver.readText())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun repeatedLaunchesRepairStaleFallbacksAndDropOverlayWhenHostFileBecomesReadable() {
     val base = Files.createTempDirectory("horus-repair-proc").toFile()
     try {

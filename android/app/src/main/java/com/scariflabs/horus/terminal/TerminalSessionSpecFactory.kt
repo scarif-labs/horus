@@ -293,6 +293,20 @@ class TerminalSessionSpecFactory(
     ProotRuntimeLocator.Location.Unavailable("proot_locate_failed", "cannot locate the packaged runtime")
   }
 
+  /**
+   * Rewrites the active rootfs's resolver for the network that just became
+   * the default, so sessions started on Wi-Fi keep resolving on mobile data.
+   */
+  fun refreshResolver(dnsServers: List<String>) {
+    val rootfsDir = try {
+      store.activeRootfsDir()
+    } catch (_: Exception) {
+      null
+    }
+    if (rootfsDir == null || !rootfsDir.isDirectory) return
+    ProotSessionLauncher.writeResolverFile(rootfsDir, dnsServers)
+  }
+
   private fun activeDnsServers(): List<String> = try {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val network = connectivity.activeNetwork ?: return emptyList()
