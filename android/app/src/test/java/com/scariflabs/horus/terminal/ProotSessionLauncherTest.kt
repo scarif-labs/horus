@@ -790,6 +790,7 @@ class ProotSessionLauncherTest {
     val cases = listOf(
       SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "claude", ".claude", "Claude Code"),
       SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE, "opencode", ".config", "OpenCode"),
+      SymlinkCase(TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY, "antigravity", ".gemini", "Google Antigravity"),
     )
     val base = Files.createTempDirectory("horus-agent-guidance-symlink").toFile()
     try {
@@ -1169,7 +1170,7 @@ class ProotSessionLauncherTest {
       val launches = TerminalRuntimeContract.let { contract ->
         listOf(
           contract.TOOLCHAIN_TARGET_SHELL, contract.TOOLCHAIN_TARGET_GITHUB, contract.TOOLCHAIN_TARGET_CLAUDE,
-          contract.TOOLCHAIN_TARGET_CODEX, contract.TOOLCHAIN_TARGET_OPENCODE,
+          contract.TOOLCHAIN_TARGET_CODEX, contract.TOOLCHAIN_TARGET_OPENCODE, contract.TOOLCHAIN_TARGET_ANTIGRAVITY,
         ).flatMap { target ->
           listOf(
             launcher.toolchainProvisionLaunchSpec(rootfs, home, target),
@@ -1543,6 +1544,19 @@ class ProotSessionLauncherTest {
           TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
         ),
       )
+      val agyBin = File(home, ".local/bin/agy").apply {
+        requireNotNull(parentFile).mkdirs()
+        writeText("#!/bin/sh\nexit 0\n")
+        setExecutable(true)
+      }
+      File(home, ".cache/horus/antigravity.ready").apply { requireNotNull(parentFile).mkdirs(); writeText("ready\n") }
+      assertTrue(
+        launcher(base, hostProc).hasProvisionedToolchain(
+          rootfs,
+          home,
+          TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
+        ),
+      )
     } finally {
       base.deleteRecursively()
     }
@@ -1819,13 +1833,18 @@ class ProotSessionLauncherTest {
       assertFalse(sudo.exists())
 
       val claudeHome = File(base, "harness-homes/claude").apply { mkdirs() }
+      val antigravityHome = File(base, "harness-homes/antigravity").apply { mkdirs() }
       val own = launcher.toolchainSessionLaunchSpec(
         rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true, provision = false,
-        harnessHomes = listOf(ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "harness_claude", claudeHome)),
+        harnessHomes = listOf(
+          ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "harness_claude", claudeHome),
+          ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY, "harness_antigravity", antigravityHome),
+        ),
       )
       // The user's own terminal runs the app's harnesses, as SSH does.
       assertTrue(own.argv.windowed(2).any { it == listOf("-b", "${claudeHome.canonicalPath}:/home/harness_claude") })
-      assertEquals("claude=/home/harness_claude\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
+      assertTrue(own.argv.windowed(2).any { it == listOf("-b", "${antigravityHome.canonicalPath}:/home/harness_antigravity") })
+      assertEquals("claude=/home/harness_claude\nantigravity=/home/harness_antigravity\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
       assertTrue(own.environment.contains("HORUS_ROOT_HELPER=1"))
       assertTrue(own.environment.contains("HORUS_SKIP_TOOLCHAIN_PROVISION=1"))
       val binds = own.argv.windowed(2).filter { it[0] == "-b" }.map { it[1] }
@@ -1895,6 +1914,8 @@ class ProotSessionLauncherTest {
         if (delimiter == "HORUS_INSTALLER") {
           assertTrue("shared Codex functions must survive interpolation", body.contains(ProotSessionLauncher.CODEX_INSTALL_SCRIPT))
           assertTrue(body.contains("install_codex() {"))
+          assertTrue(body.contains("install_antigravity() {"))
+          assertTrue(body.contains("antigravity|agy) name=\"Google Antigravity\""))
           assertTrue(body.contains("exec \"\$launcher\" \"\$@\""))
         }
         // Execute only the rendered cat/chmod/mv fragment in a temporary directory.
@@ -1921,6 +1942,34 @@ class ProotSessionLauncherTest {
           assertEquals(output.readText(), 0, syntax.exitValue())
         }
       }
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun antigravityProvisioningLaunchSpecConfiguresTargetAndFailurePath() {
+    val base = Files.createTempDirectory("horus-antigravity-provision").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      val launch = launcher(base, hostProc).toolchainProvisionLaunchSpec(
+        rootfs,
+        home,
+        TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
+      )
+      assertTrue(launch.environment.contains("HORUS_TOOLCHAIN_TARGET=antigravity"))
+      val script = launch.argv.last()
+      assertTrue(script.contains("mark_provision_stage antigravity"))
+      assertTrue(script.contains("run_downloading 'Google Antigravity' 59392"))
+      assertTrue(script.contains("mark_provision_stage antigravity_failed"))
+      assertTrue(script.contains("exit 27"))
+      assertTrue(script.contains("https://antigravity.google/cli/install.sh"))
+      assertFalse(script.contains("Google Antigravity CLI (agy) active."))
     } finally {
       base.deleteRecursively()
     }

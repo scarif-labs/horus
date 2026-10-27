@@ -11,7 +11,13 @@ export function workspaceProjectDirectory(name: string): string | undefined {
 
 export function harnessSessionTarget(harness: MetroLaunchTarget, name: string, directory: string): MetroLaunchTarget {
   const toolchain = harness.toolchain ?? 'shell';
-  const command = toolchain === 'opencode' ? 'opencode' : toolchain === 'claude' ? CLAUDE_COMMAND : 'codex';
+  const command = toolchain === 'antigravity'
+    ? 'agy'
+    : toolchain === 'opencode'
+    ? 'opencode'
+    : toolchain === 'claude'
+    ? CLAUDE_COMMAND
+    : 'codex';
   const script = `mkdir -p ${shellQuote(directory)} && cd ${shellQuote(directory)} && exec ${command}`;
   return {
     title: harness.title,

@@ -312,6 +312,15 @@ class ProotSessionLauncher(
         OPENCODE_AGENT_INSTRUCTIONS_BLOCK,
         "OpenCode",
       )
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> prepareGlobalAgentInstructions(
+        guestHomeDir,
+        ANTIGRAVITY_CONFIG_DIRECTORY_PARTS,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_NAME,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_END,
+        ANTIGRAVITY_AGENT_INSTRUCTIONS_BLOCK,
+        "Google Antigravity",
+      )
     }
     prepareZshProfile(guestHomeDir)
     val rootfsPath = rootfsDir.canonicalFile.absolutePath
@@ -1128,8 +1137,8 @@ class ProotSessionLauncher(
     }
   }
 
-  private fun hasClaudeLauncher(guestHomeDir: File): Boolean {
-    val launcher = File(guestHomeDir, ".local/bin/claude")
+  private fun hasDirectBinaryLauncher(guestHomeDir: File, binaryName: String): Boolean {
+    val launcher = File(guestHomeDir, ".local/bin/$binaryName")
     return launcher.isFile && launcher.canExecute() && !Files.isSymbolicLink(launcher.toPath())
   }
 
@@ -1165,7 +1174,10 @@ class ProotSessionLauncher(
       // The native installer creates an absolute /root symlink. Provisioning
       // rewrites it to a HOME-relative wrapper because interactive sessions
       // run as the configured Alpine user, not root.
-      return readyMarker.isFile && hasClaudeLauncher(guestHomeDir)
+      return readyMarker.isFile && hasDirectBinaryLauncher(guestHomeDir, "claude")
+    }
+    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY) {
+      return readyMarker.isFile && hasDirectBinaryLauncher(guestHomeDir, "agy")
     }
     val rootfsNode = File(rootfsDir, "usr/bin/node").let { it.isFile && it.canExecute() }
     // apk installs npm in /usr/bin; on Debian it is npm's own release in /usr/local/bin.
@@ -1240,6 +1252,7 @@ class ProotSessionLauncher(
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
     )
     private val ROOT_HELPER_FILES = listOf("sudo" to GUEST_SUDO_PATH, "sudo-helper" to GUEST_ROOT_HELPER_PATH)
     const val HOST_PROC = "/proc"
@@ -1272,6 +1285,10 @@ class ProotSessionLauncher(
     private const val CLAUDE_AGENT_INSTRUCTIONS_NAME = "CLAUDE.md"
     private val OPENCODE_CONFIG_DIRECTORY_PARTS = listOf(".config", "opencode")
     private const val OPENCODE_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
+    const val ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_ANTIGRAVITY_MOBILE_ENV_V1 -->"
+    const val ANTIGRAVITY_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_ANTIGRAVITY_MOBILE_ENV_V1 -->"
+    private val ANTIGRAVITY_CONFIG_DIRECTORY_PARTS = listOf(".gemini")
+    private const val ANTIGRAVITY_AGENT_INSTRUCTIONS_NAME = "GEMINI.md"
     private val CODEX_PROFILE_BLOCK = """
       $CODEX_PROFILE_BEGIN
       # Codex Linux sandboxing is unavailable under Android PRoot, and so is
@@ -1375,6 +1392,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $OPENCODE_AGENT_INSTRUCTIONS_END
+    """.trimIndent()
+    private val ANTIGRAVITY_AGENT_INSTRUCTIONS_BLOCK = """
+      $ANTIGRAVITY_AGENT_INSTRUCTIONS_BEGIN
+      ## Runtime environment
+      - Google Antigravity runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
+      - Antigravity runs as the dedicated non-root `harness_antigravity` user with its own persistent home; projects are available under `/workspace`.
+      - Horus provisions system dependencies as root before launching Antigravity. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
+      - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
+      $ANTIGRAVITY_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     // Points apk at the chosen mirror. Each repository line keeps its branch
     // and name (v3.24/main); only the server in front of it changes. The
@@ -1704,7 +1731,7 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       export PATH=/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       target=${'$'}{HORUS_TOOLCHAIN_TARGET:-shell}
       case "${'$'}target" in
-        shell|github|claude|codex|opencode) ;;
+        shell|github|claude|codex|opencode|antigravity) ;;
         *) exit 20 ;;
       esac
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
@@ -1883,8 +1910,8 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      elif [ "${'$'}target" = claude ]; then
-        if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f /root/.cache/horus/claude.ready ]; then
+      elif [ "${'$'}target" = claude ] || [ "${'$'}target" = antigravity ]; then
+        if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f "/root/.cache/horus/${'$'}target.ready" ]; then
           mark_provision_stage apk
           if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_claude; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -2006,6 +2033,24 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
         opencode_payload_valid=true
       fi
 
+      if [ "${'$'}target" = antigravity ] && {
+        [ ! -f "${'$'}target_marker" ] || [ ! -x /root/.local/bin/agy ];
+      }; then
+        mark_provision_stage antigravity
+        rm -f "${'$'}target_marker"
+        install_antigravity() {
+          rm -f /root/.local/bin/agy /root/.cache/horus/antigravity-install.sh
+          if curl --connect-timeout 15 --max-time 300 -fsSL https://antigravity.google/cli/install.sh -o /root/.cache/horus/antigravity-install.sh && [ -s /root/.cache/horus/antigravity-install.sh ]; then
+            bash /root/.cache/horus/antigravity-install.sh
+          fi
+          test -x /root/.local/bin/agy
+        }
+        if ! run_downloading 'Google Antigravity' 59392 /root/.cache/antigravity/staging /root/.cache/horus/antigravity-install.log install_antigravity; then
+          mark_provision_stage antigravity_failed
+          exit 27
+        fi
+      fi
+
       if [ "${'$'}target" != shell ] && [ "${'$'}target" != github ]; then
         # npm's global bin links are not consistent across Alpine/PRoot and
         # published entrypoints can lose their execute bit. Rebuild only the
@@ -2040,6 +2085,14 @@ EOF
             test ! -L "${'$'}claude_launcher"
             if [ ! -x /root/.local/bin/claude ]; then chmod u+rx /root/.local/bin/claude; fi
             test -x /root/.local/bin/claude
+          }; then
+            mark_provision_stage normalize_failed
+            exit 25
+          fi
+        elif [ "${'$'}target" = antigravity ]; then
+          if ! {
+            if [ ! -x /root/.local/bin/agy ]; then chmod u+rx /root/.local/bin/agy || true; fi
+            test -x /root/.local/bin/agy
           }; then
             mark_provision_stage normalize_failed
             exit 25
@@ -2101,6 +2154,8 @@ EOF
         test -x /bin/gh || test -x /usr/bin/gh
       elif [ "${'$'}target" = claude ]; then
         test -x /root/.local/bin/claude
+      elif [ "${'$'}target" = antigravity ]; then
+        test -x /root/.local/bin/agy
       elif [ "${'$'}target" = codex ]; then
         if ! codex_stamped; then
           mark_provision_stage codex_failed
@@ -2295,16 +2350,27 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
         claude) name="Claude Code" ;;
         codex) name="Codex" ;;
         opencode) name="OpenCode" ;;
+        antigravity|agy) name="Google Antigravity"; launcher="${'$'}HOME/.local/bin/agy" ;;
         *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
       esac
       # Prefer the app's own install, run in its harness home, so SSH shares
       # the app's login, settings, and trusted folders.
       app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
-      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
-        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
-        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
-        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
-        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
+      if [ -z "${'$'}app_home" ] && { [ "${'$'}tool" = antigravity ] || [ "${'$'}tool" = agy ]; }; then
+        app_home=${'$'}(sed -n "s#^antigravity=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
+      fi
+      if [ -n "${'$'}app_home" ]; then
+        agy_bin="${'$'}app_home/.local/bin/agy"
+        if [ -x "${'$'}agy_bin" ] && { [ "${'$'}tool" = antigravity ] || [ "${'$'}tool" = agy ]; }; then
+          export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
+          export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
+          exec "${'$'}agy_bin" "${'$'}@"
+        elif [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
+          export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
+          export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
+          if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
+          exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
+        fi
       fi
       # On Debian the user cannot run apt; Horus's app tiles install the
       # system packages as root, and these need only what is already there.
@@ -2325,6 +2391,12 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           { [ "${'$'}(head -c 2 "${'$'}cache/claude-install.sh")" = '#!' ] || { printf '%s\n' "$CLAUDE_INSTALLER_NOT_SCRIPT" >&2; false; }; } &&
           bash "${'$'}cache/claude-install.sh"
       }
+      install_antigravity() {
+        system_packages bash curl ca-certificates git libgcc libstdc++ &&
+          curl --connect-timeout 15 --max-time 300 -fsSL https://antigravity.google/cli/install.sh -o "${'$'}cache/antigravity-install.sh" &&
+          bash "${'$'}cache/antigravity-install.sh"
+      }
+      install_agy() { install_antigravity; }
       # Debian's Node.js comes from the app tile's root provisioning. Say so
       # rather than blaming the connection.
       node_packages() {
@@ -2378,7 +2450,7 @@ ${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
       HORUS_INSTALLER
       chmod 755 "${'$'}agent_installer.tmp"
       mv -f "${'$'}agent_installer.tmp" "${'$'}agent_installer"
-      for agent in claude codex opencode; do
+      for agent in claude codex opencode antigravity agy; do
         stub="/usr/local/bin/${'$'}agent"
         # Never replace a real install someone put here (npm -g does).
         if [ -e "${'$'}stub" ] && ! grep -q '^# horus-agent-stub$' "${'$'}stub" 2>/dev/null; then continue; fi
