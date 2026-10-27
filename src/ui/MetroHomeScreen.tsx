@@ -269,6 +269,9 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
             </View>
             <View style={styles.toolRow}>
               <AppTile logo="opencode" title="OpenCode" onPress={() => onOpen({title: 'OpenCode', eyebrow: 'AI WORKBENCH', command: buildZshScriptCommand('opencode'), toolchain: 'opencode'})} />
+              <AppTile logo="antigravity" title="Antigravity" onPress={() => onOpen({title: 'Google Antigravity', eyebrow: 'AI WORKBENCH', command: buildZshCommand('agy'), toolchain: 'antigravity'})} />
+            </View>
+            <View style={styles.toolRow}>
               <AppTile icon=">_" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
             </View>
           </View>

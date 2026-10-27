@@ -13,11 +13,12 @@ class TerminalHarnessUsersTest {
       TerminalHarnessUsers.forTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "profile"),
       TerminalHarnessUsers.forTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX, "profile"),
       TerminalHarnessUsers.forTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE, "profile"),
+      TerminalHarnessUsers.forTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY, "profile"),
     ).map { requireNotNull(it) }
 
-    assertEquals(listOf("harness_claude", "harness_codex", "harness_opencode"), users.map { it.username })
-    assertEquals(listOf("claude", "codex", "opencode"), users.map { it.homeKey })
-    assertEquals(listOf(61_001, 61_002, 61_003), users.map { it.uid })
+    assertEquals(listOf("harness_claude", "harness_codex", "harness_opencode", "harness_antigravity"), users.map { it.username })
+    assertEquals(listOf("claude", "codex", "opencode", "antigravity"), users.map { it.homeKey })
+    assertEquals(listOf(61_001, 61_002, 61_003, 61_004), users.map { it.uid })
     assertTrue(users.all { it.gid == TerminalHarnessUsers.SHARED_WORKSPACE_GID })
     assertEquals(users.size, users.map { it.uid }.distinct().size)
   }

@@ -315,6 +315,7 @@ class TerminalSessionSpecFactory(
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY,
     )
   }
 }

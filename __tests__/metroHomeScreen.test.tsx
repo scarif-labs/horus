@@ -38,6 +38,7 @@ describe('MetroHomeScreen', () => {
     expect(onOpenGithubLogin).toHaveBeenCalledTimes(1);
     expect(targets).toHaveLength(0);
     expect(renderer?.root.findByProps({testID: 'metro-harness-opencode'})).toBeDefined();
+    expect(renderer?.root.findByProps({testID: 'metro-harness-antigravity'})).toBeDefined();
     await ReactTestRenderer.act(async () => {
       renderer?.root.findByProps({testID: 'metro-harness-opencode'}).props.onPress();
     });

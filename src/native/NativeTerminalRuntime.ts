@@ -72,6 +72,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'toolchain_github_install_failed',
   'toolchain_codex_install_failed',
   'toolchain_opencode_install_failed',
+  'toolchain_antigravity_install_failed',
   'toolchain_normalization_failed',
   'not_installed',
 ] as const;
@@ -102,6 +103,7 @@ export type TerminalRuntimeErrorCode =
   | 'toolchain_github_install_failed'
   | 'toolchain_codex_install_failed'
   | 'toolchain_opencode_install_failed'
+  | 'toolchain_antigravity_install_failed'
   | 'toolchain_normalization_failed'
   | 'not_installed';
 
@@ -209,15 +211,18 @@ export type ProvisionToolchainRequest = {
   target: TerminalToolchainTarget;
 };
 
+export const TOOLCHAIN_TARGET_ANTIGRAVITY = 'antigravity' as const;
+
 export const TERMINAL_TOOLCHAIN_TARGETS = [
   'shell',
   'github',
   'claude',
   'codex',
   'opencode',
+  'antigravity',
 ] as const;
 
-export type TerminalToolchainTarget = 'shell' | 'github' | 'claude' | 'codex' | 'opencode';
+export type TerminalToolchainTarget = 'shell' | 'github' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 
 export type ProvisionToolchainResponse = {
   requestId: string;

@@ -1236,6 +1236,7 @@ class TerminalSessionService : Service() {
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "Claude Code"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "Codex"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "OpenCode"
+    TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> "Google Antigravity"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "GitHub CLI"
     else -> "Bare terminal"
   }
@@ -1385,6 +1386,7 @@ class TerminalSessionService : Service() {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude-install.log"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex-install.log"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode-install.log"
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY -> "antigravity-install.log"
       else -> "alpine-bootstrap.log"
     }
     return File(home, ".cache/horus/$logName")
@@ -1540,7 +1542,8 @@ class TerminalSessionService : Service() {
   private fun isHarnessTarget(target: String?): Boolean =
     target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
       target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
+      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ||
+      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_ANTIGRAVITY
 
   private fun sessionStartedAt(record: TerminalSessionJournal.Record): String = DateUtils.formatDateTime(
     this,

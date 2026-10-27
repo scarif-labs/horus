@@ -5,7 +5,7 @@ import {uiColors} from './brand';
 import {UI_FONT_FAMILY} from './typography';
 
 type DemoScene = Readonly<{
-  toolchain: 'claude' | 'codex' | 'opencode';
+  toolchain: 'claude' | 'codex' | 'opencode' | 'antigravity';
   name: string;
   prompt: string;
   lines: readonly string[];
@@ -15,6 +15,7 @@ const SCENES: readonly DemoScene[] = [
   {toolchain: 'claude', name: 'Claude Code', prompt: 'fix the failing login test', lines: ['● Read src/auth.ts', '● Edit src/auth.ts  +4 −1', '✓ 12 tests passed']},
   {toolchain: 'codex', name: 'Codex', prompt: 'add dark mode to settings', lines: ['• Searched for theme', '• Updated 3 files', '✓ Build succeeded']},
   {toolchain: 'opencode', name: 'OpenCode', prompt: 'explain this repo', lines: ['• Read README.md', '• Mapped 48 files', '✓ Here’s the overview']},
+  {toolchain: 'antigravity', name: 'Antigravity', prompt: 'plan and scaffold feature', lines: ['● Read architecture docs', '● Coordinate subagents', '✓ Implementation ready']},
 ];
 
 const TYPE_MS = 45;

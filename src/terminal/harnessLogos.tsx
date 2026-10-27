@@ -13,6 +13,7 @@ export const HARNESS_LOGO_SOURCES = {
   claude: require('./harness-logos/claude-code.png'),
   codex: require('./harness-logos/openai-blossom.png'),
   opencode: require('./harness-logos/opencode.png'),
+  antigravity: require('./harness-logos/antigravity.png'),
 } as const;
 
 export type HarnessLogo = keyof typeof HARNESS_LOGO_SOURCES;
