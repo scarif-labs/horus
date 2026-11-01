@@ -40,6 +40,8 @@ jobs:
         run: node scripts/ci/check-version.js
       - run: npm run typecheck
       - run: npm run lint
+      - name: Terminal boundary scan
+        run: npm run scan:terminal-boundary
       - name: Jest (includes CLI tests)
         run: npm run test:unit -- --ci --watchAll=false --json --outputFile=jest-results.json
       - name: Verify Jest propagates test failures

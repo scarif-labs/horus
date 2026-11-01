@@ -1213,7 +1213,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     <>
       <StatusBar barStyle="light-content" />
       <View style={styles.safeArea} testID="terminal-screen">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} importantForAccessibility={copyTextOpen ? 'no-hide-descendants' : 'auto'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} collapsable={false} importantForAccessibility={copyTextOpen ? 'no-hide-descendants' : 'auto'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
           <TerminalHeader onBack={onBack} onHome={onHome} />
 
           <View onLayout={handleOutputLayout} style={styles.output}>
@@ -1355,7 +1355,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             onToggleAlt={toggleAlt}
             onToggleCtrl={toggleCtrl}
             onToggleTranscriptPager={toggleCodexTranscriptPager}
-            onCopyText={tuiMouseReporting ? undefined : openCopyText}
+            onCopyText={openCopyText}
+            copyTextDisabled={tuiMouseReporting}
             running={running}
             toolchain={toolchain}
             transcriptPagerOpen={transcriptPagerOpen}

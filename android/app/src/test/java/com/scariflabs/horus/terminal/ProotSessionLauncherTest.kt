@@ -1060,7 +1060,7 @@ class ProotSessionLauncherTest {
         aptBody = "printf 'apt %s\\n' \"\$*\" >> '${calls.path}'\n" +
           "case \"\$*\" in *--no-remove*--fix-broken*install*) touch '${repaired.path}';; " +
           "*install*zsh*) [ -f '${repaired.path}' ] || exit 100;; esac",
-        dpkgBody = "[ \"\$1\" != --configure ] || [ -f '${repaired.path}' ]",
+        dpkgBody = "[ \"\$1\" != --configure ] || { [ -f '${repaired.path}' ] && rm -f '${File(base, "var/lib/dpkg/updates").path}'/*; }",
       ) + "pkg_install '${File(base, "log").path}' zsh\n"
       File(base, "var/lib/dpkg/updates/0001").apply { parentFile!!.mkdirs(); writeText("journal") }
       val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
@@ -1084,7 +1084,7 @@ class ProotSessionLauncherTest {
         aptBody = "printf 'apt %s\\n' \"\$*\" >> '${calls.path}'\n" +
           "case \"\$*\" in *--reinstall*adduser*) touch '${repaired.path}';; " +
           "*--no-remove*--fix-broken*install*) [ -f '${repaired.path}' ] || exit 100;; esac",
-        dpkgBody = "[ \"\$1\" != --configure ] || [ -f '${repaired.path}' ]",
+        dpkgBody = "[ \"\$1\" != --configure ] || { [ -f '${repaired.path}' ] && rm -f '${File(base, "var/lib/dpkg/updates").path}'/*; }",
       ) + "pkg_install '${File(base, "log").path}' zsh\n"
       File(base, "bin/dpkg-query").apply { writeText("#!/bin/sh\nprintf 'reinstreq adduser\\nok bash\\n'\n"); setExecutable(true) }
       File(base, "var/lib/dpkg/updates/0001").apply { parentFile!!.mkdirs(); writeText("journal") }
@@ -1094,6 +1094,30 @@ class ProotSessionLauncherTest {
       assertEquals(output, 0, process.exitValue())
       assertTrue(calls.readText(), calls.readText().contains("--no-remove --fix-broken --reinstall install adduser"))
       assertTrue(repaired.exists())
+    } finally { base.deleteRecursively() }
+  }
+
+  @Test
+  fun reinstreqPackageIsReinstalledEvenWhenConfigureReportsSuccess() {
+    // On a phone, dpkg --configure -a exits 0 and skips a reinstreq package;
+    // only dpkg --audit still reports it (#136).
+    val base = Files.createTempDirectory("horus-dpkg-audit").toFile()
+    try {
+      val calls = File(base, "calls")
+      val repaired = File(base, "repaired")
+      val script = packageFixture(
+        base,
+        aptBody = "printf 'apt %s\\n' \"\$*\" >> '${calls.path}'\n" +
+          "case \"\$*\" in *--reinstall*adduser*) touch '${repaired.path}';; esac",
+        dpkgBody = "case \"\$1\" in --audit) [ -f '${repaired.path}' ] || echo 'adduser needs to be reinstalled';; esac",
+      ) + "pkg_install '${File(base, "log").path}' zsh\n"
+      File(base, "bin/dpkg-query").apply { writeText("#!/bin/sh\n[ -f '${repaired.path}' ] && printf 'ok adduser\\n' || printf 'reinstreq adduser\\n'\n"); setExecutable(true) }
+      val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+      val output = process.inputStream.bufferedReader().readText()
+      assertTrue(process.waitFor(20, TimeUnit.SECONDS))
+      assertEquals(output, 0, process.exitValue())
+      val entries = calls.readLines()
+      assertTrue(entries.toString(), entries.indexOfFirst { it.contains("--reinstall install adduser") } in 0 until entries.indexOfFirst { it.contains("--no-install-recommends zsh") })
     } finally { base.deleteRecursively() }
   }
 

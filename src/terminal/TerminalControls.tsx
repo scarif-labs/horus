@@ -31,7 +31,7 @@ function TerminalToolbarButton({active = false, locked = false, accessibilityLab
       onPress={onPress}
       style={[styles.keyButton, active && styles.modifierButtonActive]}
       testID={testID}>
-      <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive]}>{locked ? `${label} ●` : label}</Text>
+      <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive, disabled && styles.keyButtonTextDisabled]}>{locked ? `${label} ●` : label}</Text>
     </Pressable>
   );
 }
@@ -109,12 +109,13 @@ export type TerminalControlsProps = Readonly<{
   onToggleCtrl: () => void;
   onToggleTranscriptPager: () => void;
   onCopyText?: () => void;
+  copyTextDisabled?: boolean;
   running: boolean;
   toolchain: TerminalToolchainTarget;
   transcriptPagerOpen: boolean;
 }>;
 
-export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, altLocked, ctrlLocked, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, onCopyText, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
+export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, altLocked, ctrlLocked, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, onCopyText, copyTextDisabled = false, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
   const [returnPressed, setReturnPressed] = useReturnKeyPress();
   return (
     <View style={styles.controls}>
@@ -147,7 +148,8 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
             <TerminalToolbarButton accessibilityLabel="Arrow left" disabled={!running} label="←" onPress={() => onArrow('D')} testID="terminal-key-arrow-left" />
             <TerminalToolbarButton accessibilityLabel="Arrow down" disabled={!running} label="↓" onPress={() => onArrow('B')} testID="terminal-key-arrow-down" />
             <TerminalToolbarButton accessibilityLabel="Arrow right" disabled={!running} label="→" onPress={() => onArrow('C')} testID="terminal-key-arrow-right" />
-            {onCopyText === undefined ? null : <TerminalToolbarButton accessibilityLabel="Copy text from terminal" disabled={!running} label="COPY" onPress={onCopyText} testID="terminal-key-copy-text" />}
+            {/* Disabled rather than unmounted while an app owns touches: remounting a key mid-row leaves stale native frames. */}
+            {onCopyText === undefined ? null : <TerminalToolbarButton accessibilityLabel="Copy text from terminal" disabled={!running || copyTextDisabled} label="COPY" onPress={onCopyText} testID="terminal-key-copy-text" />}
           </View>
           <TerminalReturnLowerHalf disabled={!running} onPress={onReturn} pressed={returnPressed} setPressed={setReturnPressed} />
         </View>
@@ -163,6 +165,7 @@ const styles = StyleSheet.create({
   controlRowMain: {borderTopColor: uiColors.border, borderTopWidth: 1, flex: 1, flexDirection: 'row', minWidth: 0},
   keyButton: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderRightColor: uiColors.borderSoft, borderRightWidth: 1, flex: 1, justifyContent: 'center', minWidth: 0, paddingHorizontal: 0},
   keyButtonText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800'},
+  keyButtonTextDisabled: {opacity: 0.35},
   modifierButtonActive: {backgroundColor: uiColors.accent},
   modifierButtonTextActive: {color: TERMINAL_BACKGROUND},
   returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},

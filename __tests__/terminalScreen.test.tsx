@@ -167,7 +167,7 @@ describe('TerminalScreen', () => {
       runtime.emit({type: 'output', sessionId: 's-1-1', seq: 2, base64: encodeTestBase64('\u001b[?1000h')});
       await flushAsync();
     });
-    expect(renderer.root.findAllByProps({testID: 'terminal-key-copy-text'})).toHaveLength(0);
+    expect(renderer.root.findByProps({testID: 'terminal-key-copy-text'}).props.disabled).toBe(true);
     expect(renderer.root.findAllByProps({testID: 'terminal-copy-text-screen'})).toHaveLength(0);
 
     await ReactTestRenderer.act(async () => {

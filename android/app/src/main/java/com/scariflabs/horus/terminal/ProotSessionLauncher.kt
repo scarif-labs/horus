@@ -1444,21 +1444,25 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       }
       dpkg_recover() {
         printf '%s\n' 'Finishing an earlier install that was interrupted…'
-        if DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then return 0; fi
+        # dpkg --configure -a can exit 0 while a package still needs work
+        # (a reinstreq package is skipped, not configured), so re-audit.
+        if DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
         # Passing the requested packages to apt together with --fix-broken
         # can leave unrelated missing dependencies unresolved (#154).
         # Never let automatic recovery remove an existing user package.
         if DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install &&
-          DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then return 0; fi
+          DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
 
         # A package marked reinstreq cannot be configured until it is
         # reinstalled (#136). Restrict arguments to valid package names.
         recovery_packages=${'$'}(dpkg-query -W -f='${'$'}{db:Status-Eflag} ${'$'}{binary:Package}\n' |
           awk '${'$'}1 == "reinstreq" && ${'$'}2 ~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?${'$'}/ { print ${'$'}2 }') || return 1
-        [ -n "${'$'}recovery_packages" ] || return 1
-        set -- ${'$'}recovery_packages
-        DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken --reinstall install "${'$'}@" || return 1
-        DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install || return 1
+        if [ -n "${'$'}recovery_packages" ]; then
+          set -- ${'$'}recovery_packages
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken --reinstall install "${'$'}@" || return 1
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install || return 1
+        fi
+        # Audit findings that configuring cannot fix do not block the install.
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a
       }
     """.trimIndent()
