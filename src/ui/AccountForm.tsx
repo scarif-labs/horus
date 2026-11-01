@@ -12,7 +12,7 @@ const MIN_PASSWORD_LENGTH = 4;
 export type AccountDraft = Readonly<{username: string; avatar: AvatarId; password: string}>;
 
 /** Form state for a new user, and the check that runs before it is used. */
-export function useAccountDraft(): Readonly<{
+export function useAccountDraft(existingUsernames: readonly string[] = []): Readonly<{
   avatar: AvatarId;
   setAvatar: (avatar: AvatarId) => void;
   username: string;
@@ -38,6 +38,10 @@ export function useAccountDraft(): Readonly<{
       setError(problem);
       return undefined;
     }
+    if (existingUsernames.includes(username)) {
+      setError('That username is already in use.');
+      return undefined;
+    }
     if (password.length < MIN_PASSWORD_LENGTH) {
       setError(`Use at least ${MIN_PASSWORD_LENGTH} characters for the password.`);
       return undefined;
@@ -48,7 +52,7 @@ export function useAccountDraft(): Readonly<{
     }
     setError(undefined);
     return {username, avatar, password};
-  }, [avatar, confirmation, password, username]);
+  }, [avatar, confirmation, existingUsernames, password, username]);
   return {avatar, setAvatar, username, setUsername, password, setPassword, confirmation, setConfirmation, error, validate};
 }
 

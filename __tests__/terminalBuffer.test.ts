@@ -7,11 +7,11 @@ import {TERMINAL_SESSION_MAX_OUTPUT_BYTES, TERMINAL_SESSION_OUTPUT_WINDOW} from 
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const instances: TerminalCellBuffer[] = [];
-function setup(rows = 6, columns = 40) {
+function setup(rows = 6, columns = 40, replyToThemeQueries = true) {
   const onChange = jest.fn();
   const onError = jest.fn();
   const onReply = jest.fn(async (_data: string) => {});
-  const buffer = new TerminalCellBuffer({rows, columns}, {onChange, onError, onReply});
+  const buffer = new TerminalCellBuffer({rows, columns}, {onChange, onError, onReply}, {replyToThemeQueries});
   instances.push(buffer);
   const output = async (...chunks: string[]) => {
     for (const chunk of chunks) buffer.append(encode(chunk));
@@ -228,6 +228,12 @@ test('answers cursor/device/theme queries and suppresses split OSC payloads', as
   ]);
   await output('\x1b]0;', 'title', '\x1b', '\\ world');
   expect(lines()[0]).toBe('hello world');
+});
+
+test('suppresses delayed theme replies for the GitHub login prompt while retaining cursor replies', async () => {
+  const {output, onReply} = setup(6, 40, false);
+  await output('\x1b]10;?\x1b\\', '\x1b]11;?\x07', '\x1b[6n');
+  expect(onReply.mock.calls.map(call => call[0])).toEqual(['\x1b[1;1R']);
 });
 
 test('bounds scrollback after sustained output and clamps dimensions', async () => {

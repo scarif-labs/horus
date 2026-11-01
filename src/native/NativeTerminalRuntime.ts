@@ -519,6 +519,21 @@ export type ExportGuestDirectoryResponse = {
   errorCode?: ExportGuestDirectoryErrorCode;
 };
 
+export type TerminalTextResponse = Readonly<{
+  status: 'success' | 'error';
+  text?: string;
+  truncated?: boolean;
+  errorCode?: TerminalRuntimeErrorCode;
+}>;
+
+export type RootfsInstallProgressResponse = Readonly<{
+  status: 'idle' | 'working';
+  requestId?: string;
+  stage?: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+}>;
+
 /**
  * Event payloads delivered on TERMINAL_SESSION_EVENT_NAME via the device
  * event emitter (they do not pass through codegen). Output chunks carry a
@@ -554,6 +569,8 @@ export interface Spec extends TurboModule {
   /** Returns the bounded, credential-free persisted native diagnostic tail. */
   getDebugLog(): Promise<TerminalDebugLogResponse>;
   installRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
+  /** Current rootfs download and installation stage, if any. */
+  readRootfsInstallProgress(): Promise<RootfsInstallProgressResponse>;
   /** Opens the system file picker and installs the archive the user picks. */
   importRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
   /** Points new sessions at an installed rootfs without reinstalling it. */
@@ -585,6 +602,8 @@ export interface Spec extends TurboModule {
    * native session's current frame, or null. Call only on a tap.
    */
   terminalLinkAt(sessionId: string, row: number, column: number): Promise<string | null>;
+  /** Plain text for the native frame and its normal-buffer scrollback. */
+  getTerminalText(sessionId: string): Promise<TerminalTextResponse>;
   /** The text of an exited native session's last screen, once; or null. */
   takeExitScreen(sessionId: string): Promise<string | null>;
   /** The clipboard's text, or null when it holds none (or too much). */

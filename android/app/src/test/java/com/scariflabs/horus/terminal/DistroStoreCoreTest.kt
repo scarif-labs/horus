@@ -73,6 +73,14 @@ class DistroStoreCoreTest {
   )
 
   @Test
+  fun `reports real rootfs installation stages in order`() {
+    val stages = mutableListOf<String>()
+    val outcome = newStore().install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong(), onStage = { stages.add(it) })
+    assertTrue(outcome is DistroStoreCore.InstallOutcome.Success)
+    assertEquals(listOf("checking", "download", "verify", "extract", "probe", "promote"), stages)
+  }
+
+  @Test
   fun `layout startup prunes orphaned staging files from current and legacy tmp locations`() {
     val store = newStore()
     val directories = listOf(store.storage.guestTmp, File(store.storage.sessions, ".proot-scratch"),

@@ -35,6 +35,12 @@ class TerminalInputViewManager : SimpleViewManager<TerminalInputView>() {
     view.setAltActive(value)
   }
 
+  @ReactProp(name = "ctrlLocked", defaultBoolean = false)
+  fun setCtrlLocked(view: TerminalInputView, value: Boolean) { view.setCtrlLocked(value) }
+
+  @ReactProp(name = "altLocked", defaultBoolean = false)
+  fun setAltLocked(view: TerminalInputView, value: Boolean) { view.setAltLocked(value) }
+
   @ReactProp(name = "keyboardShowRequest", defaultInt = 0)
   fun setKeyboardShowRequest(view: TerminalInputView, value: Int) {
     view.setKeyboardShowRequest(value)

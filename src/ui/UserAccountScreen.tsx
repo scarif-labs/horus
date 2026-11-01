@@ -68,7 +68,7 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onS
 
         {editing && onUpdateUser !== undefined ? (
           <View style={styles.editor}>
-            <EditUserCard onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
+            <EditUserCard existingUsernames={others.map(other => other.username)} onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
           </View>
         ) : (
           <View style={styles.hero} testID="user-account-card">
@@ -145,8 +145,9 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onS
 }
 
 /** The signed-in user's hieroglyph and Linux username. The password stays as it is. */
-function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
+function EditUserCard({user, existingUsernames, onSave, onSaved, onCancel}: Readonly<{
   user: ProfileUser;
+  existingUsernames: readonly string[];
   onSave: (user: ProfileUser) => Promise<SaveProfileResult>;
   onSaved: () => void;
   onCancel: () => void;
@@ -163,13 +164,17 @@ function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
       setError(problem);
       return;
     }
+    if (username !== user.username && existingUsernames.includes(username)) {
+      setError('That username is already in use.');
+      return;
+    }
     setSaving(true);
     setError(undefined);
     const result = await onSave({distro: user.distro, username, avatar});
     setSaving(false);
     if (result.kind === 'success') onSaved();
-    else setError(`Couldn’t save (${result.code}). Try again.`);
-  }, [avatar, onSave, onSaved, user.distro, username]);
+    else setError(result.code === 'duplicate_username' ? 'That username is already in use.' : `Couldn’t save (${result.code}). Try again.`);
+  }, [avatar, existingUsernames, onSave, onSaved, user.distro, user.username, username]);
 
   return (
     <View style={styles.card} testID="user-account-editor">
