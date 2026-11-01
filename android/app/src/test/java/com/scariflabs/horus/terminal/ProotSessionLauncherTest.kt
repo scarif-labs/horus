@@ -1157,12 +1157,34 @@ class ProotSessionLauncherTest {
       val lines = argv[argv.indexOf("horus-remote-access") - 1].lines().map { it.trim() }
       val take = lines.indexOf("pkg_lock_take")
       assertTrue(take > 0)
-      assertTrue(take < lines.indexOf("if ! remote_install; then"))
+      assertTrue(take < lines.indexOf("if ! remote_install 7>&-; then"))
       assertTrue(lines.indexOf("pkg_lock_release") in take..lines.indexOfFirst { it.startsWith("dropbear_script=") })
       assertTrue(lines.contains("if dpkg_interrupted; then dpkg_recover || return \$?; fi"))
     } finally {
       base.deleteRecursively()
     }
+  }
+
+  @Test
+  fun aDaemonLeftByAPackageInstallDoesNotRetainThePackageLock() {
+    val base = Files.createTempDirectory("horus-daemon-lock").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val generated = launcher(base, File(base, "proc").apply { mkdirs() })
+        .toolchainProvisionLaunchSpec(rootfs, home, "shell").argv.last()
+      val logger = generated.substring(generated.indexOf("run_logged() {"), generated.indexOf("# The installers download silently"))
+      // A package script that starts a background service (gpg-agent, say).
+      val daemon = "( /bin/sleep 8 >/dev/null 2>&1 & )"
+      val script = packageFixture(base, daemon) + "\n" + logger + "\n" +
+        "pkg_install '${File(base, "install.log").path}' gzip\n" +
+        "exec 7>>'${File(base, "var/lib/horus/packages.lock").path}'; flock -n 7\n"
+      val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+      assertTrue("daemon fixture timed out", process.waitFor(15, TimeUnit.SECONDS))
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals("a package's daemon kept the lock open: $output", 0, process.exitValue())
+    } finally { base.deleteRecursively() }
   }
 
   @Test

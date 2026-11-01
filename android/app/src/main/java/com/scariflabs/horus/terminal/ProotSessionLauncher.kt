@@ -1766,7 +1766,9 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
         rm -f "${'$'}log_pipe"
         if ! mkfifo "${'$'}log_pipe" 2>/dev/null; then
           # No pipe: keep the log file, without live output.
-          "${'$'}@" >"${'$'}log_file" 2>&1 &
+          # Children never need the package lock (FD 7); the shell holds it, and a
+          # daemon a package leaves running must not keep it after release.
+          "${'$'}@" 7>&- >"${'$'}log_file" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -1774,9 +1776,9 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           set -e
           tail -n 40 "${'$'}log_file" 2>/dev/null || true
         else
-          tee "${'$'}log_file" < "${'$'}log_pipe" &
+          tee "${'$'}log_file" < "${'$'}log_pipe" 7>&- &
           tee_pid=${'$'}!
-          "${'$'}@" >"${'$'}log_pipe" 2>&1 &
+          "${'$'}@" 7>&- >"${'$'}log_pipe" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -2256,7 +2258,8 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server python3 rsync zsh; }
         fi
         pkg_lock_take
-        if ! remote_install; then
+        # The shell holds the lock; anything the install leaves running must not.
+        if ! remote_install 7>&-; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
             stage install_failed
             exit 30
@@ -2353,7 +2356,7 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       system_packages() {
         if command -v apk >/dev/null 2>&1; then
           pkg_lock_take
-          if apk add --no-cache --no-progress "${'$'}@"; then package_status=0; else package_status=${'$'}?; fi
+          if apk add --no-cache --no-progress "${'$'}@" 7>&-; then package_status=0; else package_status=${'$'}?; fi
           pkg_lock_release
           return "${'$'}package_status"
         else
