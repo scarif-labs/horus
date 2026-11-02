@@ -266,8 +266,8 @@ android {
         applicationId "com.scariflabs.horus"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
-        versionName "1.1.1"
+        versionCode 8
+        versionName "1.2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets {
