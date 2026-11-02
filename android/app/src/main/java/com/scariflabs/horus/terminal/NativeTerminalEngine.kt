@@ -121,6 +121,10 @@ internal class NativeTerminalEngine(
     val foreground: IntArray,
     val background: IntArray,
     val flags: IntArray,
+    /** True when this row continues a line that soft-wrapped from above. */
+    val wrapped: Boolean,
+    /** Continuation follows a wide character that skipped the preceding last cell. */
+    val wrapPadding: Boolean = false,
   ) {
     val columns: Int get() = text.size
     val hasVisibleContent: Boolean = text.any { it.isNotBlank() }
@@ -186,6 +190,9 @@ internal class NativeTerminalEngine(
     var foreground = IntArray(rows * columns) { DEFAULT_FOREGROUND }
     var background = IntArray(rows * columns) { DEFAULT_BACKGROUND }
     var flags = IntArray(rows * columns)
+    /** xterm-style soft-wrap marker for each row; stored on the continuation row. */
+    var wrapped = BooleanArray(rows)
+    var wrapPadding = BooleanArray(rows)
     // A clean row's cached snapshot matches its cells exactly.
     private val snapshots = arrayOfNulls<FrameRow>(rows)
     private val dirty = BooleanArray(rows) { true }
@@ -194,6 +201,13 @@ internal class NativeTerminalEngine(
 
     fun markDirty(row: Int) {
       if (row in 0 until rows) dirty[row] = true
+    }
+
+    fun markWrapped(row: Int, padding: Boolean = false) {
+      if (row !in 0 until rows) return
+      wrapped[row] = true
+      wrapPadding[row] = padding
+      markDirty(row)
     }
 
     fun clearAll(foregroundColor: Int, backgroundColor: Int, cellFlags: Int = 0) {
@@ -209,6 +223,8 @@ internal class NativeTerminalEngine(
     fun fillText(text: String, foregroundColor: Int, backgroundColor: Int, cellFlags: Int) {
       fillRange(0, texts.size, foregroundColor, backgroundColor, cellFlags)
       texts.fill(text)
+      wrapped.fill(false)
+      wrapPadding.fill(false)
     }
 
     /** Next tab stop right of [column], or the last column. */
@@ -228,6 +244,8 @@ internal class NativeTerminalEngine(
     /** Blanks every cell, keeping the cursor, margins and saved cursor. */
     fun clearRows(foregroundColor: Int, backgroundColor: Int, cellFlags: Int = 0) {
       fillRange(0, texts.size, foregroundColor, backgroundColor, cellFlags)
+      wrapped.fill(false)
+      wrapPadding.fill(false)
     }
 
     /** Forgets the DECSC state (RIS). */
@@ -244,6 +262,10 @@ internal class NativeTerminalEngine(
       val start = from.coerceIn(0, columns)
       val end = to.coerceIn(start, columns)
       fillRange(index(row, start), index(row, end), foregroundColor, backgroundColor, cellFlags)
+      if (start == 0 && end == columns) {
+        wrapped[row] = false
+        wrapPadding[row] = false
+      }
     }
 
     fun clearCell(row: Int, column: Int, foregroundColor: Int, backgroundColor: Int, cellFlags: Int = 0) {
@@ -304,6 +326,8 @@ internal class NativeTerminalEngine(
       val copiedRows = minOf(rows, result.rows)
       val copiedColumns = minOf(columns, result.columns)
       for (row in 0 until copiedRows) {
+        result.wrapped[row] = wrapped[row]
+        result.wrapPadding[row] = wrapPadding[row] && columns == result.columns
         for (column in 0 until copiedColumns) {
           val source = index(row, column)
           val target = result.index(row, column)
@@ -351,6 +375,8 @@ internal class NativeTerminalEngine(
         foreground = rowForeground,
         background = rowBackground,
         flags = rowFlags,
+        wrapped = wrapped[bounded],
+        wrapPadding = wrapPadding[bounded],
       )
       snapshots[bounded] = snapshot
       dirty[bounded] = false
@@ -361,6 +387,8 @@ internal class NativeTerminalEngine(
     private fun copyRow(sourceRow: Int, targetRow: Int) {
       snapshots[targetRow] = snapshots[sourceRow]
       dirty[targetRow] = dirty[sourceRow]
+      wrapped[targetRow] = wrapped[sourceRow]
+      wrapPadding[targetRow] = wrapPadding[sourceRow]
       val source = index(sourceRow, 0)
       val target = index(targetRow, 0)
       texts.copyInto(texts, target, source, source + columns)
@@ -1329,6 +1357,12 @@ internal class NativeTerminalEngine(
 
   private fun putCodePoint(printed: Int) {
     val codePoint = if (graphicsActive && printed in 0x60..0x7e) DEC_SPECIAL_GRAPHICS[printed - 0x60].code else printed
+    // A skin-tone modifier belongs to a preceding emoji base, rather than
+    // consuming a second wide cell. A standalone modifier keeps its width.
+    if (codePoint in 0x1F3FB..0x1F3FF && previousCellAcceptsEmojiModifier()) {
+      joinPreviousCell(codePoint)
+      return
+    }
     val width = TerminalCharWidth.of(codePoint)
     if (width == 0) {
       joinPreviousCell(codePoint)
@@ -1337,12 +1371,14 @@ internal class NativeTerminalEngine(
     if (active.cursorColumn >= active.columns) {
       active.cursorColumn = 0
       lineFeed()
+      active.markWrapped(active.cursorRow)
     } else if (width == 2 && active.cursorColumn == active.columns - 1) {
       // A wide character that does not fit wraps; the skipped last cell is
       // blanked with the current attributes, as in xterm.
       active.clearCell(active.cursorRow, active.columns - 1, currentForeground, currentBackground, currentFlags)
       active.cursorColumn = 0
       lineFeed()
+      active.markWrapped(active.cursorRow, padding = true)
     }
     val row = active.cursorRow
     val column = active.cursorColumn
@@ -1372,6 +1408,18 @@ internal class NativeTerminalEngine(
     if (next < active.columns && isOrphanContinuation(row, next)) {
       active.clearCell(row, next, currentForeground, currentBackground, currentFlags)
     }
+  }
+
+  private fun previousCellAcceptsEmojiModifier(): Boolean {
+    val row = active.cursorRow
+    var column = minOf(active.cursorColumn, active.columns) - 1
+    if (column < 0) return false
+    if (column > 0 && active.widths[active.index(row, column)] == ZERO_WIDTH) column--
+    val offset = active.index(row, column)
+    val text = active.texts[offset]
+    if (active.widths[offset].toInt() != 2 || text.isEmpty()) return false
+    return EmojiModifierBases.contains(text.codePointAt(0)) &&
+      text.codePoints().noneMatch { it in 0x1F3FB..0x1F3FF }
   }
 
   /**

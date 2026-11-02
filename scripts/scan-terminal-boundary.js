@@ -24,10 +24,11 @@ const {spawnSync} = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const terminalJsDir = path.join(root, 'src', 'terminal');
 const nativeSpecFile = path.join(root, 'src', 'native', 'NativeTerminalRuntime.ts');
+const KOTLIN_PACKAGE_PATH = ['com', 'scariflabs', 'horus', 'terminal'];
 const terminalKotlinDirs = [
-  path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'horus', 'terminal'),
-  path.join(root, 'android', 'app', 'src', 'test', 'java', 'com', 'horus', 'terminal'),
-  path.join(root, 'android', 'app', 'src', 'androidTest', 'java', 'com', 'horus', 'terminal'),
+  path.join(root, 'android', 'app', 'src', 'main', 'java', ...KOTLIN_PACKAGE_PATH),
+  path.join(root, 'android', 'app', 'src', 'test', 'java', ...KOTLIN_PACKAGE_PATH),
+  path.join(root, 'android', 'app', 'src', 'androidTest', 'java', ...KOTLIN_PACKAGE_PATH),
 ];
 const output = path.join(root, 'artifacts', 'alpine-poc', 'p0-boundary-scan.json');
 
@@ -46,12 +47,16 @@ const TERMINAL_JS_ADAPTER_FILES = new Set([
   path.join(root, 'src', 'native', 'NativeTerminalInput'),
   path.join(root, 'src', 'ui', 'InteractivePressable'),
   path.join(root, 'src', 'ui', 'typography'),
+  // Read-only storage/memory/network facts for install-failure diagnostics;
+  // it imports only react-native.
+  path.join(root, 'src', 'device', 'deviceSnapshot'),
 ]);
 
 const KOTLIN_MAIN_IMPORT_ALLOWLIST = [
-  /^com\.horus\.terminal\./,
-  /^com\.horus\.R$/,
-  /^com\.horus\.specs\./,
+  /^com\.scariflabs\.horus\.terminal\./,
+  /^com\.scariflabs\.horus\.R$/,
+  /^com\.scariflabs\.horus\.BuildConfig$/,
+  /^com\.scariflabs\.horus\.specs\./,
   /^com\.facebook\.react\./,
   /^android\.*/,
   /^androidx\.test\./,
@@ -60,6 +65,8 @@ const KOTLIN_MAIN_IMPORT_ALLOWLIST = [
   /^kotlin\.*/,
   /^org\.json\./,
   /^org\.junit\./,
+  // XZ decoder for the rootfs archives (SafeTarExtractor).
+  /^org\.tukaani\.xz\./,
 ];
 
 function listFiles(dir, extensions) {
@@ -228,6 +235,7 @@ function stripKotlinCommentsAndStrings(source) {
 function checkJsBoundary() {
   const violations = [];
   const files = listFiles(terminalJsDir, ['.ts', '.tsx']);
+  if (files.length === 0) violations.push(`${path.relative(root, terminalJsDir)} has no TypeScript sources`);
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
     for (const specifier of importSpecifiers(source)) {
@@ -258,10 +266,16 @@ function checkJsBoundary() {
 
 function checkKotlinBoundary() {
   const violations = [];
+  // A moved package would otherwise scan nothing and pass silently.
+  for (const dir of terminalKotlinDirs) {
+    if (listFiles(dir, ['.kt']).length === 0) {
+      violations.push(`${path.relative(root, dir)} has no Kotlin sources; update the scanned package path`);
+    }
+  }
   const files = terminalKotlinDirs.flatMap(dir =>
     listFiles(dir, ['.kt']).map(file => ({
       file,
-      isMain: dir.endsWith(path.join('main', 'java', 'com', 'horus', 'terminal')),
+      isMain: dir === terminalKotlinDirs[0],
     })),
   );
   for (const {file, isMain} of files) {

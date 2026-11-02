@@ -153,7 +153,7 @@ export class TerminalCellBuffer {
   private publishIsSynchronized = false;
   private scrolling = false;
 
-  constructor(size: TerminalSize, callbacks: TerminalCallbacks) {
+  constructor(size: TerminalSize, callbacks: TerminalCallbacks, options: {replyToThemeQueries?: boolean} = {}) {
     const bounded = terminalSize(size.rows, size.columns);
     this.callbacks = callbacks;
     this.terminal = new Terminal({
@@ -200,9 +200,10 @@ export class TerminalCellBuffer {
       this.listeners.push(this.terminal.parser.registerOscHandler(code, () => true));
     }
     // Full-screen TUIs commonly query the theme before their first redraw.
+    // GitHub login opts out: a delayed reply can be read as prompt input.
     for (const [code, color] of [[10, TERMINAL_FOREGROUND], [11, TERMINAL_BACKGROUND]] as const) {
       this.listeners.push(this.terminal.parser.registerOscHandler(code, data => {
-        if (data === '?') {
+        if (data === '?' && options.replyToThemeQueries !== false) {
           const channels = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map(value => value + value);
           this.reply(`\u001b]${code};rgb:${channels.join('/')}\u001b\\`);
         }

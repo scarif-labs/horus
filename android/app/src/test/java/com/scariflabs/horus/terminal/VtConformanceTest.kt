@@ -301,6 +301,8 @@ class VtConformanceTest {
      * that starts matching fails the test so it gets removed.
      */
     val ALLOWLIST = mapOf(
+      // Horus joins this emoji modifier; xterm's Unicode 11 provider uses a second wide cell.
+      "emoji-skin-tone" to "emoji modifier joins its base (issue #52)",
       // DECAWM (CSI ?7l) is not implemented: the engine always autowraps.
       "decawm-off" to "DECAWM not implemented",
       "decawm-off-then-on" to "DECAWM not implemented",

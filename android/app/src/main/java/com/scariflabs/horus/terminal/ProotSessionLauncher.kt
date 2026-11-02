@@ -745,12 +745,30 @@ class ProotSessionLauncher(
       }
     }
     if (groupLines.none { it.split(':').getOrNull(2) == gid.toString() }) {
-      val groupName = username.takeIf { name -> groupLines.none { it.substringBefore(':') == name } }
+      val groupName = "horus_shared".takeIf { gid == GUEST_GID && groupLines.none { it.substringBefore(':') == "horus_shared" } }
+        ?: username.takeIf { name -> groupLines.none { it.substringBefore(':') == name } }
         ?: "horus_shared"
       if (groupLines.any { it.substringBefore(':') == groupName }) {
         throw IllegalStateException("guest group name is already occupied")
       }
       groupLines = groupLines + "$groupName:x:$gid:"
+    }
+    // Horus's profile and harness identities share this numeric GID. Earlier
+    // builds named it after whichever identity happened to launch first.
+    // Rename only a single, recognizable Horus-owned group; leave custom or
+    // ambiguous groups alone and never change the numeric GID or members.
+    if (gid == GUEST_GID && groupLines.none { it.substringBefore(':') == "horus_shared" }) {
+      val matches = groupLines.indices.filter { groupLines[it].split(':').getOrNull(2) == gid.toString() }
+      val index = matches.singleOrNull()
+      if (index != null) {
+        val fields = groupLines[index].split(':')
+        val owner = passwdLines.firstOrNull { it.substringBefore(':') == fields.firstOrNull() }?.split(':')
+        val ownerUid = owner?.getOrNull(2)?.toIntOrNull()
+        if (fields.size == 4 && fields[1] == "x" && owner?.getOrNull(3) == gid.toString() &&
+          (ownerUid == GUEST_UID || (ownerUid != null && ownerUid in 61_001..61_003 && owner[0].startsWith("harness_")))) {
+          groupLines = groupLines.mapIndexed { row, line -> if (row == index) "horus_shared:${fields[1]}:${fields[2]}:${fields[3]}" else line }
+        }
+      }
     }
     // The Android login gate verifies the salted password verifier. Keep the
     // guest shadow entry locked so a second, unaudited auth path cannot bypass
@@ -1426,6 +1444,25 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       }
       dpkg_recover() {
         printf '%s\n' 'Finishing an earlier install that was interrupted…'
+        # dpkg --configure -a can exit 0 while a package still needs work
+        # (a reinstreq package is skipped, not configured), so re-audit.
+        if DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
+        # Passing the requested packages to apt together with --fix-broken
+        # can leave unrelated missing dependencies unresolved (#154).
+        # Never let automatic recovery remove an existing user package.
+        if DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install &&
+          DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
+
+        # A package marked reinstreq cannot be configured until it is
+        # reinstalled (#136). Restrict arguments to valid package names.
+        recovery_packages=${'$'}(dpkg-query -W -f='${'$'}{db:Status-Eflag} ${'$'}{binary:Package}\n' |
+          awk '${'$'}1 == "reinstreq" && ${'$'}2 ~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?${'$'}/ { print ${'$'}2 }') || return 1
+        if [ -n "${'$'}recovery_packages" ]; then
+          set -- ${'$'}recovery_packages
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken --reinstall install "${'$'}@" || return 1
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install || return 1
+        fi
+        # Audit findings that configuring cannot fix do not block the install.
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a
       }
     """.trimIndent()
@@ -1507,9 +1544,11 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
         pkg_watch_pid=${'$'}!
         if [ "${'$'}horus_pkg" = apt ]; then
           pkg_result=0
-          if dpkg_interrupted; then run_logged "${'$'}pkg_log" dpkg_recover || true; fi
           if [ -z "${'$'}(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]; then
             run_logged "${'$'}pkg_log" apt-get update || pkg_result=${'$'}?
+          fi
+          if [ "${'$'}pkg_result" -eq 0 ] && dpkg_interrupted; then
+            run_logged "${'$'}pkg_log" dpkg_recover || pkg_result=${'$'}?
           fi
           if [ "${'$'}pkg_result" -eq 0 ]; then
             run_logged "${'$'}pkg_log" apt_with_status install -y --fix-broken --no-install-recommends "${'$'}@" || pkg_result=${'$'}?
@@ -1727,7 +1766,9 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
         rm -f "${'$'}log_pipe"
         if ! mkfifo "${'$'}log_pipe" 2>/dev/null; then
           # No pipe: keep the log file, without live output.
-          "${'$'}@" >"${'$'}log_file" 2>&1 &
+          # Children never need the package lock (FD 7); the shell holds it, and a
+          # daemon a package leaves running must not keep it after release.
+          "${'$'}@" 7>&- >"${'$'}log_file" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -1735,9 +1776,9 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           set -e
           tail -n 40 "${'$'}log_file" 2>/dev/null || true
         else
-          tee "${'$'}log_file" < "${'$'}log_pipe" &
+          tee "${'$'}log_file" < "${'$'}log_pipe" 7>&- &
           tee_pid=${'$'}!
-          "${'$'}@" >"${'$'}log_pipe" 2>&1 &
+          "${'$'}@" 7>&- >"${'$'}log_pipe" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -2154,8 +2195,10 @@ EOF
       # user; a helper started now, while still root, runs its commands.
       if [ "${'$'}{HORUS_ROOT_HELPER:-0}" = 1 ] && [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
         mkdir -p /run/horus-sudo
+        # Older helpers logged command arguments, which may contain secrets.
+        rm -f /run/horus-sudo/helper.log
         export HORUS_SUDO_SOCKET="/run/horus-sudo/s${'$'}${'$'}"
-        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper-errors.log &
       fi
       unset HORUS_ROOT_HELPER
       user_script='
@@ -2206,16 +2249,17 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           [ -f /etc/apt/apt.conf.d/99horus ] ||
             printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
           remote_install() {
-            if dpkg_interrupted; then dpkg_recover || true; fi
-            DEBIAN_FRONTEND=noninteractive apt-get update &&
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-broken --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
+            DEBIAN_FRONTEND=noninteractive apt-get update || return ${'$'}?
+            if dpkg_interrupted; then dpkg_recover || return ${'$'}?; fi
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-broken --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
           }
         else
           # python3 runs sudo's root helper for SSH logins.
           remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server python3 rsync zsh; }
         fi
         pkg_lock_take
-        if ! remote_install; then
+        # The shell holds the lock; anything the install leaves running must not.
+        if ! remote_install 7>&-; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
             stage install_failed
             exit 30
@@ -2312,7 +2356,7 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       system_packages() {
         if command -v apk >/dev/null 2>&1; then
           pkg_lock_take
-          if apk add --no-cache --no-progress "${'$'}@"; then package_status=0; else package_status=${'$'}?; fi
+          if apk add --no-cache --no-progress "${'$'}@" 7>&-; then package_status=0; else package_status=${'$'}?; fi
           pkg_lock_release
           return "${'$'}package_status"
         else
@@ -2410,7 +2454,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       # sudo for SSH logins, as for the app's own terminal (see sudo-helper).
       if [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
         mkdir -p /run/horus-sudo
-        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+        rm -f /run/horus-sudo/helper.log
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper-errors.log &
       fi
       stage serving
       # Everything below execs in place, so this pid becomes dropbear's; the

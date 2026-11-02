@@ -1,0 +1,8 @@
+- Copy text from the terminal: a COPY key opens the screen and scrollback as selectable text
+- Double-tap Ctrl or Alt to lock it
+- Show download progress while adding a user
+- Show what went wrong when a tool install fails, with a report you can share
+- Recover more broken Debian package states
+- Stop SSH and app installs from fighting over the package lock
+- Stop logging sudo commands
+- Refuse duplicate user names

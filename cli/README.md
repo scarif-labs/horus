@@ -58,6 +58,13 @@ The first time you run `claude`, `codex` or `opencode` on a phone, it installs
 that agent into your home there (needs internet, a minute or two) and then
 starts it.
 
+If `claude` or `opencode` says you're signed out over SSH even though it is
+signed in inside Horus, check `command -v claude` or `command -v opencode`.
+An older SSH install may have left a separate copy in `~/.local/bin`, which
+takes precedence over Horus's forwarding command in `/usr/local/bin`. If that
+copy is not one you installed intentionally, remove or rename it and retry.
+Keep it if you want to use that separate installation.
+
 From scripts, run commands with `horus exec` or `horus ssh pixel -- cmd`, not
 plain `ssh -tt`: the phone's SSH server (dropbear) drops a command's output when
 a terminal is forced and stdin isn't one.

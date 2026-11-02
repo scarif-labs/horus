@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, AppState, type AppStateStatus, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
+import {ActivityIndicator, Alert, AppState, type AppStateStatus, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
@@ -103,11 +103,104 @@ async function flushAsync(): Promise<void> {
 }
 
 function terminalTouch(pageX: number, pageY: number): {nativeEvent: {identifier: string; pageX: number; pageY: number; changedTouches: Array<{identifier: string; pageX: number; pageY: number}>; touches: Array<{identifier: string; pageX: number; pageY: number}>}} {
-  const touch = {identifier: 'terminal-touch', pageX, pageY};
+  const touch = {identifier: 'terminal-touch', pageX, pageY, locationX: pageX, locationY: pageY};
   return {nativeEvent: {...touch, changedTouches: [touch], touches: [touch]}};
 }
 
 describe('TerminalScreen', () => {
+  test('opens a selectable copy view with scrollback and joined wrapped rows', async () => {
+    const runtime = fakeRuntime();
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { const index = runtime.listeners.indexOf(handler); if (index >= 0) runtime.listeners.splice(index, 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} />);
+      await flushAsync();
+    });
+    const lines = Array.from({length: 30}, (_, index) => `line-${index}\r\n`).join('');
+    const wrapped = 'x'.repeat(80);
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64(`${lines}${wrapped}y\r\nlast`)});
+      await flushAsync();
+    });
+
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-key-copy-text'}).props.onPress();
+      await flushAsync();
+    });
+    expect(renderer.root.findByProps({testID: 'terminal-copy-text-screen'})).toBeDefined();
+    const copyText = renderer.root.findByProps({testID: 'terminal-copy-text-content'});
+    expect(copyText.props.selectable).toBe(true);
+    expect(copyText.props.children).toContain('line-0');
+    expect(copyText.props.children).toContain(`${wrapped}y\nlast`);
+
+    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-copy-text-back'}).props.onPress(); });
+    expect(renderer.root.findAllByProps({testID: 'terminal-copy-text-screen'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('hides copy mode but keeps mouse-wheel input for a full-screen mouse-reporting app', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { const index = runtime.listeners.indexOf(handler); if (index >= 0) runtime.listeners.splice(index, 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} toolchain="codex" />);
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('\u001b[?1049h\u001b[HChat')});
+      await flushAsync();
+    });
+    expect(renderer.root.findByProps({testID: 'terminal-key-copy-text'})).toBeDefined();
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'terminal-key-copy-text'}).props.onPress();
+      await flushAsync();
+    });
+    expect(renderer.root.findByProps({testID: 'terminal-copy-text-screen'})).toBeDefined();
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 2, base64: encodeTestBase64('\u001b[?1000h')});
+      await flushAsync();
+    });
+    expect(renderer.root.findByProps({testID: 'terminal-key-copy-text'}).props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({testID: 'terminal-copy-text-screen'})).toHaveLength(0);
+
+    await ReactTestRenderer.act(async () => {
+      const output = renderer.root.findByProps({testID: 'terminal-output'});
+      output.props.onTouchStart(terminalTouch(40, 90));
+      output.props.onTouchMove(terminalTouch(40, 120));
+      await flushAsync();
+    });
+    const writes = (runtime.spec.writeSessionInput as jest.Mock).mock.calls.map(call => new TextDecoder().decode(decodeTestBase64(call[0].base64)));
+    expect(writes).toEqual(['\u001b[M`&\'']);
+    expect(renderer.root.findAllByProps({testID: 'terminal-copy-text-screen'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('explains when clipboard text exceeds the paste limit', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.readClipboardText = jest.fn().mockRejectedValue(Object.assign(new Error('too large'), {code: 'clipboard_too_large'}));
+    runtime.spec.isBracketedPaste = jest.fn().mockResolvedValue(false);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { const index = runtime.listeners.indexOf(handler); if (index >= 0) runtime.listeners.splice(index, 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    try {
+      await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} />); await flushAsync(); });
+      await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'terminal-key-paste'}).props.onPress(); await flushAsync(); });
+      expect(alert).toHaveBeenCalledWith('Text too large to paste', expect.stringContaining('262,144'));
+    } finally {
+      alert.mockRestore();
+      if (renderer) await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+    }
+  });
   test('installs a missing runtime, refreshes status, then starts', async () => {
     const runtime = fakeRuntime();
     const statuses = [
@@ -115,13 +208,13 @@ describe('TerminalScreen', () => {
       runtimeStatus(),
     ];
     runtime.spec.getRuntimeStatus = jest.fn().mockImplementation(async () => statuses.shift());
-    runtime.spec.installRootfs = jest.fn().mockResolvedValue({
-      requestId: 'terminal-install-1', status: 'success', rootfsId: 'alpine-3.24.0-aarch64',
+    runtime.spec.installRootfs = jest.fn().mockImplementation(async (request: {requestId: string}) => ({
+      requestId: request.requestId, status: 'success', rootfsId: 'alpine-3.24.0-aarch64',
       archiveSha256: '4b8cd66a6688b2a87276c39843ed89c3a06d9534fc6a5823c586aff2696c1f2a',
       archiveBytes: 4043766, extractionFiles: 1, probeExitCode: 0,
       probeMarkers: ['alpine_probe_begin', 'aarch64', '3.24.0', '/root', '/sbin/apk', '/bin/sh', 'alpine_probe_end'],
       reusedCache: false, durationMs: 1,
-    });
+    }));
     runtime.spec.startSession = jest.fn().mockResolvedValue({requestId: 'start-1', status: 'success', sessionId: 's-1-1', pid: 1, rows: 24, columns: 80});
     const client = new TerminalSessionClient(runtime.spec, handler => {
       runtime.listeners.push(handler);
@@ -844,6 +937,28 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('does not send color-query responses into the GitHub login prompt', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TerminalScreen client={client} runtime={runtime.spec} sessionCommand="gh auth login" toolchain="github" />,
+      );
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('\x1b]11;?\x1b\\')});
+      await flushAsync();
+    });
+    expect(runtime.spec.writeSessionInput).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('does not send the browser confirmation after the terminal has unmounted', async () => {
     const runtime = fakeRuntime();
     runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
@@ -1234,13 +1349,16 @@ describe('TerminalScreen', () => {
     await press('terminal-key-alt');
     await press('terminal-key-tab');
     await press('terminal-key-esc');
-    // Tapping a modifier twice still turns it off without sending anything.
+    // A double tap locks Ctrl across keys; another tap releases it.
     await press('terminal-key-ctrl');
+    await press('terminal-key-ctrl');
+    await press('terminal-key-arrow-right');
+    await press('terminal-key-arrow-right');
     await press('terminal-key-ctrl');
     await press('terminal-key-arrow-right');
 
     const writes = (runtime.spec.writeSessionInput as jest.Mock).mock.calls.map(call => new TextDecoder().decode(decodeTestBase64(call[0].base64)));
-    expect(writes).toEqual(['\u001b[A', '\u001b[1;5D', 'c', '\u001b[1;7B', '\u0001', 'b', '\t', '\u001b', '\u001b[C']);
+    expect(writes).toEqual(['\u001b[A', '\u001b[1;5D', 'c', '\u001b[1;7B', '\u0001', 'b', '\t', '\u001b', '\u001b[1;5C', '\u001b[1;5C', '\u001b[C']);
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 

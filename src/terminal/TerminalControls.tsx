@@ -13,6 +13,7 @@ export type TerminalArrow = 'A' | 'B' | 'C' | 'D';
 
 type TerminalToolbarButtonProps = Readonly<{
   active?: boolean;
+  locked?: boolean;
   accessibilityLabel: string;
   disabled: boolean;
   label: string;
@@ -20,17 +21,17 @@ type TerminalToolbarButtonProps = Readonly<{
   testID: string;
 }>;
 
-function TerminalToolbarButton({active = false, accessibilityLabel, disabled, label, onPress, testID}: TerminalToolbarButtonProps): React.JSX.Element {
+function TerminalToolbarButton({active = false, locked = false, accessibilityLabel, disabled, label, onPress, testID}: TerminalToolbarButtonProps): React.JSX.Element {
   return (
     <Pressable
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={locked ? `${accessibilityLabel}, locked` : accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{selected: active}}
       disabled={disabled}
       onPress={onPress}
       style={[styles.keyButton, active && styles.modifierButtonActive]}
       testID={testID}>
-      <Text style={[styles.keyButtonText, active && styles.modifierButtonTextActive]}>{label}</Text>
+      <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive, disabled && styles.keyButtonTextDisabled]}>{locked ? `${label} ●` : label}</Text>
     </Pressable>
   );
 }
@@ -87,7 +88,7 @@ function TerminalReturnLowerHalf({disabled, onPress, pressed, setPressed}: Termi
       <View pointerEvents="none" style={styles.returnKeyNotch} testID="terminal-key-return-notch" />
       {/* An image, not ↵: the UI font draws that glyph below the baseline. */}
       <Image source={RETURN_ICON} style={styles.returnKeyIcon} />
-      <Text style={styles.returnKeyText}>RETURN</Text>
+      <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={styles.returnKeyText}>RETURN</Text>
     </RNPressable>
   );
 }
@@ -95,6 +96,8 @@ function TerminalReturnLowerHalf({disabled, onPress, pressed, setPressed}: Termi
 export type TerminalControlsProps = Readonly<{
   altActive: boolean;
   ctrlActive: boolean;
+  altLocked?: boolean;
+  ctrlLocked?: boolean;
   keyboardVisible: boolean;
   onArrow: (direction: TerminalArrow) => void;
   onEscape: () => void;
@@ -105,12 +108,14 @@ export type TerminalControlsProps = Readonly<{
   onToggleAlt: () => void;
   onToggleCtrl: () => void;
   onToggleTranscriptPager: () => void;
+  onCopyText?: () => void;
+  copyTextDisabled?: boolean;
   running: boolean;
   toolchain: TerminalToolchainTarget;
   transcriptPagerOpen: boolean;
 }>;
 
-export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
+export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, altLocked, ctrlLocked, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, onCopyText, copyTextDisabled = false, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
   const [returnPressed, setReturnPressed] = useReturnKeyPress();
   return (
     <View style={styles.controls}>
@@ -138,11 +143,13 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
         <View style={styles.controlRow}>
           <View style={styles.controlRowMain}>
             <TerminalToolbarButton accessibilityLabel="Tab" disabled={!running} label="TAB" onPress={() => onTerminalKey('\t', false)} testID="terminal-key-tab" />
-            <TerminalToolbarButton accessibilityLabel="Control modifier" active={ctrlActive} disabled={!running} label="CTRL" onPress={onToggleCtrl} testID="terminal-key-ctrl" />
-            <TerminalToolbarButton accessibilityLabel="Alt modifier" active={altActive} disabled={!running} label="ALT" onPress={onToggleAlt} testID="terminal-key-alt" />
+            <TerminalToolbarButton accessibilityLabel="Control modifier" active={ctrlActive} locked={ctrlLocked} disabled={!running} label="CTRL" onPress={onToggleCtrl} testID="terminal-key-ctrl" />
+            <TerminalToolbarButton accessibilityLabel="Alt modifier" active={altActive} locked={altLocked} disabled={!running} label="ALT" onPress={onToggleAlt} testID="terminal-key-alt" />
             <TerminalToolbarButton accessibilityLabel="Arrow left" disabled={!running} label="←" onPress={() => onArrow('D')} testID="terminal-key-arrow-left" />
             <TerminalToolbarButton accessibilityLabel="Arrow down" disabled={!running} label="↓" onPress={() => onArrow('B')} testID="terminal-key-arrow-down" />
             <TerminalToolbarButton accessibilityLabel="Arrow right" disabled={!running} label="→" onPress={() => onArrow('C')} testID="terminal-key-arrow-right" />
+            {/* Disabled rather than unmounted while an app owns touches: remounting a key mid-row leaves stale native frames. */}
+            {onCopyText === undefined ? null : <TerminalToolbarButton accessibilityLabel="Copy text from terminal" disabled={!running || copyTextDisabled} label="COPY" onPress={onCopyText} testID="terminal-key-copy-text" />}
           </View>
           <TerminalReturnLowerHalf disabled={!running} onPress={onReturn} pressed={returnPressed} setPressed={setReturnPressed} />
         </View>
@@ -158,6 +165,7 @@ const styles = StyleSheet.create({
   controlRowMain: {borderTopColor: uiColors.border, borderTopWidth: 1, flex: 1, flexDirection: 'row', minWidth: 0},
   keyButton: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderRightColor: uiColors.borderSoft, borderRightWidth: 1, flex: 1, justifyContent: 'center', minWidth: 0, paddingHorizontal: 0},
   keyButtonText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800'},
+  keyButtonTextDisabled: {opacity: 0.35},
   modifierButtonActive: {backgroundColor: uiColors.accent},
   modifierButtonTextActive: {color: TERMINAL_BACKGROUND},
   returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},

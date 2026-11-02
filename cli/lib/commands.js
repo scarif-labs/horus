@@ -8,6 +8,7 @@ const {spawn} = require('node:child_process');
 const adb = require('./adb');
 const state = require('./state');
 const {hostKeyAlias, parseRemotePath, shellQuote, sshConfigBlock, sshOptions} = require('./ssh');
+const {runSsh} = require('./ssh-retry');
 
 const START_TIMEOUT_MS = 10 * 60 * 1000;
 const POLL_MS = 1500;
@@ -270,7 +271,7 @@ async function sshCommand(args) {
   const remote = args.rest.length > 0 ? [args.rest.join(' ')] : [];
   // A one-off command gets a terminal only when there is one to give it.
   const tty = args.rest.length > 0 && process.stdin.isTTY ? ['-t'] : [];
-  return run('ssh', [...options, ...tty, `${username}@127.0.0.1`, ...remote]);
+  return runSsh([...options, ...tty, `${username}@127.0.0.1`, ...remote]);
 }
 
 /** Runs one command on one or all paired phones; output lines are prefixed. */
@@ -283,31 +284,14 @@ async function execCommand(args) {
   const command = args.rest.join(' ');
   if (targets.length === 1) {
     const {options, username} = await connection(targets[0]);
-    return run('ssh', [...options, `${username}@127.0.0.1`, command]);
+    return runSsh([...options, `${username}@127.0.0.1`, command]);
   }
   const width = Math.max(...targets.map(device => label(device).length));
   const codes = await Promise.all(targets.map(async device => {
     const prefix = `${label(device).padEnd(width)} | `;
     try {
       const {options, username} = await connection(device, {quiet: true});
-      return await new Promise(resolve => {
-        const child = spawn('ssh', [...options, '-o', 'BatchMode=yes', `${username}@127.0.0.1`, command], {stdio: ['ignore', 'pipe', 'pipe']});
-        const pipe = (stream, target) => {
-          let buffered = '';
-          stream.setEncoding('utf8');
-          stream.on('data', text => {
-            buffered += text;
-            const lines = buffered.split('\n');
-            buffered = lines.pop();
-            for (const line of lines) target.write(`${prefix}${line}\n`);
-          });
-          stream.on('end', () => { if (buffered) target.write(`${prefix}${buffered}\n`); });
-        };
-        pipe(child.stdout, process.stdout);
-        pipe(child.stderr, process.stderr);
-        child.on('error', () => resolve(1));
-        child.on('exit', code => resolve(code ?? 1));
-      });
+      return await runSsh([...options, '-o', 'BatchMode=yes', `${username}@127.0.0.1`, command], {stdin: 'ignore', prefix});
     } catch (error) {
       process.stderr.write(`${prefix}${error.message}\n`);
       return 1;
@@ -435,7 +419,7 @@ async function statusCommand(args) {
 }
 
 async function unpairCommand(args) {
-  const device = await resolveDevice(args.positional[0]);
+  const device = await resolveDevice(args.positional[0], {requirePaired: false});
   const key = state.ensureKey();
   const result = await adb.callHorus(device.serial, 'unpair', {fingerprint: key.fingerprint});
   const devices = state.readDevices();
