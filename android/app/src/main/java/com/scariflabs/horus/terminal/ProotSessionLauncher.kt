@@ -145,6 +145,8 @@ class ProotSessionLauncher(
     if (rootHelper) installRootHelper(rootfsDir)
     requireHarnessHomes(harnessHomes, guestUsername)
     if (harnessHomes.isNotEmpty()) installAgentHomes(rootfsDir, harnessHomes)
+    // The user's own terminal gets the agent commands, as SSH logins do.
+    if (rootHelper) installAgentCommands(rootfsDir)
     val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -204,6 +206,7 @@ class ProotSessionLauncher(
     requireHarnessHomes(harnessHomes, guestUsername)
     installRootHelper(rootfsDir)
     installAgentHomes(rootfsDir, harnessHomes)
+    installAgentCommands(rootfsDir)
     return buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -451,6 +454,24 @@ class ProotSessionLauncher(
   private fun installAgentHomes(rootfsDir: File, harnessHomes: List<HarnessHome>) {
     val content = harnessHomes.joinToString("") { "${it.target}=/home/${it.username}\n" }
     writeGuestFile(rootfsDir, GUEST_AGENT_HOMES_PATH, content.toByteArray(), executable = false)
+  }
+
+  /**
+   * Puts `claude`, `codex` and `opencode` on the profile user's PATH, in the
+   * app's terminal as over SSH. Each stub hands over to the agent installer.
+   */
+  private fun installAgentCommands(rootfsDir: File) {
+    writeGuestFile(rootfsDir, GUEST_AGENT_INSTALLER_PATH, AGENT_INSTALLER_SCRIPT.toByteArray(), executable = true)
+    AGENT_STUB_TARGETS.sorted().forEach { agent ->
+      val guestPath = "/usr/local/bin/$agent"
+      val stub = File(rootfsDir, guestPath.trimStart('/'))
+      // Never replace a real install someone put here (npm -g does).
+      if (Files.isSymbolicLink(stub.toPath()) || (stub.exists() && !(stub.isFile && stub.readText().contains("\n$AGENT_STUB_MARKER\n")))) {
+        return@forEach
+      }
+      val content = "#!/bin/sh\n$AGENT_STUB_MARKER\nexec $GUEST_AGENT_INSTALLER_PATH $agent \"\$@\"\n"
+      writeGuestFile(rootfsDir, guestPath, content.toByteArray(), executable = true)
+    }
   }
 
   private fun requireHarnessHomes(harnessHomes: List<HarnessHome>, guestUsername: String) {
@@ -1254,6 +1275,8 @@ class ProotSessionLauncher(
     const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
     const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
     const val GUEST_AGENT_HOMES_PATH = "/usr/local/lib/horus/agent-homes"
+    const val GUEST_AGENT_INSTALLER_PATH = "/usr/local/lib/horus/install-agent"
+    private const val AGENT_STUB_MARKER = "# horus-agent-stub"
     private val AGENT_STUB_TARGETS = setOf(
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
@@ -2160,6 +2183,104 @@ EOF
       mark_provision_stage ready
       printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
     """.trimIndent()
+    /**
+     * `/usr/local/lib/horus/install-agent`, behind the `claude`, `codex` and
+     * `opencode` commands in the profile user's terminal and SSH logins. It
+     * runs the app's install from its harness home, or installs a private
+     * copy on first use, like the app's tiles do.
+     */
+    internal val AGENT_INSTALLER_SCRIPT = """
+      #!/bin/sh
+      set -u
+      tool="${'$'}1"
+      shift
+      launcher="${'$'}HOME/.local/bin/${'$'}tool"
+      cache="${'$'}HOME/.cache/horus"
+      case "${'$'}tool" in
+        claude) name="Claude Code" ;;
+        codex) name="Codex" ;;
+        opencode) name="OpenCode" ;;
+        *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
+      esac
+      # Prefer the app's own install, run in its harness home, so SSH shares
+      # the app's login, settings, and trusted folders.
+      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
+      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
+        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
+        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
+        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
+        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
+      fi
+      # On Debian the user cannot run apt; Horus's app tiles install the
+      # system packages as root, and these need only what is already there.
+${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
+      system_packages() {
+        if command -v apk >/dev/null 2>&1; then
+          pkg_lock_take
+          if apk add --no-cache --no-progress "${'$'}@" 7>&-; then package_status=0; else package_status=${'$'}?; fi
+          pkg_lock_release
+          return "${'$'}package_status"
+        else
+          true
+        fi
+      }
+      install_claude() {
+        system_packages bash curl ca-certificates git libgcc libstdc++ &&
+          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
+          { [ "${'$'}(head -c 2 "${'$'}cache/claude-install.sh")" = '#!' ] || { printf '%s\n' "$CLAUDE_INSTALLER_NOT_SCRIPT" >&2; false; }; } &&
+          bash "${'$'}cache/claude-install.sh"
+      }
+      # Debian's Node.js comes from the app tile's root provisioning. Say so
+      # rather than blaming the connection.
+      node_packages() {
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
+        exit 1
+      }
+      install_npm_agent() {
+        node_packages &&
+          npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
+      }
+      # npm's bin links lose their execute bit under PRoot; launch the entry
+      # points through small scripts instead, as the app does.
+      write_launcher() {
+        rm -f "${'$'}launcher" &&
+          printf '#!/bin/sh\nexec %s "%s" "$@"\n' "${'$'}1" "${'$'}2" > "${'$'}launcher" &&
+          chmod 755 "${'$'}launcher"
+      }
+${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
+      install_codex() {
+        node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
+      }
+      install_opencode() {
+        install_npm_agent opencode-ai || return 1
+        # The package may pick a native binary named opencode.exe (it does on Alpine).
+        entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
+        [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
+        test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
+      }
+      agent_ready() {
+        test -x "${'$'}launcher" && { [ "${'$'}tool" != codex ] || codex_stamped; }
+      }
+      if ! agent_ready; then
+        mkdir -p "${'$'}HOME/.local/bin" "${'$'}cache"
+        # Two sessions typing the same command install it once.
+        exec 9>"${'$'}cache/${'$'}tool-launch.lock"
+        flock 9
+        if ! agent_ready; then
+          printf '%s is not installed yet. Installing it now (first run only, needs internet)...\n' "${'$'}name" >&2
+          if ! "install_${'$'}tool" >&2 || [ ! -x "${'$'}launcher" ]; then
+            printf 'Could not install %s. Check the internet connection and try again.\n' "${'$'}name" >&2
+            exit 127
+          fi
+          printf '%s is installed.\n' "${'$'}name" >&2
+        fi
+        exec 9>&-
+      fi
+      exec "${'$'}launcher" "${'$'}@"
+    """.trimIndent()
     private val TOOLCHAIN_SESSION_SCRIPT = """
       set -eu
       session_username="${'$'}1"
@@ -2323,113 +2444,6 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       mv -f "${'$'}login_shell.tmp" "${'$'}login_shell"
       grep -qx "${'$'}login_shell" /etc/shells 2>/dev/null || echo "${'$'}login_shell" >> /etc/shells
       sed -i "s#^\(${'$'}user:[^:]*:${'$'}uid:${'$'}gid:[^:]*:[^:]*:\).*#\1${'$'}login_shell#" /etc/passwd
-      # The agents install on first use, like the app's tiles do. Stubs in
-      # /usr/local/bin install the real launcher into ~/.local/bin, which
-      # comes first on PATH, then hand over to it.
-      agent_installer=/usr/local/lib/horus/install-agent
-      mkdir -p /usr/local/lib/horus
-      cat > "${'$'}agent_installer.tmp" <<'HORUS_INSTALLER'
-      #!/bin/sh
-      set -u
-      tool="${'$'}1"
-      shift
-      launcher="${'$'}HOME/.local/bin/${'$'}tool"
-      cache="${'$'}HOME/.cache/horus"
-      case "${'$'}tool" in
-        claude) name="Claude Code" ;;
-        codex) name="Codex" ;;
-        opencode) name="OpenCode" ;;
-        *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
-      esac
-      # Prefer the app's own install, run in its harness home, so SSH shares
-      # the app's login, settings, and trusted folders.
-      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
-      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
-        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
-        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
-        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
-        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
-      fi
-      # On Debian the user cannot run apt; Horus's app tiles install the
-      # system packages as root, and these need only what is already there.
-${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
-      system_packages() {
-        if command -v apk >/dev/null 2>&1; then
-          pkg_lock_take
-          if apk add --no-cache --no-progress "${'$'}@" 7>&-; then package_status=0; else package_status=${'$'}?; fi
-          pkg_lock_release
-          return "${'$'}package_status"
-        else
-          true
-        fi
-      }
-      install_claude() {
-        system_packages bash curl ca-certificates git libgcc libstdc++ &&
-          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
-          { [ "${'$'}(head -c 2 "${'$'}cache/claude-install.sh")" = '#!' ] || { printf '%s\n' "$CLAUDE_INSTALLER_NOT_SCRIPT" >&2; false; }; } &&
-          bash "${'$'}cache/claude-install.sh"
-      }
-      # Debian's Node.js comes from the app tile's root provisioning. Say so
-      # rather than blaming the connection.
-      node_packages() {
-        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
-        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
-        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
-        printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
-        exit 1
-      }
-      install_npm_agent() {
-        node_packages &&
-          npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
-      }
-      # npm's bin links lose their execute bit under PRoot; launch the entry
-      # points through small scripts instead, as the app does.
-      write_launcher() {
-        rm -f "${'$'}launcher" &&
-          printf '#!/bin/sh\nexec %s "%s" "$@"\n' "${'$'}1" "${'$'}2" > "${'$'}launcher" &&
-          chmod 755 "${'$'}launcher"
-      }
-${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
-      install_codex() {
-        node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
-      }
-      install_opencode() {
-        install_npm_agent opencode-ai || return 1
-        # The package may pick a native binary named opencode.exe (it does on Alpine).
-        entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
-        [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
-        test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
-      }
-      agent_ready() {
-        test -x "${'$'}launcher" && { [ "${'$'}tool" != codex ] || codex_stamped; }
-      }
-      if ! agent_ready; then
-        mkdir -p "${'$'}HOME/.local/bin" "${'$'}cache"
-        # Two sessions typing the same command install it once.
-        exec 9>"${'$'}cache/${'$'}tool-launch.lock"
-        flock 9
-        if ! agent_ready; then
-          printf '%s is not installed yet. Installing it now (first run only, needs internet)...\n' "${'$'}name" >&2
-          if ! "install_${'$'}tool" >&2 || [ ! -x "${'$'}launcher" ]; then
-            printf 'Could not install %s. Check the internet connection and try again.\n' "${'$'}name" >&2
-            exit 127
-          fi
-          printf '%s is installed.\n' "${'$'}name" >&2
-        fi
-        exec 9>&-
-      fi
-      exec "${'$'}launcher" "${'$'}@"
-      HORUS_INSTALLER
-      chmod 755 "${'$'}agent_installer.tmp"
-      mv -f "${'$'}agent_installer.tmp" "${'$'}agent_installer"
-      for agent in claude codex opencode; do
-        stub="/usr/local/bin/${'$'}agent"
-        # Never replace a real install someone put here (npm -g does).
-        if [ -e "${'$'}stub" ] && ! grep -q '^# horus-agent-stub$' "${'$'}stub" 2>/dev/null; then continue; fi
-        printf '#!/bin/sh\n# horus-agent-stub\nexec %s %s "$@"\n' "${'$'}agent_installer" "${'$'}agent" > "${'$'}stub.tmp"
-        chmod 755 "${'$'}stub.tmp"
-        mv -f "${'$'}stub.tmp" "${'$'}stub"
-      done
       # Claude turns cross-session messaging off (with a warning) when it
       # cannot find a uid map, which Android kernels lack; the app passes an
       # explicit socket. Do the same for interactive SSH logins only.
