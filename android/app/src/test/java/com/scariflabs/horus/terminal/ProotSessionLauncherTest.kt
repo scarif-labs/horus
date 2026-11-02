@@ -1222,10 +1222,11 @@ class ProotSessionLauncherTest {
       File(dev, "pts").mkdirs()
       val argv = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = dev)
         .remoteAccessLaunchSpec(rootfs, home, null, "validation").argv
-      val script = argv[argv.indexOf("horus-remote-access") - 1]
+      assertTrue(argv.contains("horus-remote-access"))
+      val script = File(rootfs, ProotSessionLauncher.GUEST_AGENT_INSTALLER_PATH.trimStart('/')).readText()
       val helperStart = script.indexOf("system_packages() {")
       val lockStart = script.lastIndexOf("pkg_lock_file=/var/lib/horus/packages.lock", helperStart)
-      assertTrue("shared lock must be inside the generated installer", lockStart > script.lastIndexOf("HORUS_INSTALLER", helperStart))
+      assertTrue("shared lock must be inside the generated installer", lockStart >= 0)
       val helper = script.substring(lockStart, script.indexOf("install_claude() {"))
         .replace("/var/lib/horus", File(base, "var/lib/horus").path)
       val bin = File(base, "bin").apply { mkdirs() }
@@ -2028,7 +2029,6 @@ class ProotSessionLauncherTest {
       val lines = script.lines()
       val followingCommands = mapOf(
         "HORUS_SHELL" to listOf("chmod 755 \"\$login_shell.tmp\"", "mv -f \"\$login_shell.tmp\" \"\$login_shell\""),
-        "HORUS_INSTALLER" to listOf("chmod 755 \"\$agent_installer.tmp\"", "mv -f \"\$agent_installer.tmp\" \"\$agent_installer\""),
         "HORUS_ZSH" to listOf("mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh"),
       )
       for ((delimiter, following) in followingCommands) {
@@ -2042,18 +2042,12 @@ class ProotSessionLauncherTest {
         assertTrue("$delimiter closes after its opener", end > start)
         assertEquals(following, lines.subList(end + 1, end + 1 + following.size))
         val body = lines.subList(start + 1, end).joinToString("\n") + "\n"
-        if (delimiter == "HORUS_INSTALLER") {
-          assertTrue("shared Codex functions must survive interpolation", body.contains(ProotSessionLauncher.CODEX_INSTALL_SCRIPT))
-          assertTrue(body.contains("install_codex() {"))
-          assertTrue(body.contains("exec \"\$launcher\" \"\$@\""))
-        }
         // Execute only the rendered cat/chmod/mv fragment in a temporary directory.
         // Never run remote provisioning or the generated installers themselves.
         val outputFile = File(base, delimiter)
         val fragment = lines.subList(start, end + 1 + following.size).joinToString("\n")
           .replace("/etc/zsh/zshrc.d/horus-ssh.zsh", outputFile.absolutePath)
-        val fixture = "set -eu\nlogin_shell='${outputFile.absolutePath}'\n" +
-          "agent_installer='${outputFile.absolutePath}'\n$fragment\nprintf 'after:$delimiter\\n'\n"
+        val fixture = "set -eu\nlogin_shell='${outputFile.absolutePath}'\n$fragment\nprintf 'after:$delimiter\\n'\n"
         val output = File(base, "$delimiter.log")
         val process = ProcessBuilder("/bin/sh", "-c", fixture)
           .redirectErrorStream(true).redirectOutput(output).start()
@@ -2071,6 +2065,52 @@ class ProotSessionLauncherTest {
           assertEquals(output.readText(), 0, syntax.exitValue())
         }
       }
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun profileTerminalAndSshGetAgentCommandsButHarnessSessionsDoNot() {
+    val base = Files.createTempDirectory("horus-agent-commands").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launcher = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = hostDev)
+      val installer = File(rootfs, ProotSessionLauncher.GUEST_AGENT_INSTALLER_PATH.trimStart('/'))
+      val stubs = listOf("claude", "codex", "opencode").map { File(rootfs, "usr/local/bin/$it") }
+
+      // A harness session runs its own agent and gets no stubs.
+      launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "harness_codex", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX)
+      assertFalse(installer.exists())
+      stubs.forEach { assertFalse("${it.name} stub in a harness session", it.exists()) }
+
+      // The profile user's own terminal gets them, as SSH logins do (#183).
+      launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
+      assertTrue(installer.isFile && installer.canExecute())
+      assertTrue("shared Codex functions must survive interpolation", installer.readText().contains(ProotSessionLauncher.CODEX_INSTALL_SCRIPT))
+      assertTrue(installer.readText().contains("exec \"\$launcher\" \"\$@\""))
+      val syntax = ProcessBuilder("/bin/sh", "-n", installer.absolutePath).redirectErrorStream(true).start()
+      assertTrue(syntax.waitFor(10, TimeUnit.SECONDS))
+      assertEquals(syntax.inputStream.bufferedReader().readText(), 0, syntax.exitValue())
+      for (stub in stubs) {
+        assertTrue("${stub.name} stub is executable", stub.isFile && stub.canExecute())
+        assertEquals(
+          "#!/bin/sh\n# horus-agent-stub\nexec ${ProotSessionLauncher.GUEST_AGENT_INSTALLER_PATH} ${stub.name} \"\$@\"\n",
+          stub.readText(),
+        )
+      }
+
+      // A real install someone put in /usr/local/bin is left alone; a stale stub is replaced.
+      stubs[0].writeText("#!/bin/sh\necho own claude\n")
+      stubs[1].writeText("#!/bin/sh\n# horus-agent-stub\nexec /old/path codex \"\$@\"\n")
+      launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer")
+      assertEquals("#!/bin/sh\necho own claude\n", stubs[0].readText())
+      assertTrue(stubs[1].readText().contains("exec ${ProotSessionLauncher.GUEST_AGENT_INSTALLER_PATH} codex "))
     } finally {
       base.deleteRecursively()
     }
