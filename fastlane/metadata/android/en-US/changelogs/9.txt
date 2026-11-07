@@ -1,0 +1,1 @@
+- Fix the terminal and agent installs failing right away on some Android 13 phones
