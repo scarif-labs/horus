@@ -56,6 +56,9 @@ object TerminalPtyJni {
   /** Full reset of the native terminal engine (RIS). */
   external fun nativeEngineReset(handle: Long): Int
 
+  /** Returns true if synchronized output (mode 2026) is active. */
+  external fun nativeEngineIsSynchronizedOutput(handle: Long): Boolean
+
   /** Feeds VT bytes into the engine; returns any auto-replies generated. */
   external fun nativeEngineFeed(handle: Long, bytes: ByteArray, offset: Int, count: Int): ByteArray?
 

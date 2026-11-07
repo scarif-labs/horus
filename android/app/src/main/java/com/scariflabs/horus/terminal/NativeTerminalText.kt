@@ -7,6 +7,22 @@ internal object NativeTerminalText {
   const val MAX_CHARACTERS = 262_144
 
   /**
+   * Joins soft-wrapped rows and separates hard line breaks using formatted text from
+   * [libghostty-vt] if engine is available, falling back to frame line extraction.
+   */
+  fun from(engine: NativeTerminalEngine, unwrap: Boolean = true, trim: Boolean = true): NativeTerminalTextSnapshot {
+    if (engine.nativeHandle != 0L) {
+      val text = TerminalPtyJni.nativeEngineGetFormattedText(engine.nativeHandle, unwrap, trim)
+      if (text != null) {
+        val truncated = text.length > MAX_CHARACTERS
+        val bounded = if (truncated) text.takeLast(MAX_CHARACTERS) else text
+        return NativeTerminalTextSnapshot(bounded, truncated)
+      }
+    }
+    return from(engine.currentFrame().lines)
+  }
+
+  /**
    * Joins soft-wrapped rows and separates hard line breaks. The frame already
    * contains normal scrollback followed by the active screen, in display order.
    */

@@ -100,6 +100,15 @@ internal object NativeTerminalLinks {
     return cache.rangesFor(lines, first, last)[row - first]
   }
 
+  /** Returns the URL covering ([row], [column]), checking OSC 8 hyperlinks before text detection. */
+  fun urlAt(engine: NativeTerminalEngine, row: Int, column: Int): String? {
+    if (engine.nativeHandle != 0L) {
+      val link = TerminalPtyJni.nativeEngineGetHyperlink(engine.nativeHandle, column, row)
+      if (!link.isNullOrEmpty()) return link
+    }
+    return urlAt(engine.currentFrame().lines, row, column)
+  }
+
   /** Returns the URL covering ([row], [column]), following wrapped rows. */
   fun urlAt(lines: Array<NativeTerminalEngine.FrameRow>, row: Int, column: Int): String? {
     if (row !in lines.indices) return null

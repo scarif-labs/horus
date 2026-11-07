@@ -440,6 +440,75 @@ static void on_write_pty(GhosttyTerminal term, void *userdata, const uint8_t *da
   }
 }
 
+static const uint32_t ANSI_COLORS[16] = {
+  0xFF000000, 0xFFCD0000, 0xFF00CD00, 0xFFCDCD00,
+  0xFF0000EE, 0xFFCD00CD, 0xFF00CDCD, 0xFFE5E5E5,
+  0xFF7F7F7F, 0xFFFF0000, 0xFF00FF00, 0xFFFFFF00,
+  0xFF5C5CFF, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
+};
+
+static GhosttyColorRgb HORUS_PALETTE[256];
+static void init_horus_palette(void) {
+  static bool initialized = false;
+  if (initialized) return;
+  for (int i = 0; i < 16; i++) {
+    uint32_t c = ANSI_COLORS[i];
+    HORUS_PALETTE[i].r = (uint8_t)((c >> 16) & 0xFF);
+    HORUS_PALETTE[i].g = (uint8_t)((c >> 8) & 0xFF);
+    HORUS_PALETTE[i].b = (uint8_t)(c & 0xFF);
+  }
+  for (int i = 16; i < 232; i++) {
+    int color_index = i - 16;
+    static const uint8_t levels[6] = {0, 95, 135, 175, 215, 255};
+    HORUS_PALETTE[i].r = levels[color_index / 36];
+    HORUS_PALETTE[i].g = levels[(color_index / 6) % 6];
+    HORUS_PALETTE[i].b = levels[color_index % 6];
+  }
+  for (int i = 232; i < 256; i++) {
+    uint8_t gray = (uint8_t)(8 + (i - 232) * 10);
+    HORUS_PALETTE[i].r = gray;
+    HORUS_PALETTE[i].g = gray;
+    HORUS_PALETTE[i].b = gray;
+  }
+  initialized = true;
+}
+
+static char *base64_encode(const uint8_t *data, size_t len, size_t *out_length) {
+  static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  size_t out_len = 4 * ((len + 2) / 3);
+  char *out = (char *)malloc(out_len + 1);
+  if (!out) return NULL;
+  size_t i = 0, j = 0;
+  while (i < len) {
+    size_t rem = len - i;
+    if (rem >= 3) {
+      uint32_t v = ((uint32_t)data[i] << 16) | ((uint32_t)data[i + 1] << 8) | (uint32_t)data[i + 2];
+      out[j++] = tbl[(v >> 18) & 0x3F];
+      out[j++] = tbl[(v >> 12) & 0x3F];
+      out[j++] = tbl[(v >> 6) & 0x3F];
+      out[j++] = tbl[v & 0x3F];
+      i += 3;
+    } else if (rem == 2) {
+      uint32_t v = ((uint32_t)data[i] << 16) | ((uint32_t)data[i + 1] << 8);
+      out[j++] = tbl[(v >> 18) & 0x3F];
+      out[j++] = tbl[(v >> 12) & 0x3F];
+      out[j++] = tbl[(v >> 6) & 0x3F];
+      out[j++] = '=';
+      i += 2;
+    } else {
+      uint32_t v = (uint32_t)data[i] << 16;
+      out[j++] = tbl[(v >> 18) & 0x3F];
+      out[j++] = tbl[(v >> 12) & 0x3F];
+      out[j++] = '=';
+      out[j++] = '=';
+      i += 1;
+    }
+  }
+  out[out_len] = '\0';
+  if (out_length) *out_length = out_len;
+  return out;
+}
+
 static void on_clipboard_write(GhosttyTerminal term, void *userdata, const GhosttyClipboardWrite *write) {
   (void)term;
   SessionEngine *engine = (SessionEngine *)userdata;
@@ -448,12 +517,7 @@ static void on_clipboard_write(GhosttyTerminal term, void *userdata, const Ghost
     const GhosttyClipboardContent *content = &write->contents[i];
     if (content->data.len > 0) {
       free(engine->clipboard_data);
-      engine->clipboard_data = (char *)malloc(content->data.len + 1);
-      if (engine->clipboard_data) {
-        memcpy(engine->clipboard_data, content->data.ptr, content->data.len);
-        engine->clipboard_data[content->data.len] = '\0';
-        engine->clipboard_len = content->data.len;
-      }
+      engine->clipboard_data = base64_encode((const uint8_t *)content->data.ptr, content->data.len, &engine->clipboard_len);
       break;
     }
   }
@@ -509,8 +573,20 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineCreate(
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, (const void *)on_write_pty);
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void *)on_clipboard_write);
 
+  init_horus_palette();
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, HORUS_PALETTE);
+
+  GhosttyColorRgb def_fg = { .r = 0xF2, .g = 0xF4, .b = 0xF5 };
+  GhosttyColorRgb def_bg = { .r = 0x09, .g = 0x0C, .b = 0x0D };
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &def_fg);
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &def_bg);
+
   size_t max_scrollback = 10 * 1024 * 1024;
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &max_scrollback);
+
+  GhosttyTerminalModeConfig grapheme_cfg = { .mode = GHOSTTY_MODE_GRAPHEME_CLUSTER, .value = true };
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &grapheme_cfg);
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE, &grapheme_cfg);
 
   GhosttyRenderStateOverscan overscan = { .above = 200, .below = 0 };
   ghostty_render_state_set(engine->render_state, GHOSTTY_RENDER_STATE_OPT_OVERSCAN, &overscan);
@@ -597,6 +673,22 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineReset(
   ghostty_terminal_reset(engine->terminal);
   pthread_mutex_unlock(&engine->lock);
   return 0;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineIsSynchronizedOutput(
+    JNIEnv *env, jclass clazz, jlong handle) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return JNI_FALSE;
+
+  pthread_mutex_lock(&engine->lock);
+  GhosttyTerminalModeConfig sync_cfg = { .mode = GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, .value = false };
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE, &sync_cfg);
+  pthread_mutex_unlock(&engine->lock);
+
+  return sync_cfg.value ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jbyteArray JNICALL
@@ -704,12 +796,13 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
   }
 
   /* Reset row iterator */
-  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, engine->row_it);
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &engine->row_it);
 
   size_t current_data_offset = header_size + row_table_size;
   int32_t last_content_row = -1;
   int32_t has_visible_content = 0;
   bool prev_row_had_spacer_head = false;
+  int32_t rows_written = 0;
 
   for (int32_t r = 0; r < total_rows; r++) {
     bool has_next = ghostty_render_state_row_iterator_next(engine->row_it);
@@ -730,11 +823,11 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     bool wrap_padding = wrapped && prev_row_had_spacer_head;
     prev_row_had_spacer_head = false;
 
-    /* Write row entry at header_size + r * 32 */
-    uint8_t *row_entry = buf + header_size + (size_t)r * 32;
+    /* Write row entry at header_size + rows_written * 32 */
+    uint8_t *row_entry = buf + header_size + (size_t)rows_written * 32;
 
     /* Populate row cells */
-    ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, engine->row_cells);
+    ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &engine->row_cells);
 
     size_t cell_data_offset = current_data_offset;
     size_t text_data_offset = cell_data_offset + (size_t)cols * 12;
@@ -822,7 +915,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     }
 
     if (row_has_visible) {
-      last_content_row = r;
+      last_content_row = rows_written;
       has_visible_content = 1;
     }
 
@@ -842,22 +935,28 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     row_entry[23] = 0;
     uint32_t c_off = (uint32_t)cell_data_offset;
     uint32_t t_off = (uint32_t)text_data_offset;
-    uint32_t t_len = (uint32_t)text_written;
-    (void)t_len;
     memcpy(row_entry + 24, &c_off, 4);
     memcpy(row_entry + 28, &t_off, 4);
 
     current_data_offset = text_data_offset + text_written;
     /* 4-byte align */
     current_data_offset = (current_data_offset + 3) & ~((size_t)3);
+    rows_written++;
+  }
+
+  int32_t cursor_row = 0;
+  int32_t cursor_col = 0;
+  if (cursor.viewport_has_value) {
+    cursor_row = (int32_t)overscan.above + (int32_t)cursor.viewport_y;
+    cursor_col = (int32_t)cursor.viewport_x;
   }
 
   /* Write Header (64 bytes) */
   int32_t hdr[16];
-  hdr[0] = total_rows;
+  hdr[0] = rows_written;
   hdr[1] = (int32_t)cols;
-  hdr[2] = (int32_t)overscan.above + (int32_t)cursor.viewport_y;
-  hdr[3] = (int32_t)cursor.viewport_x;
+  hdr[2] = cursor_row;
+  hdr[3] = cursor_col;
   hdr[4] = cursor.visible ? 1 : 0;
   hdr[5] = is_alternate ? 1 : 0;
   hdr[6] = mouse_tracking ? 1 : 0;
@@ -872,10 +971,12 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
   hdr[15] = 0;
   memcpy(buf, hdr, 64);
 
+  ghostty_render_state_clean(engine->render_state);
+
   pthread_mutex_unlock(&engine->lock);
 
   jintArray res = (*env)->NewIntArray(env, 4);
-  jint vals[4] = {0, (jint)current_data_offset, total_rows, (jint)dirty_mode};
+  jint vals[4] = {0, (jint)current_data_offset, rows_written, (jint)dirty_mode};
   (*env)->SetIntArrayRegion(env, res, 0, 4, vals);
   return res;
 }
