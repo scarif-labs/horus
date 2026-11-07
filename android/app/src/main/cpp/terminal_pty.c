@@ -12,6 +12,10 @@
  * and reaping boundaries).
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <jni.h>

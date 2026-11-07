@@ -137,10 +137,14 @@ tasks.register("generateAlpineRuntimeManifest") {
 // Alpine terminal PoC Phase 2 PTY helper. Built from
 // app-owned C source with the pinned NDK's clang — no prebuilt binary is
 // vendored — and staged through the same JNI-library packaging path so the
-// APK extraction rules keep the loadable .so in app-native storage. The PoC
-// is ARM64-only by decision, matching the packaged PRoot runtime.
+// APK extraction rules keep the loadable .so in app-native storage.
+// Integrates standalone libghostty-vt for virtual terminal emulation.
 def ptyHelperSource = file("src/main/cpp/terminal_pty.c")
 def ptyHelperStagingDir = file("$buildDir/generated/horus-pty-jniLibs")
+def libghosttyBuildScript = file("../../scripts/native/build-libghostty-vt.sh")
+def libghosttyGeneratedDir = file("$buildDir/generated/libghostty-vt")
+def libghosttyIncludeDir = file("../../native/libghostty-vt/include")
+def hostPtyOutputDir = file("$buildDir/generated/horus-pty-host")
 
 def resolveNdkClang = {
     def prebuiltDir = new File(android.ndkDirectory, "toolchains/llvm/prebuilt")
@@ -152,10 +156,52 @@ def resolveNdkClang = {
     new File(clangDir, "bin/clang")
 }
 
-tasks.register("buildHorusPtyHelper", Exec) {
+def resolveJavaHome = {
+    def jHome = System.getProperty("java.home")
+    if (new File(jHome, "include/jni.h").isFile()) return new File(jHome)
+    def envJavaHome = System.getenv("JAVA_HOME")
+    if (envJavaHome && new File(envJavaHome, "include/jni.h").isFile()) return new File(envJavaHome)
+    def defaultJava = new File("/usr/lib/jvm/java-17-openjdk")
+    if (new File(defaultJava, "include/jni.h").isFile()) return defaultJava
+    return new File(jHome)
+}
+
+def resolveHostCompiler = {
+    for (cmd in ["clang", "gcc", "cc"]) {
+        def proc = ["which", cmd].execute()
+        proc.waitFor()
+        if (proc.exitValue() == 0) {
+            return proc.text.trim()
+        }
+    }
+    return "gcc"
+}
+
+tasks.register("buildLibghosttyVtArm64", Exec) {
+    inputs.file(libghosttyBuildScript)
+    outputs.file(new File(libghosttyGeneratedDir, "arm64-v8a/lib/libghostty-vt.a"))
+    commandLine "bash", libghosttyBuildScript.absolutePath, "arm64-v8a", new File(libghosttyGeneratedDir, "arm64-v8a").absolutePath
+}
+
+tasks.register("buildLibghosttyVtX86_64", Exec) {
+    inputs.file(libghosttyBuildScript)
+    outputs.file(new File(libghosttyGeneratedDir, "x86_64/lib/libghostty-vt.a"))
+    commandLine "bash", libghosttyBuildScript.absolutePath, "x86_64", new File(libghosttyGeneratedDir, "x86_64").absolutePath
+}
+
+tasks.register("buildLibghosttyVtHost", Exec) {
+    inputs.file(libghosttyBuildScript)
+    outputs.file(new File(libghosttyGeneratedDir, "host/lib/libghostty-vt.a"))
+    commandLine "bash", libghosttyBuildScript.absolutePath, "host", new File(libghosttyGeneratedDir, "host").absolutePath
+}
+
+tasks.register("buildHorusPtyHelperArm64", Exec) {
+    dependsOn("buildLibghosttyVtArm64")
     def ptyOutputDir = new File(ptyHelperStagingDir, "arm64-v8a")
     def ptyOutput = new File(ptyOutputDir, "libhorus_pty.so")
+    def libghosttyA = new File(libghosttyGeneratedDir, "arm64-v8a/lib/libghostty-vt.a")
     inputs.file(ptyHelperSource)
+    inputs.file(libghosttyA)
     outputs.file(ptyOutput)
     doFirst {
         ptyOutputDir.mkdirs()
@@ -170,7 +216,68 @@ tasks.register("buildHorusPtyHelper", Exec) {
             "-fPIC",
             "-shared",
             "-Wl,-z,max-page-size=16384",
+            "-I${libghosttyIncludeDir.absolutePath}",
             ptyHelperSource.absolutePath,
+            libghosttyA.absolutePath,
+            "-o",
+            ptyOutput.absolutePath
+}
+
+tasks.register("buildHorusPtyHelperX86_64", Exec) {
+    dependsOn("buildLibghosttyVtX86_64")
+    def ptyOutputDir = new File(ptyHelperStagingDir, "x86_64")
+    def ptyOutput = new File(ptyOutputDir, "libhorus_pty.so")
+    def libghosttyA = new File(libghosttyGeneratedDir, "x86_64/lib/libghostty-vt.a")
+    inputs.file(ptyHelperSource)
+    inputs.file(libghosttyA)
+    outputs.file(ptyOutput)
+    doFirst {
+        ptyOutputDir.mkdirs()
+    }
+    commandLine resolveNdkClang(),
+            "--target=x86_64-linux-android${rootProject.ext.minSdkVersion}",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-Wl,-z,max-page-size=16384",
+            "-I${libghosttyIncludeDir.absolutePath}",
+            ptyHelperSource.absolutePath,
+            libghosttyA.absolutePath,
+            "-o",
+            ptyOutput.absolutePath
+}
+
+tasks.register("buildHorusPtyHelper") {
+    dependsOn("buildHorusPtyHelperArm64", "buildHorusPtyHelperX86_64")
+}
+
+tasks.register("buildHorusPtyHelperHost", Exec) {
+    dependsOn("buildLibghosttyVtHost")
+    def ptyOutput = new File(hostPtyOutputDir, "libhorus_pty.so")
+    def libghosttyA = new File(libghosttyGeneratedDir, "host/lib/libghostty-vt.a")
+    def javaHomeDir = resolveJavaHome()
+    inputs.file(ptyHelperSource)
+    inputs.file(libghosttyA)
+    outputs.file(ptyOutput)
+    doFirst {
+        hostPtyOutputDir.mkdirs()
+    }
+    commandLine resolveHostCompiler(),
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-I${libghosttyIncludeDir.absolutePath}",
+            "-I${new File(javaHomeDir, "include").absolutePath}",
+            "-I${new File(javaHomeDir, "include/linux").absolutePath}",
+            ptyHelperSource.absolutePath,
+            libghosttyA.absolutePath,
             "-o",
             ptyOutput.absolutePath
 }
@@ -253,7 +360,9 @@ tasks.named("preBuild").configure {
 }
 
 tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+    dependsOn("buildHorusPtyHelperHost")
     systemProperty("horus.forceKotlinUnitFailure", forceKotlinUnitFailure)
+    systemProperty("java.library.path", hostPtyOutputDir.absolutePath)
 }
 
 android {
