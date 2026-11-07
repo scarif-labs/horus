@@ -39,6 +39,55 @@ object TerminalPtyJni {
 
   /** Polling write; 0 not-ready, >0 accepted byte count, -(errno) on failure. */
   external fun writeMaster(masterFd: Int, buffer: ByteArray, offset: Int, count: Int): Int
+
+  /* ========================================================================= */
+  /* libghostty-vt Native Terminal Engine Integration                          */
+  /* ========================================================================= */
+
+  /** Creates a native terminal engine instance; returns pointer as Long (0 on failure). */
+  external fun nativeEngineCreate(cols: Int, rows: Int, masterFd: Int): Long
+
+  /** Destroys the native terminal engine instance. */
+  external fun nativeEngineDestroy(handle: Long)
+
+  /** Resizes the native terminal engine and updates masterFd if >= 0. */
+  external fun nativeEngineResize(handle: Long, cols: Int, rows: Int, cellWidthPx: Int, cellHeightPx: Int): Int
+
+  /** Full reset of the native terminal engine (RIS). */
+  external fun nativeEngineReset(handle: Long): Int
+
+  /** Feeds VT bytes into the engine; returns any auto-replies generated. */
+  external fun nativeEngineFeed(handle: Long, bytes: ByteArray, offset: Int, count: Int): ByteArray?
+
+  /**
+   * Updates render state and packs viewport + scrollback into outDirectBuffer.
+   * Returns [status, requiredCapacity, totalRows, dirtyMode].
+   */
+  external fun nativeEngineSyncRender(handle: Long, outDirectBuffer: java.nio.ByteBuffer): IntArray
+
+  /** Polls any OSC 52 clipboard content written by the program. */
+  external fun nativeEnginePollClipboard(handle: Long): String?
+
+  /** Encodes key event per terminal modes; returns escape bytes. */
+  external fun nativeEngineEncodeKey(handle: Long, key: Int, mods: Int, action: Int, text: String?): ByteArray?
+
+  /** Encodes mouse event per terminal modes; returns escape bytes. */
+  external fun nativeEngineEncodeMouse(handle: Long, x: Float, y: Float, button: Int, action: Int, mods: Int): ByteArray?
+
+  /** Encodes paste data per terminal modes (bracketed paste). */
+  external fun nativeEngineEncodePaste(handle: Long, text: String): ByteArray
+
+  /** Formats terminal contents as plain text (unwrap, trim). */
+  external fun nativeEngineGetFormattedText(handle: Long, unwrap: Boolean, trim: Boolean): String?
+
+  /** Retrieves OSC 8 hyperlink URI for cell at col, row. */
+  external fun nativeEngineGetHyperlink(handle: Long, col: Int, row: Int): String?
+
+  /** Unicode codepoint display width (0, 1, or 2). */
+  external fun nativeUnicodeWidth(codePoint: Int): Int
+
+  /** Grapheme cluster display width. */
+  external fun nativeGraphemeWidth(text: String): Int
 }
 
 /** Raised when a PTY backend call fails; `errno` is preserved for evidence. */

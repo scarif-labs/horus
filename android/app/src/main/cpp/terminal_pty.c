@@ -19,9 +19,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
+#include <pthread.h>
 #include <pty.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -29,6 +32,8 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <ghostty/vt.h>
 
 /* Matches the Kotlin reader's chunk size; stack-allocated per call. */
 #define PTY_IO_CHUNK_BYTES 8192
@@ -381,4 +386,742 @@ static void free_strings(char **values) {
   if (values == NULL) return;
   for (size_t i = 0; values[i] != NULL; i++) free(values[i]);
   free(values);
+}
+
+/* ========================================================================= */
+/* libghostty-vt Native Terminal Engine Integration                          */
+/* ========================================================================= */
+
+#define HORUS_FLAG_BOLD (1 << 0)
+#define HORUS_FLAG_ITALIC (1 << 1)
+#define HORUS_FLAG_DIM (1 << 2)
+#define HORUS_FLAG_UNDERLINE (1 << 3)
+#define HORUS_FLAG_STRIKETHROUGH (1 << 4)
+#define HORUS_FLAG_INVISIBLE (1 << 5)
+
+#define HORUS_DEFAULT_FG 0xFFF2F4F5
+#define HORUS_DEFAULT_BG 0xFF090C0D
+
+typedef struct {
+  pthread_mutex_t lock;
+  int master_fd;
+  GhosttyTerminal terminal;
+  GhosttyRenderState render_state;
+  GhosttyRenderStateRowCells row_cells;
+  GhosttyRenderStateRowIterator row_it;
+  GhosttyKeyEncoder key_encoder;
+  GhosttyMouseEncoder mouse_encoder;
+  uint16_t cols;
+  uint16_t rows;
+  uint8_t reply_buf[16384];
+  size_t reply_len;
+  char *clipboard_data;
+  size_t clipboard_len;
+} SessionEngine;
+
+static void on_write_pty(GhosttyTerminal term, void *userdata, const uint8_t *data, size_t len) {
+  (void)term;
+  SessionEngine *engine = (SessionEngine *)userdata;
+  if (!engine || !data || len == 0) return;
+  if (engine->master_fd >= 0) {
+    size_t written = 0;
+    while (written < len) {
+      ssize_t put = write(engine->master_fd, data + written, len - written);
+      if (put < 0) {
+        if (errno == EINTR) continue;
+        break;
+      }
+      written += (size_t)put;
+    }
+  }
+  if (engine->reply_len + len <= sizeof(engine->reply_buf)) {
+    memcpy(engine->reply_buf + engine->reply_len, data, len);
+    engine->reply_len += len;
+  }
+}
+
+static void on_clipboard_write(GhosttyTerminal term, void *userdata, const GhosttyClipboardWrite *write) {
+  (void)term;
+  SessionEngine *engine = (SessionEngine *)userdata;
+  if (!engine || !write) return;
+  for (size_t i = 0; i < write->contents_len; i++) {
+    const GhosttyClipboardContent *content = &write->contents[i];
+    if (content->data.len > 0) {
+      free(engine->clipboard_data);
+      engine->clipboard_data = (char *)malloc(content->data.len + 1);
+      if (engine->clipboard_data) {
+        memcpy(engine->clipboard_data, content->data.ptr, content->data.len);
+        engine->clipboard_data[content->data.len] = '\0';
+        engine->clipboard_len = content->data.len;
+      }
+      break;
+    }
+  }
+  GhosttyClipboardWriteReply reply;
+  ghostty_sized_init(&reply, sizeof(reply));
+  reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+  reply.remember = false;
+  if (write->reply) {
+    write->reply(write, &reply);
+  }
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineCreate(
+    JNIEnv *env, jclass clazz, jint cols, jint rows, jint masterFd) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)calloc(1, sizeof(SessionEngine));
+  if (!engine) return 0;
+
+  if (pthread_mutex_init(&engine->lock, NULL) != 0) {
+    free(engine);
+    return 0;
+  }
+
+  engine->master_fd = masterFd;
+  engine->cols = (uint16_t)(cols > 0 ? cols : 80);
+  engine->rows = (uint16_t)(rows > 0 ? rows : 24);
+
+  if (ghostty_terminal_new(NULL, &engine->terminal, engine->cols, engine->rows) != GHOSTTY_SUCCESS) {
+    pthread_mutex_destroy(&engine->lock);
+    free(engine);
+    return 0;
+  }
+
+  if (ghostty_render_state_new(NULL, &engine->render_state) != GHOSTTY_SUCCESS ||
+      ghostty_render_state_row_cells_new(NULL, &engine->row_cells) != GHOSTTY_SUCCESS ||
+      ghostty_render_state_row_iterator_new(NULL, &engine->row_it) != GHOSTTY_SUCCESS ||
+      ghostty_key_encoder_new(NULL, &engine->key_encoder) != GHOSTTY_SUCCESS ||
+      ghostty_mouse_encoder_new(NULL, &engine->mouse_encoder) != GHOSTTY_SUCCESS) {
+    if (engine->key_encoder) ghostty_key_encoder_free(engine->key_encoder);
+    if (engine->mouse_encoder) ghostty_mouse_encoder_free(engine->mouse_encoder);
+    if (engine->row_cells) ghostty_render_state_row_cells_free(engine->row_cells);
+    if (engine->row_it) ghostty_render_state_row_iterator_free(engine->row_it);
+    if (engine->render_state) ghostty_render_state_free(engine->render_state);
+    ghostty_terminal_free(engine->terminal);
+    pthread_mutex_destroy(&engine->lock);
+    free(engine);
+    return 0;
+  }
+
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_USERDATA, engine);
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, (const void *)on_write_pty);
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void *)on_clipboard_write);
+
+  size_t max_scrollback = 10 * 1024 * 1024;
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &max_scrollback);
+
+  GhosttyRenderStateOverscan overscan = { .above = 200, .below = 0 };
+  ghostty_render_state_set(engine->render_state, GHOSTTY_RENDER_STATE_OPT_OVERSCAN, &overscan);
+
+  GhosttyMouseEncoderSize msize;
+  ghostty_sized_init(&msize, sizeof(msize));
+  msize.cell_width = 1;
+  msize.cell_height = 1;
+  msize.screen_width = engine->cols;
+  msize.screen_height = engine->rows;
+  ghostty_mouse_encoder_set(engine->mouse_encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &msize);
+
+  return (jlong)(uintptr_t)engine;
+}
+
+JNIEXPORT void JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineDestroy(
+    JNIEnv *env, jclass clazz, jlong handle) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return;
+
+  pthread_mutex_lock(&engine->lock);
+  if (engine->key_encoder) ghostty_key_encoder_free(engine->key_encoder);
+  if (engine->mouse_encoder) ghostty_mouse_encoder_free(engine->mouse_encoder);
+  if (engine->row_cells) ghostty_render_state_row_cells_free(engine->row_cells);
+  if (engine->row_it) ghostty_render_state_row_iterator_free(engine->row_it);
+  if (engine->render_state) ghostty_render_state_free(engine->render_state);
+  if (engine->terminal) ghostty_terminal_free(engine->terminal);
+  if (engine->clipboard_data) free(engine->clipboard_data);
+  pthread_mutex_unlock(&engine->lock);
+
+  pthread_mutex_destroy(&engine->lock);
+  free(engine);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineResize(
+    JNIEnv *env, jclass clazz, jlong handle, jint cols, jint rows,
+    jint cellWidthPx, jint cellHeightPx) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine || cols <= 0 || rows <= 0) return -(jint)EINVAL;
+
+  pthread_mutex_lock(&engine->lock);
+  engine->cols = (uint16_t)cols;
+  engine->rows = (uint16_t)rows;
+  ghostty_terminal_resize(engine->terminal, (uint16_t)cols, (uint16_t)rows,
+                          (uint32_t)(cellWidthPx > 0 ? cellWidthPx : 1),
+                          (uint32_t)(cellHeightPx > 0 ? cellHeightPx : 1));
+
+  GhosttyMouseEncoderSize msize;
+  ghostty_sized_init(&msize, sizeof(msize));
+  msize.cell_width = (uint32_t)(cellWidthPx > 0 ? cellWidthPx : 1);
+  msize.cell_height = (uint32_t)(cellHeightPx > 0 ? cellHeightPx : 1);
+  msize.screen_width = (uint32_t)cols * msize.cell_width;
+  msize.screen_height = (uint32_t)rows * msize.cell_height;
+  ghostty_mouse_encoder_set(engine->mouse_encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &msize);
+
+  if (engine->master_fd >= 0) {
+    struct winsize ws = {
+        .ws_row = (unsigned short)rows,
+        .ws_col = (unsigned short)cols,
+        .ws_xpixel = (unsigned short)msize.screen_width,
+        .ws_ypixel = (unsigned short)msize.screen_height,
+    };
+    ioctl(engine->master_fd, TIOCSWINSZ, &ws);
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineReset(
+    JNIEnv *env, jclass clazz, jlong handle) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return -(jint)EINVAL;
+
+  pthread_mutex_lock(&engine->lock);
+  ghostty_terminal_reset(engine->terminal);
+  pthread_mutex_unlock(&engine->lock);
+  return 0;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineFeed(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray buffer, jint offset, jint count) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine || !buffer || offset < 0 || count < 0) return NULL;
+
+  jsize arr_len = (*env)->GetArrayLength(env, buffer);
+  if (offset > arr_len || count > arr_len - offset) return NULL;
+  if (count == 0) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  engine->reply_len = 0;
+
+  jbyte *bytes = (*env)->GetByteArrayElements(env, buffer, NULL);
+  if (bytes) {
+    ghostty_terminal_vt_write(engine->terminal, (const uint8_t *)(bytes + offset), (size_t)count);
+    (*env)->ReleaseByteArrayElements(env, buffer, bytes, JNI_ABORT);
+  }
+
+  jbyteArray reply = NULL;
+  if (engine->reply_len > 0) {
+    reply = (*env)->NewByteArray(env, (jsize)engine->reply_len);
+    if (reply) {
+      (*env)->SetByteArrayRegion(env, reply, 0, (jsize)engine->reply_len, (const jbyte *)engine->reply_buf);
+    }
+    engine->reply_len = 0;
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return reply;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
+    JNIEnv *env, jclass clazz, jlong handle, jobject outDirectBuffer) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine || !outDirectBuffer) {
+    jintArray err = (*env)->NewIntArray(env, 4);
+    jint vals[4] = {-1, 0, 0, 0};
+    (*env)->SetIntArrayRegion(env, err, 0, 4, vals);
+    return err;
+  }
+
+  uint8_t *buf = (uint8_t *)(*env)->GetDirectBufferAddress(env, outDirectBuffer);
+  jlong cap = (*env)->GetDirectBufferCapacity(env, outDirectBuffer);
+  if (!buf || cap < 64) {
+    jintArray err = (*env)->NewIntArray(env, 4);
+    jint vals[4] = {-1, 1024 * 1024, 0, 0};
+    (*env)->SetIntArrayRegion(env, err, 0, 4, vals);
+    return err;
+  }
+
+  pthread_mutex_lock(&engine->lock);
+
+  ghostty_render_state_update(engine->render_state, engine->terminal);
+
+  uint16_t cols = 0, rows = 0;
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_COLS, &cols);
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_ROWS, &rows);
+
+  GhosttyRenderStateDirty dirty_mode = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty_mode);
+
+  GhosttyRenderStateCursor cursor;
+  ghostty_sized_init(&cursor, sizeof(cursor));
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR, &cursor);
+
+  GhosttyRenderStateOverscan overscan = {0, 0};
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_OVERSCAN, &overscan);
+
+  int32_t total_rows = (int32_t)overscan.above + (int32_t)rows;
+  int32_t scrollback_rows = (int32_t)overscan.above;
+
+  GhosttyTerminalScreen active_screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &active_screen);
+  bool is_alternate = (active_screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE);
+
+  bool mouse_tracking = false;
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &mouse_tracking);
+
+  GhosttyTerminalModeConfig sgr_cfg = { .mode = GHOSTTY_MODE_MOUSE_FORMAT_SGR, .value = false };
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE, &sgr_cfg);
+  bool mouse_sgr = sgr_cfg.value;
+
+  GhosttyTerminalModeConfig paste_cfg = { .mode = GHOSTTY_MODE_BRACKETED_PASTE, .value = false };
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE, &paste_cfg);
+  bool bracketed_paste = paste_cfg.value;
+
+  /* Check capacity needed */
+  size_t header_size = 64;
+  size_t row_table_size = (size_t)total_rows * 32;
+  size_t per_row_cell_size = (size_t)cols * 12;
+  size_t per_row_text_max = (size_t)cols * 16;
+  size_t worst_case_needed = header_size + row_table_size + (size_t)total_rows * (per_row_cell_size + per_row_text_max);
+
+  if ((size_t)cap < worst_case_needed) {
+    pthread_mutex_unlock(&engine->lock);
+    jintArray err = (*env)->NewIntArray(env, 4);
+    jint vals[4] = {-1, (jint)worst_case_needed, total_rows, (jint)dirty_mode};
+    (*env)->SetIntArrayRegion(env, err, 0, 4, vals);
+    return err;
+  }
+
+  /* Reset row iterator */
+  ghostty_render_state_get(engine->render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, engine->row_it);
+
+  size_t current_data_offset = header_size + row_table_size;
+  int32_t last_content_row = -1;
+  int32_t has_visible_content = 0;
+  bool prev_row_had_spacer_head = false;
+
+  for (int32_t r = 0; r < total_rows; r++) {
+    bool has_next = ghostty_render_state_row_iterator_next(engine->row_it);
+    if (!has_next) break;
+
+    GhosttyRenderStateRowId row_id = {{0, 0}};
+    ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_ID, &row_id);
+
+    bool row_dirty = false;
+    ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &row_dirty);
+
+    GhosttyRow raw_row = 0;
+    bool wrapped = false;
+    if (ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_RAW, &raw_row) == GHOSTTY_SUCCESS) {
+      ghostty_row_get(raw_row, GHOSTTY_ROW_DATA_WRAP_CONTINUATION, &wrapped);
+    }
+
+    bool wrap_padding = wrapped && prev_row_had_spacer_head;
+    prev_row_had_spacer_head = false;
+
+    /* Write row entry at header_size + r * 32 */
+    uint8_t *row_entry = buf + header_size + (size_t)r * 32;
+
+    /* Populate row cells */
+    ghostty_render_state_row_get(engine->row_it, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, engine->row_cells);
+
+    size_t cell_data_offset = current_data_offset;
+    size_t text_data_offset = cell_data_offset + (size_t)cols * 12;
+    size_t text_written = 0;
+    bool row_has_visible = false;
+
+    for (uint16_t c = 0; c < cols; c++) {
+      ghostty_render_state_row_cells_select(engine->row_cells, c);
+
+      GhosttyCell raw_cell = 0;
+      ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw_cell);
+
+      GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+      ghostty_cell_get(raw_cell, GHOSTTY_CELL_DATA_WIDE, &wide);
+
+      if (c == cols - 1 && wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+        prev_row_had_spacer_head = true;
+      }
+
+      uint8_t cell_width = 1;
+      if (wide == GHOSTTY_CELL_WIDE_WIDE) {
+        cell_width = 2;
+      } else if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL) {
+        cell_width = 0;
+      } else if (wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+        cell_width = 1;
+      }
+
+      uint8_t utf8_cell[64];
+      GhosttyBuffer gb = { .ptr = utf8_cell, .cap = sizeof(utf8_cell), .len = 0 };
+      ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &gb);
+
+      uint8_t text_len = 0;
+      if (gb.len > 0) {
+        text_len = (uint8_t)gb.len;
+        memcpy(buf + text_data_offset + text_written, gb.ptr, gb.len);
+        text_written += gb.len;
+        if (gb.len != 1 || gb.ptr[0] != ' ') {
+          row_has_visible = true;
+        }
+      } else {
+        if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL) {
+          text_len = 0;
+        } else {
+          text_len = 1;
+          buf[text_data_offset + text_written] = ' ';
+          text_written += 1;
+        }
+      }
+
+      /* Style & Flags */
+      uint32_t fg_argb = HORUS_DEFAULT_FG;
+      uint32_t bg_argb = HORUS_DEFAULT_BG;
+      uint16_t cell_flags = 0;
+
+      GhosttyColorRgb fg_rgb;
+      if (ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg_rgb) == GHOSTTY_SUCCESS) {
+        fg_argb = 0xFF000000 | ((uint32_t)fg_rgb.r << 16) | ((uint32_t)fg_rgb.g << 8) | (uint32_t)fg_rgb.b;
+      }
+      GhosttyColorRgb bg_rgb;
+      if (ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS) {
+        bg_argb = 0xFF000000 | ((uint32_t)bg_rgb.r << 16) | ((uint32_t)bg_rgb.g << 8) | (uint32_t)bg_rgb.b;
+      }
+
+      GhosttyStyle style = {0};
+      if (ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style) == GHOSTTY_SUCCESS) {
+        if (style.flags & GHOSTTY_STYLE_FLAG_BOLD) cell_flags |= HORUS_FLAG_BOLD;
+        if (style.flags & GHOSTTY_STYLE_FLAG_ITALIC) cell_flags |= HORUS_FLAG_ITALIC;
+        if (style.flags & GHOSTTY_STYLE_FLAG_FAINT) cell_flags |= HORUS_FLAG_DIM;
+        if (style.flags & GHOSTTY_STYLE_FLAG_STRIKETHROUGH) cell_flags |= HORUS_FLAG_STRIKETHROUGH;
+        if (style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE) cell_flags |= HORUS_FLAG_INVISIBLE;
+        if (GHOSTTY_STYLE_UNDERLINE(style) != 0) cell_flags |= HORUS_FLAG_UNDERLINE;
+        if (style.flags & GHOSTTY_STYLE_FLAG_INVERSE) {
+          uint32_t tmp = fg_argb; fg_argb = bg_argb; bg_argb = tmp;
+        }
+      }
+
+      /* Write cell (12 bytes) */
+      uint8_t *cell_ptr = buf + cell_data_offset + (size_t)c * 12;
+      cell_ptr[0] = cell_width;
+      cell_ptr[1] = text_len;
+      memcpy(cell_ptr + 2, &cell_flags, 2);
+      memcpy(cell_ptr + 4, &fg_argb, 4);
+      memcpy(cell_ptr + 8, &bg_argb, 4);
+    }
+
+    if (row_has_visible) {
+      last_content_row = r;
+      has_visible_content = 1;
+    }
+
+    /* Write 32-byte Row Table Entry */
+    memcpy(row_entry, &row_id.bits[0], 8);
+    memcpy(row_entry + 8, &row_id.bits[1], 8);
+    uint8_t dirty_byte = row_dirty ? 1 : 0;
+    uint8_t wrap_byte = wrapped ? 1 : 0;
+    uint8_t pad_byte = wrap_padding ? 1 : 0;
+    uint8_t vis_byte = row_has_visible ? 1 : 0;
+    memcpy(row_entry + 16, &cols, 2);
+    row_entry[18] = dirty_byte;
+    row_entry[19] = wrap_byte;
+    row_entry[20] = pad_byte;
+    row_entry[21] = vis_byte;
+    row_entry[22] = 0;
+    row_entry[23] = 0;
+    uint32_t c_off = (uint32_t)cell_data_offset;
+    uint32_t t_off = (uint32_t)text_data_offset;
+    uint32_t t_len = (uint32_t)text_written;
+    (void)t_len;
+    memcpy(row_entry + 24, &c_off, 4);
+    memcpy(row_entry + 28, &t_off, 4);
+
+    current_data_offset = text_data_offset + text_written;
+    /* 4-byte align */
+    current_data_offset = (current_data_offset + 3) & ~((size_t)3);
+  }
+
+  /* Write Header (64 bytes) */
+  int32_t hdr[16];
+  hdr[0] = total_rows;
+  hdr[1] = (int32_t)cols;
+  hdr[2] = (int32_t)overscan.above + (int32_t)cursor.viewport_y;
+  hdr[3] = (int32_t)cursor.viewport_x;
+  hdr[4] = cursor.visible ? 1 : 0;
+  hdr[5] = is_alternate ? 1 : 0;
+  hdr[6] = mouse_tracking ? 1 : 0;
+  hdr[7] = mouse_sgr ? 1 : 0;
+  hdr[8] = bracketed_paste ? 1 : 0;
+  hdr[9] = scrollback_rows;
+  hdr[10] = (int32_t)rows;
+  hdr[11] = (int32_t)dirty_mode;
+  hdr[12] = last_content_row;
+  hdr[13] = has_visible_content;
+  hdr[14] = 0;
+  hdr[15] = 0;
+  memcpy(buf, hdr, 64);
+
+  pthread_mutex_unlock(&engine->lock);
+
+  jintArray res = (*env)->NewIntArray(env, 4);
+  jint vals[4] = {0, (jint)current_data_offset, total_rows, (jint)dirty_mode};
+  (*env)->SetIntArrayRegion(env, res, 0, 4, vals);
+  return res;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEnginePollClipboard(
+    JNIEnv *env, jclass clazz, jlong handle) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  jstring result = NULL;
+  if (engine->clipboard_data && engine->clipboard_len > 0) {
+    result = (*env)->NewStringUTF(env, engine->clipboard_data);
+    free(engine->clipboard_data);
+    engine->clipboard_data = NULL;
+    engine->clipboard_len = 0;
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return result;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKey(
+    JNIEnv *env, jclass clazz, jlong handle, jint key, jint mods, jint action, jstring text) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  ghostty_key_encoder_set_from_terminal(engine->key_encoder, engine->terminal);
+
+  GhosttyKeyEvent event = NULL;
+  if (ghostty_key_event_new(NULL, &event) != GHOSTTY_SUCCESS) {
+    pthread_mutex_unlock(&engine->lock);
+    return NULL;
+  }
+
+  ghostty_key_event_set_key(event, (GhosttyKey)key);
+  ghostty_key_event_set_mods(event, (GhosttyMods)mods);
+  ghostty_key_event_set_action(event, (GhosttyKeyAction)action);
+
+  if (text) {
+    const char *utf = (*env)->GetStringUTFChars(env, text, NULL);
+    if (utf) {
+      GhosttyString gstr = { .ptr = (const uint8_t *)utf, .len = strlen(utf) };
+      ghostty_key_event_set_utf8(event, gstr);
+      (*env)->ReleaseStringUTFChars(env, text, utf);
+    }
+  }
+
+  uint8_t buf[256];
+  size_t written = 0;
+  GhosttyResult res = ghostty_key_encoder_encode(engine->key_encoder, event, buf, sizeof(buf), &written);
+  ghostty_key_event_free(event);
+
+  jbyteArray result = NULL;
+  if (res == GHOSTTY_SUCCESS && written > 0) {
+    result = (*env)->NewByteArray(env, (jsize)written);
+    if (result) {
+      (*env)->SetByteArrayRegion(env, result, 0, (jsize)written, (const jbyte *)buf);
+    }
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return result;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeMouse(
+    JNIEnv *env, jclass clazz, jlong handle, jfloat x, jfloat y,
+    jint button, jint action, jint mods) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  ghostty_mouse_encoder_set_from_terminal(engine->mouse_encoder, engine->terminal);
+
+  GhosttyMouseEvent event = NULL;
+  if (ghostty_mouse_event_new(NULL, &event) != GHOSTTY_SUCCESS) {
+    pthread_mutex_unlock(&engine->lock);
+    return NULL;
+  }
+
+  GhosttyMousePosition pos = { .x = x, .y = y };
+  ghostty_mouse_event_set_position(event, pos);
+  ghostty_mouse_event_set_button(event, (GhosttyMouseButton)button);
+  ghostty_mouse_event_set_action(event, (GhosttyMouseAction)action);
+  ghostty_mouse_event_set_mods(event, (GhosttyMods)mods);
+
+  uint8_t buf[128];
+  size_t written = 0;
+  GhosttyResult res = ghostty_mouse_encoder_encode(engine->mouse_encoder, event, buf, sizeof(buf), &written);
+  ghostty_mouse_event_free(event);
+
+  jbyteArray result = NULL;
+  if (res == GHOSTTY_SUCCESS && written > 0) {
+    result = (*env)->NewByteArray(env, (jsize)written);
+    if (result) {
+      (*env)->SetByteArrayRegion(env, result, 0, (jsize)written, (const jbyte *)buf);
+    }
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return result;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodePaste(
+    JNIEnv *env, jclass clazz, jlong handle, jstring text) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine || !text) return NULL;
+
+  const char *utf = (*env)->GetStringUTFChars(env, text, NULL);
+  if (!utf) return NULL;
+
+  size_t text_len = strlen(utf);
+  pthread_mutex_lock(&engine->lock);
+
+  GhosttyTerminalModeConfig paste_cfg = { .mode = GHOSTTY_MODE_BRACKETED_PASTE, .value = false };
+  ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE, &paste_cfg);
+  bool bracketed = paste_cfg.value;
+
+  char *copy_text = strdup(utf);
+  (*env)->ReleaseStringUTFChars(env, text, utf);
+
+  size_t needed = 0;
+  ghostty_paste_encode(copy_text, text_len, bracketed, NULL, 0, &needed);
+
+  jbyteArray result = NULL;
+  if (needed > 0) {
+    uint8_t *out_buf = (uint8_t *)malloc(needed);
+    if (out_buf) {
+      size_t written = 0;
+      if (ghostty_paste_encode(copy_text, text_len, bracketed, out_buf, needed, &written) == GHOSTTY_SUCCESS) {
+        result = (*env)->NewByteArray(env, (jsize)written);
+        if (result) {
+          (*env)->SetByteArrayRegion(env, result, 0, (jsize)written, (const jbyte *)out_buf);
+        }
+      }
+      free(out_buf);
+    }
+  }
+  free(copy_text);
+  pthread_mutex_unlock(&engine->lock);
+  return result ? result : (*env)->NewByteArray(env, 0);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetFormattedText(
+    JNIEnv *env, jclass clazz, jlong handle, jboolean unwrap, jboolean trim) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  GhosttyFormatter formatter = NULL;
+  if (ghostty_formatter_terminal_new(NULL, &formatter, engine->terminal) != GHOSTTY_SUCCESS) {
+    pthread_mutex_unlock(&engine->lock);
+    return NULL;
+  }
+
+  bool u = (bool)unwrap;
+  bool t = (bool)trim;
+  ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_UNWRAP, &u);
+  ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_TRIM, &t);
+
+  uint8_t *out_buf = NULL;
+  size_t out_len = 0;
+  jstring result = NULL;
+  if (ghostty_formatter_format_alloc(formatter, NULL, &out_buf, &out_len) == GHOSTTY_SUCCESS && out_buf) {
+    result = (*env)->NewStringUTF(env, (const char *)out_buf);
+    free(out_buf);
+  }
+  ghostty_formatter_free(formatter);
+  pthread_mutex_unlock(&engine->lock);
+  return result;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetHyperlink(
+    JNIEnv *env, jclass clazz, jlong handle, jint col, jint row) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine || col < 0 || row < 0) return NULL;
+
+  pthread_mutex_lock(&engine->lock);
+  GhosttyPoint point = {
+      .tag = GHOSTTY_POINT_TAG_ACTIVE,
+      .value = { .coordinate = { .x = (uint16_t)col, .y = (uint16_t)row } },
+  };
+  GhosttyGridRef ref = {0};
+  jstring result = NULL;
+  if (ghostty_terminal_grid_ref(engine->terminal, point, &ref) == GHOSTTY_SUCCESS) {
+    size_t needed = 0;
+    if (ghostty_grid_ref_hyperlink_uri(&ref, NULL, 0, &needed) == GHOSTTY_OUT_OF_SPACE && needed > 0) {
+      uint8_t *uri_buf = (uint8_t *)malloc(needed + 1);
+      if (uri_buf) {
+        size_t written = 0;
+        if (ghostty_grid_ref_hyperlink_uri(&ref, uri_buf, needed, &written) == GHOSTTY_SUCCESS) {
+          uri_buf[written] = '\0';
+          result = (*env)->NewStringUTF(env, (const char *)uri_buf);
+        }
+        free(uri_buf);
+      }
+    }
+  }
+  pthread_mutex_unlock(&engine->lock);
+  return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeUnicodeWidth(
+    JNIEnv *env, jclass clazz, jint codePoint) {
+  (void)env;
+  (void)clazz;
+  return (jint)ghostty_unicode_codepoint_width((uint32_t)codePoint);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeGraphemeWidth(
+    JNIEnv *env, jclass clazz, jstring text) {
+  (void)clazz;
+  if (!text) return 0;
+  jsize len = (*env)->GetStringLength(env, text);
+  if (len == 0) return 0;
+  const jchar *chars = (*env)->GetStringChars(env, text, NULL);
+  if (!chars) return 0;
+
+  uint32_t codepoints[64];
+  size_t cp_count = 0;
+  for (jsize i = 0; i < len && cp_count < 64; i++) {
+    uint32_t cp = chars[i];
+    if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < len) {
+      uint32_t low = chars[i + 1];
+      if (low >= 0xDC00 && low <= 0xDFFF) {
+        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+        i++;
+      }
+    }
+    codepoints[cp_count++] = cp;
+  }
+  (*env)->ReleaseStringChars(env, text, chars);
+
+  uint8_t width = 0;
+  ghostty_unicode_grapheme_width(codepoints, cp_count, &width);
+  return (jint)width;
 }
