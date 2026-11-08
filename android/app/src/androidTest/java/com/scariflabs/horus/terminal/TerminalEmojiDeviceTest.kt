@@ -12,7 +12,7 @@ class TerminalEmojiDeviceTest {
   @Test fun skinToneSequenceOccupiesOneWideCell() {
     val engine = NativeTerminalEngine("s-emoji-device", 3, 12) { _, _ -> }
     try {
-      assertTrue(engine.enqueue(1L, "👍🏽x".toByteArray(StandardCharsets.UTF_8)))
+      assertTrue(engine.enqueue(1L, "\u001b[?2027h👍🏽x".toByteArray(StandardCharsets.UTF_8)))
       val deadline = System.currentTimeMillis() + 5000
       while (engine.currentFrame().lines[0].text[0] != "👍🏽" && System.currentTimeMillis() < deadline) Thread.sleep(10)
       val frame = engine.currentFrame()
