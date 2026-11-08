@@ -28,6 +28,14 @@ internal object TerminalCharWidth {
     return 1
   }
 
+  /** Display width according to libghostty-vt. */
+  fun ghosttyOf(codePoint: Int): Int {
+    if (codePoint in 0x20..0x7E) return 1
+    if (codePoint < 0x20 || codePoint in 0x7F..0x9F) return 1
+    val width = TerminalPtyJni.nativeUnicodeWidth(codePoint)
+    return if (width >= 0) width else 1
+  }
+
   private val RUNS = intArrayOf(
     0x300, 0x36F, 0, 0x483, 0x489, 0, 0x591, 0x5BD, 0, 0x5BF, 0x5BF, 0,
     0x5C1, 0x5C2, 0, 0x5C4, 0x5C5, 0, 0x5C7, 0x5C7, 0, 0x600, 0x605, 0,
