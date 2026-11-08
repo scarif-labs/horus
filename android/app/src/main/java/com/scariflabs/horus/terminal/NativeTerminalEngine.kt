@@ -10,6 +10,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
+import com.scariflabs.horus.terminal.NativeTerminalEngine.Frame
+import com.scariflabs.horus.terminal.NativeTerminalEngine.FrameRow
+
 /**
  * Native terminal state backed by libghostty-vt.
  *
@@ -36,6 +39,14 @@ internal object NativeTerminalEngineRegistry {
   /**
    * Receives the session id when an engine skips output it never saw. The caller should make the app redraw.
    */
+  @Volatile private var defaultBackend: TerminalEngineBackend = TerminalEngineBackend.LIBGHOSTTY
+
+  fun setDefaultBackend(backend: TerminalEngineBackend) {
+    defaultBackend = backend
+  }
+
+  fun getDefaultBackend(): TerminalEngineBackend = defaultBackend
+
   fun configureOutputGapListener(listener: ((String) -> Unit)?) {
     outputGapListener = listener
   }
@@ -63,6 +74,7 @@ internal object NativeTerminalEngineRegistry {
         columns,
         clipboardWriter = { payload -> clipboardWriter?.invoke(payload) },
         onOutputGap = { outputGapListener?.invoke(sessionId) },
+        backend = defaultBackend,
       ) { id, bytes ->
         inputWriter?.invoke(id, bytes)
       }
@@ -104,13 +116,56 @@ internal class NativeTerminalEngine(
   columns: Int,
   private val clipboardWriter: (String) -> Unit = {},
   private val onOutputGap: () -> Unit = {},
+  val backend: TerminalEngineBackend = NativeTerminalEngineRegistry.getDefaultBackend(),
   private val inputWriter: (String, ByteArray) -> Unit,
-) {
-  /**
-   * Immutable snapshot of one row, shared by reference across published
-   * frames until the row changes. Inverse video is resolved in native code:
-   * foreground and background are already swapped and FLAG_INVERSE is cleared.
-   */
+) : ITerminalBackend {
+
+  constructor(
+    sessionId: String,
+    rows: Int,
+    columns: Int,
+    inputWriter: (String, ByteArray) -> Unit,
+  ) : this(sessionId, rows, columns, {}, {}, NativeTerminalEngineRegistry.getDefaultBackend(), inputWriter)
+
+  constructor(
+    sessionId: String,
+    rows: Int,
+    columns: Int,
+    clipboardWriter: (String) -> Unit,
+    onOutputGap: () -> Unit,
+    inputWriter: (String, ByteArray) -> Unit,
+  ) : this(sessionId, rows, columns, clipboardWriter, onOutputGap, NativeTerminalEngineRegistry.getDefaultBackend(), inputWriter)
+
+  internal val delegate: ITerminalBackend = when (backend) {
+    TerminalEngineBackend.LIBGHOSTTY -> LibghosttyTerminalBackend(
+      sessionId, rows, columns, clipboardWriter, onOutputGap, inputWriter
+    )
+    TerminalEngineBackend.LEGACY -> LegacyTerminalEngine(
+      sessionId, rows, columns, clipboardWriter, onOutputGap, inputWriter
+    )
+  }
+
+  val nativeHandle: Long
+    get() = (delegate as? LibghosttyTerminalBackend)?.nativeHandle ?: 0L
+
+  override val bracketedPaste: Boolean get() = delegate.bracketedPaste
+  override val defaultBackground: Int get() = delegate.defaultBackground
+  override val defaultForeground: Int get() = delegate.defaultForeground
+  override fun currentFrame(): Frame = delegate.currentFrame()
+  override fun hasListeners(): Boolean = delegate.hasListeners()
+  override fun addListener(listener: () -> Unit): AutoCloseable = delegate.addListener(listener)
+  override fun enqueue(seq: Long, bytes: ByteArray): Boolean = delegate.enqueue(seq, bytes)
+  override fun resize(newRows: Int, newColumns: Int) = delegate.resize(newRows, newColumns)
+  override fun close() = delegate.close()
+  override fun recoverFromOutputGap() = delegate.recoverFromOutputGap()
+
+  init {
+    TerminalDebugLog.record("terminal_engine_init|sessionId=$sessionId|backend=${backend.name}")
+    runCatching {
+      android.util.Log.i("NativeTerminalEngine", "Initialized engine for session $sessionId with backend ${backend.name}")
+    }
+  }
+
   internal class FrameRow(
     val text: Array<String>,
     val width: ByteArray,
@@ -145,6 +200,46 @@ internal class NativeTerminalEngine(
     val mouseSgr: Boolean,
   )
 
+  companion object {
+    const val FLAG_BOLD = 1
+    const val FLAG_ITALIC = 1 shl 1
+    const val FLAG_DIM = 1 shl 2
+    const val FLAG_UNDERLINE = 1 shl 3
+    const val FLAG_STRIKETHROUGH = 1 shl 4
+    const val FLAG_INVISIBLE = 1 shl 5
+    const val FLAG_INVERSE = 1 shl 6
+    const val DEFAULT_FOREGROUND = 0xFFF2F4F5.toInt()
+    const val DEFAULT_BACKGROUND = 0xFF090C0D.toInt()
+
+    val ANSI_COLORS = intArrayOf(
+      0xFF000000.toInt(), 0xFFCD0000.toInt(), 0xFF00CD00.toInt(), 0xFFCDCD00.toInt(),
+      0xFF0000EE.toInt(), 0xFFCD00CD.toInt(), 0xFF00CDCD.toInt(), 0xFFE5E5E5.toInt(),
+      0xFF7F7F7F.toInt(), 0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFFFFFF00.toInt(),
+      0xFF5C5CFF.toInt(), 0xFFFF00FF.toInt(), 0xFF00FFFF.toInt(), 0xFFFFFFFF.toInt(),
+    )
+  }
+
+}
+
+internal class LibghosttyTerminalBackend(
+  private val sessionId: String,
+  rows: Int,
+  columns: Int,
+  private val clipboardWriter: (String) -> Unit = {},
+  private val onOutputGap: () -> Unit = {},
+  private val inputWriter: (String, ByteArray) -> Unit,
+) : ITerminalBackend {
+  companion object {
+    private const val DEFAULT_RENDER_BUFFER_SIZE = 2 * 1024 * 1024
+    private val ASCII_CELL_TEXT = Array(0x80) { it.toChar().toString() }
+    private const val NATIVE_FRAME_BATCH_NANOS = 16_000_000L
+    private const val NATIVE_FRAME_QUIET_NANOS = 3_000_000L
+    private const val SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS = 150_000_000L
+  }
+
+  override val defaultBackground: Int get() = NativeTerminalEngine.DEFAULT_BACKGROUND
+  override val defaultForeground: Int get() = NativeTerminalEngine.DEFAULT_FOREGROUND
+
   private sealed interface Command {
     data class Output(val seq: Long, val bytes: ByteArray) : Command
     data class Resize(val rows: Int, val columns: Int) : Command
@@ -160,7 +255,7 @@ internal class NativeTerminalEngine(
   private val highestQueuedSeq = AtomicLong(0)
   private var lastAppliedSeq = 0L
 
-  @Volatile var bracketedPaste = false
+  @Volatile override var bracketedPaste = false
     private set
 
   private var synchronizedOutput = false
@@ -194,16 +289,16 @@ internal class NativeTerminalEngine(
     }
   }
 
-  fun currentFrame(): Frame = publishedFrame
+  override fun currentFrame(): Frame = publishedFrame
 
-  fun hasListeners(): Boolean = listeners.isNotEmpty()
+  override fun hasListeners(): Boolean = listeners.isNotEmpty()
 
-  fun addListener(listener: () -> Unit): AutoCloseable {
+  override fun addListener(listener: () -> Unit): AutoCloseable {
     listeners.add(listener)
     return AutoCloseable { listeners.remove(listener) }
   }
 
-  fun enqueue(seq: Long, bytes: ByteArray): Boolean {
+  override fun enqueue(seq: Long, bytes: ByteArray): Boolean {
     if (closed.get() || seq < 1L || bytes.isEmpty()) return false
     while (true) {
       val previous = highestQueuedSeq.get()
@@ -216,7 +311,7 @@ internal class NativeTerminalEngine(
     }
   }
 
-  fun resize(newRows: Int, newColumns: Int) {
+  override fun resize(newRows: Int, newColumns: Int) {
     if (closed.get()) return
     val boundedRows = newRows.coerceIn(2, 250)
     val boundedColumns = newColumns.coerceIn(2, 500)
@@ -226,7 +321,7 @@ internal class NativeTerminalEngine(
     commands.offer(Command.Resize(boundedRows, boundedColumns))
   }
 
-  fun close() {
+  override fun close() {
     if (!closed.compareAndSet(false, true)) return
     commands.clear()
     parserThread.interrupt()
@@ -321,7 +416,7 @@ internal class NativeTerminalEngine(
 
   private fun isContinuation(value: Byte): Boolean = value.toInt() and 0xc0 == 0x80
 
-  private fun recoverFromOutputGap() {
+  override fun recoverFromOutputGap() {
     if (nativeHandle != 0L) {
       val resetBytes = "\u0018\u001b[!p\u001b[m".toByteArray(StandardCharsets.UTF_8)
       TerminalPtyJni.nativeEngineFeed(nativeHandle, resetBytes, 0, resetBytes.size)
@@ -509,8 +604,8 @@ internal class NativeTerminalEngine(
     val emptyRow = FrameRow(
       text = Array(requestedColumns) { " " },
       width = ByteArray(requestedColumns) { 1 },
-      foreground = IntArray(requestedColumns) { DEFAULT_FOREGROUND },
-      background = IntArray(requestedColumns) { DEFAULT_BACKGROUND },
+      foreground = IntArray(requestedColumns) { NativeTerminalEngine.DEFAULT_FOREGROUND },
+      background = IntArray(requestedColumns) { NativeTerminalEngine.DEFAULT_BACKGROUND },
       flags = IntArray(requestedColumns),
       wrapped = false,
     )
@@ -531,28 +626,5 @@ internal class NativeTerminalEngine(
     )
   }
 
-  companion object {
-    const val FLAG_BOLD = 1
-    const val FLAG_ITALIC = 1 shl 1
-    const val FLAG_DIM = 1 shl 2
-    const val FLAG_UNDERLINE = 1 shl 3
-    const val FLAG_STRIKETHROUGH = 1 shl 4
-    const val FLAG_INVISIBLE = 1 shl 5
-    const val FLAG_INVERSE = 1 shl 6
-    const val DEFAULT_FOREGROUND = 0xFFF2F4F5.toInt()
-    const val DEFAULT_BACKGROUND = 0xFF090C0D.toInt()
 
-    private const val DEFAULT_RENDER_BUFFER_SIZE = 2 * 1024 * 1024
-    private val ASCII_CELL_TEXT = Array(0x80) { it.toChar().toString() }
-    private const val NATIVE_FRAME_BATCH_NANOS = 16_000_000L
-    private const val NATIVE_FRAME_QUIET_NANOS = 3_000_000L
-    private const val SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS = 150_000_000L
-
-    val ANSI_COLORS = intArrayOf(
-      0xFF000000.toInt(), 0xFFCD0000.toInt(), 0xFF00CD00.toInt(), 0xFFCDCD00.toInt(),
-      0xFF0000EE.toInt(), 0xFFCD00CD.toInt(), 0xFF00CDCD.toInt(), 0xFFE5E5E5.toInt(),
-      0xFF7F7F7F.toInt(), 0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFFFFFF00.toInt(),
-      0xFF5C5CFF.toInt(), 0xFFFF00FF.toInt(), 0xFF00FFFF.toInt(), 0xFFFFFFFF.toInt(),
-    )
-  }
 }
