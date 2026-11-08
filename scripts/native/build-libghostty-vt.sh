@@ -100,6 +100,7 @@ build_target() {
     -Demit-lib-vt
     -Doptimize=ReleaseFast
     -Dcpu=baseline
+    -Dstrip=true
     --prefix "$target_out_dir"
   )
 
