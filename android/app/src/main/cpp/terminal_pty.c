@@ -23,6 +23,7 @@
 #include <pty.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -403,6 +404,75 @@ static void free_strings(char **values) {
 #define HORUS_DEFAULT_BG 0xFF090C0D
 
 typedef struct {
+  atomic_size_t current_allocated_bytes;
+  atomic_size_t current_allocated_blocks;
+  atomic_size_t peak_allocated_bytes;
+  atomic_size_t total_allocations;
+  atomic_size_t total_frees;
+  atomic_size_t failure_cap_bytes;
+} GhosttyTrackingStats;
+
+static GhosttyTrackingStats g_tracking_stats = {0};
+
+static void *tracking_alloc(void *ctx, size_t len, uint8_t alignment, uintptr_t ret_addr) {
+  (void)ctx;
+  (void)ret_addr;
+  if (len == 0) return NULL;
+
+  size_t cap = atomic_load(&g_tracking_stats.failure_cap_bytes);
+  if (cap > 0) {
+    size_t current = atomic_load(&g_tracking_stats.current_allocated_bytes);
+    if (current + len > cap) {
+      return NULL;
+    }
+  }
+
+  size_t align = (size_t)1 << alignment;
+  if (align < sizeof(void *)) align = sizeof(void *);
+
+  void *ptr = NULL;
+  if (posix_memalign(&ptr, align, len) != 0) {
+    return NULL;
+  }
+
+  atomic_fetch_add(&g_tracking_stats.current_allocated_bytes, len);
+  atomic_fetch_add(&g_tracking_stats.current_allocated_blocks, 1);
+  atomic_fetch_add(&g_tracking_stats.total_allocations, 1);
+
+  size_t curr = atomic_load(&g_tracking_stats.current_allocated_bytes);
+  size_t peak = atomic_load(&g_tracking_stats.peak_allocated_bytes);
+  while (curr > peak && !atomic_compare_exchange_weak(&g_tracking_stats.peak_allocated_bytes, &peak, curr)) {
+  }
+
+  return ptr;
+}
+
+static void tracking_free(void *ctx, void *memory, size_t memory_len, uint8_t alignment, uintptr_t ret_addr) {
+  (void)ctx;
+  (void)alignment;
+  (void)ret_addr;
+  if (!memory) return;
+
+  free(memory);
+  atomic_fetch_sub(&g_tracking_stats.current_allocated_bytes, memory_len);
+  atomic_fetch_sub(&g_tracking_stats.current_allocated_blocks, 1);
+  atomic_fetch_add(&g_tracking_stats.total_frees, 1);
+}
+
+static const GhosttyAllocatorVtable g_tracking_vtable = {
+    .alloc = tracking_alloc,
+    .resize = NULL,
+    .remap = NULL,
+    .free = tracking_free,
+    .reserved = {NULL, NULL, NULL, NULL},
+};
+
+static const GhosttyAllocator g_tracking_allocator = {
+    .ctx = NULL,
+    .vtable = &g_tracking_vtable,
+};
+
+typedef struct {
   pthread_mutex_t lock;
   int master_fd;
   GhosttyTerminal terminal;
@@ -423,6 +493,15 @@ static void on_write_pty(GhosttyTerminal term, void *userdata, const uint8_t *da
   (void)term;
   SessionEngine *engine = (SessionEngine *)userdata;
   if (!engine || !data || len == 0) return;
+
+  // Security allowlist: Terminal query replies only forward valid VT response sequences:
+  // - Starts with ESC (0x1B) [CSI, OSC, DCS, SS3, etc.] or standard C0 controls (e.g. BEL, ENQ reply)
+  // - Bounded in length (max 4096 bytes per reply payload) to prevent reply injection attacks
+  if (len > 4096) return;
+  if (data[0] != 0x1B && data[0] != 0x05 && data[0] != 0x07) {
+    return;
+  }
+
   if (engine->master_fd >= 0) {
     size_t written = 0;
     while (written < len) {
@@ -438,6 +517,17 @@ static void on_write_pty(GhosttyTerminal term, void *userdata, const uint8_t *da
     memcpy(engine->reply_buf + engine->reply_len, data, len);
     engine->reply_len += len;
   }
+}
+
+static void on_clipboard_read(GhosttyTerminal term, void *userdata, const GhosttyClipboardRead *read) {
+  (void)term;
+  (void)userdata;
+  if (!read || !read->reply) return;
+  // Strictly deny OSC 52 ? clipboard reads for security
+  GhosttyClipboardReadReply reply;
+  ghostty_sized_init(&reply, sizeof(reply));
+  reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
+  read->reply(read, &reply);
 }
 
 static const uint32_t ANSI_COLORS[16] = {
@@ -547,17 +637,17 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineCreate(
   engine->cols = (uint16_t)(cols > 0 ? cols : 80);
   engine->rows = (uint16_t)(rows > 0 ? rows : 24);
 
-  if (ghostty_terminal_new(NULL, &engine->terminal, engine->cols, engine->rows) != GHOSTTY_SUCCESS) {
+  if (ghostty_terminal_new(&g_tracking_allocator, &engine->terminal, engine->cols, engine->rows) != GHOSTTY_SUCCESS) {
     pthread_mutex_destroy(&engine->lock);
     free(engine);
     return 0;
   }
 
-  if (ghostty_render_state_new(NULL, &engine->render_state) != GHOSTTY_SUCCESS ||
-      ghostty_render_state_row_cells_new(NULL, &engine->row_cells) != GHOSTTY_SUCCESS ||
-      ghostty_render_state_row_iterator_new(NULL, &engine->row_it) != GHOSTTY_SUCCESS ||
-      ghostty_key_encoder_new(NULL, &engine->key_encoder) != GHOSTTY_SUCCESS ||
-      ghostty_mouse_encoder_new(NULL, &engine->mouse_encoder) != GHOSTTY_SUCCESS) {
+  if (ghostty_render_state_new(&g_tracking_allocator, &engine->render_state) != GHOSTTY_SUCCESS ||
+      ghostty_render_state_row_cells_new(&g_tracking_allocator, &engine->row_cells) != GHOSTTY_SUCCESS ||
+      ghostty_render_state_row_iterator_new(&g_tracking_allocator, &engine->row_it) != GHOSTTY_SUCCESS ||
+      ghostty_key_encoder_new(&g_tracking_allocator, &engine->key_encoder) != GHOSTTY_SUCCESS ||
+      ghostty_mouse_encoder_new(&g_tracking_allocator, &engine->mouse_encoder) != GHOSTTY_SUCCESS) {
     if (engine->key_encoder) ghostty_key_encoder_free(engine->key_encoder);
     if (engine->mouse_encoder) ghostty_mouse_encoder_free(engine->mouse_encoder);
     if (engine->row_cells) ghostty_render_state_row_cells_free(engine->row_cells);
@@ -572,6 +662,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineCreate(
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_USERDATA, engine);
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, (const void *)on_write_pty);
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void *)on_clipboard_write);
+  ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ, (const void *)on_clipboard_read);
 
   init_horus_palette();
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, HORUS_PALETTE);
@@ -584,7 +675,9 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineCreate(
   size_t max_scrollback = 10 * 1024 * 1024;
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &max_scrollback);
 
-  GhosttyTerminalModeConfig grapheme_cfg = { .mode = GHOSTTY_MODE_GRAPHEME_CLUSTER, .value = true };
+  // Mode 2027 (Grapheme Clustering) must be off by default per DEC/VT spec,
+  // enabled only when guest application requests it via CSI ? 2027 h
+  GhosttyTerminalModeConfig grapheme_cfg = { .mode = GHOSTTY_MODE_GRAPHEME_CLUSTER, .value = false };
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &grapheme_cfg);
   ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE, &grapheme_cfg);
 
@@ -1011,7 +1104,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKey(
   ghostty_key_encoder_set_from_terminal(engine->key_encoder, engine->terminal);
 
   GhosttyKeyEvent event = NULL;
-  if (ghostty_key_event_new(NULL, &event) != GHOSTTY_SUCCESS) {
+  if (ghostty_key_event_new(&g_tracking_allocator, &event) != GHOSTTY_SUCCESS) {
     pthread_mutex_unlock(&engine->lock);
     return NULL;
   }
@@ -1057,7 +1150,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeMouse(
   ghostty_mouse_encoder_set_from_terminal(engine->mouse_encoder, engine->terminal);
 
   GhosttyMouseEvent event = NULL;
-  if (ghostty_mouse_event_new(NULL, &event) != GHOSTTY_SUCCESS) {
+  if (ghostty_mouse_event_new(&g_tracking_allocator, &event) != GHOSTTY_SUCCESS) {
     pthread_mutex_unlock(&engine->lock);
     return NULL;
   }
@@ -1135,7 +1228,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetFormattedText(
 
   pthread_mutex_lock(&engine->lock);
   GhosttyFormatter formatter = NULL;
-  if (ghostty_formatter_terminal_new(NULL, &formatter, engine->terminal) != GHOSTTY_SUCCESS) {
+  if (ghostty_formatter_terminal_new(&g_tracking_allocator, &formatter, engine->terminal) != GHOSTTY_SUCCESS) {
     pthread_mutex_unlock(&engine->lock);
     return NULL;
   }
@@ -1148,9 +1241,9 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetFormattedText(
   uint8_t *out_buf = NULL;
   size_t out_len = 0;
   jstring result = NULL;
-  if (ghostty_formatter_format_alloc(formatter, NULL, &out_buf, &out_len) == GHOSTTY_SUCCESS && out_buf) {
+  if (ghostty_formatter_format_alloc(formatter, &g_tracking_allocator, &out_buf, &out_len) == GHOSTTY_SUCCESS && out_buf) {
     result = (*env)->NewStringUTF(env, (const char *)out_buf);
-    free(out_buf);
+    ghostty_free(&g_tracking_allocator, out_buf, out_len);
   }
   ghostty_formatter_free(formatter);
   pthread_mutex_unlock(&engine->lock);
@@ -1225,4 +1318,56 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeGraphemeWidth(
   uint8_t width = 0;
   ghostty_unicode_grapheme_width(codepoints, cp_count, &width);
   return (jint)width;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeAllocatedBytes(
+    JNIEnv *env, jclass clazz) {
+  (void)env;
+  (void)clazz;
+  return (jlong)atomic_load(&g_tracking_stats.current_allocated_bytes);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeAllocatedBlocks(
+    JNIEnv *env, jclass clazz) {
+  (void)env;
+  (void)clazz;
+  return (jlong)atomic_load(&g_tracking_stats.current_allocated_blocks);
+}
+
+JNIEXPORT void JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeSetAllocationFailureCap(
+    JNIEnv *env, jclass clazz, jlong capBytes) {
+  (void)env;
+  (void)clazz;
+  atomic_store(&g_tracking_stats.failure_cap_bytes, (size_t)capBytes);
+}
+
+JNIEXPORT void JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeResetAllocatorStats(
+    JNIEnv *env, jclass clazz) {
+  (void)env;
+  (void)clazz;
+  atomic_store(&g_tracking_stats.peak_allocated_bytes, atomic_load(&g_tracking_stats.current_allocated_bytes));
+  atomic_store(&g_tracking_stats.total_allocations, 0);
+  atomic_store(&g_tracking_stats.total_frees, 0);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeSetMode(
+    JNIEnv *env, jclass clazz, jlong handle, jint modeNum, jboolean ansi, jboolean value) {
+  (void)env;
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(intptr_t)handle;
+  if (!engine || !engine->terminal) return JNI_FALSE;
+
+  GhosttyTerminalModeConfig cfg = {
+      .mode = ghostty_mode_new((uint16_t)modeNum, (bool)ansi),
+      .value = (bool)value,
+  };
+  pthread_mutex_lock(&engine->lock);
+  GhosttyResult res = ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE, &cfg);
+  pthread_mutex_unlock(&engine->lock);
+  return res == GHOSTTY_SUCCESS ? JNI_TRUE : JNI_FALSE;
 }
