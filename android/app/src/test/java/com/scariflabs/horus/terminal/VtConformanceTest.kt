@@ -301,12 +301,8 @@ class VtConformanceTest {
      * that starts matching fails the test so it gets removed.
      */
     val ALLOWLIST = mapOf(
-      // Horus / libghostty-vt joins emoji modifiers and clusters ZWJ sequences.
-      "emoji-skin-tone" to "emoji modifier joins its base (issue #52)",
-      "emoji-zwj-sequence" to "libghostty-vt clusters ZWJ emoji sequences into a 2-cell grapheme cluster",
+      // Deliberate terminal differences allowlisted against @xterm/headless:
       "emoji-regional-flag" to "libghostty-vt clusters regional indicator pairs into a 2-cell flag",
-      "emoji-text-presentation-vs16" to "libghostty-vt treats VS16 emoji text presentation as width 2",
-      "zero-width-space" to "libghostty-vt ignores zero-width space U+200B",
       "del-ignored" to "libghostty-vt DEL control handling differs from xterm",
       // Modern terminal UTF-8 discipline: 8-bit C1 controls are disabled at ground in UTF-8.
       "c1-csi-in-utf8" to "libghostty-vt does not execute 8-bit C1 controls at ground in UTF-8 mode",

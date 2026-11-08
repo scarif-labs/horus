@@ -79,7 +79,8 @@ class NativeTerminalEngineTest {
   fun skinToneModifierJoinsItsWideBaseWithoutAffectingStandaloneModifiers() {
     val engine = NativeTerminalEngine("s-emoji-test", 3, 12) { _, _ -> }
     try {
-      assertTrue(engine.enqueue(1L, "👍🏽x".toByteArray(StandardCharsets.UTF_8)))
+      // Mode 2027 enables grapheme clustering for emoji skin tone modifiers
+      assertTrue(engine.enqueue(1L, "\u001b[?2027h👍🏽x".toByteArray(StandardCharsets.UTF_8)))
       val frame = awaitFrame(engine) { it.lines[0].text[0] == "👍🏽" && it.lines[0].text[2] == "x" }
       assertEquals(2, frame.lines[0].width[0].toInt())
       assertEquals(3, frame.cursorColumn)
@@ -120,7 +121,8 @@ class NativeTerminalEngineTest {
     }
     try {
       assertFalse(engine.currentFrame().hasVisibleContent)
-      assertTrue(engine.enqueue(1L, byteArrayOf('e'.code.toByte(), 0xCC.toByte())))
+      val prefix = "\u001b[?2027h".toByteArray(StandardCharsets.UTF_8)
+      assertTrue(engine.enqueue(1L, prefix + byteArrayOf('e'.code.toByte(), 0xCC.toByte())))
       awaitFrame(engine) { it.lines[0].text[0] == "e" }
       assertTrue(engine.currentFrame().hasVisibleContent)
       assertTrue(engine.enqueue(2L, byteArrayOf(0x81.toByte())))
