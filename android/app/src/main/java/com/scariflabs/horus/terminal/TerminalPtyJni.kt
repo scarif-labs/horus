@@ -91,6 +91,21 @@ object TerminalPtyJni {
 
   /** Grapheme cluster display width. */
   external fun nativeGraphemeWidth(text: String): Int
+
+  /** Active allocated bytes in the custom GhosttyAllocator. */
+  external fun nativeAllocatedBytes(): Long
+
+  /** Active allocated blocks in the custom GhosttyAllocator. */
+  external fun nativeAllocatedBlocks(): Long
+
+  /** Sets an optional allocation failure cap in bytes (0 = unconstrained). */
+  external fun nativeSetAllocationFailureCap(capBytes: Long)
+
+  /** Resets peak and lifetime counters in the custom GhosttyAllocator. */
+  external fun nativeResetAllocatorStats()
+
+  /** Sets a terminal mode explicitly (e.g. mode 2027 grapheme clustering). */
+  external fun nativeSetMode(handle: Long, modeNum: Int, ansi: Boolean, value: Boolean): Boolean
 }
 
 /** Raised when a PTY backend call fails; `errno` is preserved for evidence. */
