@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -60,6 +63,14 @@ class TerminalSessionService : Service() {
     )
   }
   private val specFactory by lazy { TerminalSessionSpecFactory(applicationContext) }
+  private val resolverCallback = object : ConnectivityManager.NetworkCallback() {
+    override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+      val servers = linkProperties.dnsServers.mapNotNull { it.hostAddress?.trim()?.takeIf(String::isNotEmpty) }
+      runCatching { specFactory.refreshResolver(servers) }.onFailure { error ->
+        TerminalDebugLog.record(this@TerminalSessionService, "resolver_refresh_failed type=${error::class.java.simpleName}")
+      }
+    }
+  }
   private val sessionRecords = ConcurrentHashMap<String, TerminalSessionJournal.Record>()
   /** Active utility sessions are intentionally invisible to the user quota and Recents. */
   private val nonCountingSessionIds = ConcurrentHashMap.newKeySet<String>()
@@ -236,6 +247,11 @@ class TerminalSessionService : Service() {
     TerminalDebugLog.record(this, "service_created")
     createNotificationChannel()
     journal.read().forEach { record -> sessionRecords[record.sessionId] = record }
+    // The guest resolver is written once per launch; follow the default
+    // network afterwards so a Wi-Fi to mobile data switch keeps DNS working.
+    runCatching {
+      getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(resolverCallback)
+    }
     // Creation alone (including a bound-only client or an idle sticky restart)
     // does not justify foreground work. Promotion follows an explicit start
     // or a request that actually owns work.
@@ -328,6 +344,7 @@ class TerminalSessionService : Service() {
     stopping = true
     TerminalDebugLog.record(this, "service_destroyed")
     handler.removeCallbacks(turnTick)
+    runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(resolverCallback) }
     stopProvisionProcess()
     if (remoteServerDelegate.isInitialized()) runCatching { remoteServer.close() }
     provisionExecutor.shutdownNow()
