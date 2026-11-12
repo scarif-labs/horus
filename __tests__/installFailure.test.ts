@@ -13,6 +13,16 @@ describe('installFailure', () => {
     expect(classifyInstallFailure('', 'codex_failed', true)).toBe('unknown');
   });
 
+  test('reads Alpine apk network failures, raw or summarized, as network', () => {
+    expect(classifyInstallFailure('ERROR: libcurl-8.16.0-r0: Network unreachable', 'apk_failed', true)).toBe('network');
+    expect(classifyInstallFailure('WARNING: fetching https://x/main: DNS: transient error (try again later)', 'apk_failed', true)).toBe('network');
+    expect(classifyInstallFailure('WARNING: fetching https://x/main: TLS: server certificate not trusted', 'apk_failed', true)).toBe('network');
+    expect(classifyInstallFailure('The secure download connection failed (TLS).', 'apk_failed', undefined)).toBe('network');
+    // A package name is not a TLS failure.
+    expect(classifyInstallFailure('(3/40) Installing ca-certificates (20250911-r0)\nERROR: tzdata-2025b-r0: BAD signature', 'apk_failed', true)).toBe('packages');
+    expect(classifyInstallFailure('Writing package files to the phone\'s storage failed.', 'apk_failed', undefined)).toBe('packages');
+  });
+
   test('cleans escapes, markers, redraws, and repeated progress from the log', () => {
     const raw = '\u001b[32mHORUS_INSTALL_STAGE=codex\u001b[0m\r\nDownloading Codex… 10%\nDownloading Codex… 20%\nhalf\rwhole\nnpm error boom\n';
     expect(cleanInstallLog(raw)).toBe('Downloading Codex… 20%\nwhole\nnpm error boom');

@@ -25,6 +25,9 @@ const NETWORK_PATTERN = new RegExp([
   'fetch failed', 'network request to', 'Could not resolve host', 'Could not resolve',
   'Temporary failure (in name )?resolution', 'Network is unreachable', 'Failed to fetch',
   'Connection timed out', 'Failed to connect', 'unable to (select packages|fetch)', 'temporary error',
+  // Alpine's apk prints musl's wording and its own DNS/TLS prefixes.
+  'Network unreachable', 'Host is unreachable', 'Connection refused', 'Connection reset', 'DNS:', 'TLS:',
+  'secure download connection failed',
 ].join('|'), 'i');
 
 /** Classifies a failed install from its log, its last stage, and whether Android sees a network. */

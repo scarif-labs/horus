@@ -14,13 +14,17 @@ internal object ProvisioningText {
     "could not get lock|unable to (acquire.*lock|lock database)|failed to open apk database" to "Another package installation holds the package database lock.",
     "dpkg was interrupted" to "Debian package configuration was interrupted.",
     "permission denied|EACCES" to "Permission denied while installing packages.",
-    "could not resolve|ENOTFOUND|EAI_AGAIN" to "Could not resolve a download host.",
+    "failed to (extract|commit)|operation not permitted|too many links|function not implemented|read-only file system|cross-device link|I/O error|EPERM|EMLINK|EXDEV|EROFS" to "Writing package files to the phone's storage failed.",
+    "could not resolve|ENOTFOUND|EAI_AGAIN|DNS:" to "Could not resolve a download host.",
+    "TLS:|SSL certificate|certificate verify failed|certificate not trusted" to "The secure download connection failed (TLS).",
     "timed out|ETIMEDOUT" to "A download connection timed out.",
-    "ENETUNREACH|ECONN|failed to fetch|unable to fetch|fetch failed|network is unreachable" to "Network is unreachable while downloading packages.",
+    "ENETUNREACH|ECONN|EHOSTUNREACH|failed to fetch|unable to fetch|fetch failed|network is unreachable|network unreachable|host is unreachable|connection refused|connection reset" to "Network is unreachable while downloading packages.",
     "EBADENGINE|unsupported engine" to "EBADENGINE: incompatible Node.js version.",
     "EBADPLATFORM|unsupported platform|missing optional dependency" to "A required platform package is unavailable.",
     "web page instead of.*installer" to "The download returned a web page instead of an installer.",
-    "curl: \\(22\\)|HTTP[^\\n]*(401|403|404|429|500|502|503)" to "The download server returned an HTTP error.",
+    "curl: \\(22\\)|HTTP[^\\n]*(401|403|404|407|429|500|502|503|504)" to "The download server returned an HTTP error.",
+    "BAD signature|UNTRUSTED signature|integrity error|BAD archive|BAD checksum|format is invalid|unexpected end of file" to "A downloaded package was damaged or failed its signature check.",
+    "unable to select packages|could not find a repo|no such package|index not found" to "A required package is missing from the package list.",
     "command not found|no such file or directory" to "A required installation command or file was not found.",
     "^(E:|ERROR:|npm (error|ERR!)|dpkg: error|apk: error)" to "The package manager reported an installation error.",
   ).map { (pattern, summary) -> Regex(pattern, RegexOption.IGNORE_CASE) to summary }
@@ -41,7 +45,7 @@ internal data class ProvisioningResult(
     log.contains("EBADENGINE") -> "toolchain_node_version"
     log.contains("No space left on device") -> "toolchain_install_failed"
     log.contains("Permission denied") -> "toolchain_permissions"
-    log.contains("download host") || log.contains("Network is unreachable") || log.contains("connection timed out") -> "toolchain_network"
+    log.contains("download host") || log.contains("Network is unreachable") || log.contains("secure download connection failed") || log.contains("connection timed out") -> "toolchain_network"
     log.contains("platform package is unavailable") -> "toolchain_install_failed"
     stage == "github_failed" -> "toolchain_github_install_failed"
     stage == "codex_failed" -> "toolchain_codex_install_failed"
