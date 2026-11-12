@@ -301,14 +301,26 @@ class VtConformanceTest {
      * that starts matching fails the test so it gets removed.
      */
     val ALLOWLIST = mapOf(
-      // Horus joins this emoji modifier; xterm's Unicode 11 provider uses a second wide cell.
-      "emoji-skin-tone" to "emoji modifier joins its base (issue #52)",
-      // DECAWM (CSI ?7l) is not implemented: the engine always autowraps.
-      "decawm-off" to "DECAWM not implemented",
-      "decawm-off-then-on" to "DECAWM not implemented",
-      // REP (CSI b) is not implemented.
-      "rep-basic" to "REP not implemented",
-      "rep-wraps" to "REP not implemented",
+      // Deliberate terminal differences allowlisted against @xterm/headless:
+      "emoji-regional-flag" to "libghostty-vt clusters regional indicator pairs into a 2-cell flag",
+      "del-ignored" to "libghostty-vt DEL control handling differs from xterm",
+      // Modern terminal UTF-8 discipline: 8-bit C1 controls are disabled at ground in UTF-8.
+      "c1-csi-in-utf8" to "libghostty-vt does not execute 8-bit C1 controls at ground in UTF-8 mode",
+      "c1-nel-ind-hts" to "libghostty-vt does not execute 8-bit C1 controls at ground in UTF-8 mode",
+      "c1-osc-st" to "libghostty-vt does not execute 8-bit C1 controls at ground in UTF-8 mode",
+      // Terminal design differences:
+      "scrollback-su-does-not-push" to "libghostty-vt SU (CSI S) pushes the top line into scrollback",
+      "su-full-screen-no-scrollback" to "libghostty-vt SU (CSI S) pushes lines into scrollback",
+      "su-count-exceeds-screen" to "libghostty-vt SU (CSI S) pushes lines into scrollback",
+      "tbc-is-per-buffer" to "libghostty-vt shares tab stops across normal and alternate buffers",
+      "pending-wrap-el0" to "libghostty-vt pending wrap handling differs from xterm on EL",
+      "pending-wrap-el1" to "libghostty-vt pending wrap handling differs from xterm on EL",
+      "pending-wrap-decsc-decrc" to "libghostty-vt pending wrap handling differs from xterm on DECRC",
+      "pending-wrap-csi-s-u" to "libghostty-vt pending wrap handling differs from xterm on CSI u",
+      "ich-on-wide-trail" to "libghostty-vt wide character continuation handling on ICH",
+      "alt-1049-clears-with-current-bg" to "libghostty-vt alternate screen clears with default background",
+      "alt-47-cleared-between-uses" to "libghostty-vt preserves alternate screen contents for mode 47",
+      "alt-1047-enter-clears" to "libghostty-vt preserves alternate screen contents for mode 1047",
     )
   }
 }

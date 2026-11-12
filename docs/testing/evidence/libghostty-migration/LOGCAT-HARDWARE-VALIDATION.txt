@@ -1,0 +1,500 @@
+11-08 13:26:22.215 30660 32168 D ActivityManager: sync unfroze 6731 com.samsung.android.sm.devicesecurity for 19
+11-08 13:26:22.215 30660 32168 D ActivityManager: sync unfroze 7551 com.google.android.packageinstaller for 19
+11-08 13:26:22.215 30660 32168 D ActivityManager: sync unfroze 27008 com.samsung.android.samsungpositioning for 19
+11-08 13:26:22.216 30660 32168 D ActivityManager: sync unfroze 26008 com.android.vending:background for 19
+11-08 13:26:22.218 30660 32168 D ActivityManager: sync unfroze 8593 com.android.vending for 19
+11-08 13:26:22.218 30660 32168 D ActivityManager: sync unfroze 14426 com.samsung.android.authfw for 19
+11-08 13:26:22.218 30660 32168 D ActivityManager: sync unfroze 14338 com.samsung.android.samsungpassautofill for 19
+11-08 13:26:22.219 30660 32168 D ActivityManager: sync unfroze 23713 com.android.vending:quick_launch for 19
+11-08 13:26:22.219 30660 32168 D ActivityManager: sync unfroze 30204 com.samsung.android.scpm for 19
+11-08 13:26:22.220 30660 32168 D ActivityManager: sync unfroze 2569 com.samsung.cmh for 19
+11-08 13:26:22.220 30660 32168 D ActivityManager: sync unfroze 30809 com.google.android.contacts for 19
+11-08 13:26:22.221 30660 32168 D ActivityManager: sync unfroze 16600 com.samsung.cmh for 19
+11-08 13:26:22.222 30660 32168 D ActivityManager: sync unfroze 3436 com.flipkart.android for 19
+11-08 13:26:22.222 30660 32168 D ActivityManager: sync unfroze 32555 com.myairtelapp for 19
+11-08 13:26:22.223 30660 32168 D ActivityManager: sync unfroze 28348 com.samsung.android.scloud for 19
+11-08 13:26:22.224 30660 32168 D ActivityManager: sync unfroze 10446 com.jio.myjio for 19
+11-08 13:26:22.224 30660 32168 D ActivityManager: sync unfroze 28979 com.google.android.googlequicksearchbox:googleapp for 19
+11-08 13:26:22.225 30660 32168 D ActivityManager: sync unfroze 8533 com.brave.browser:privileged_process0 for 19
+11-08 13:26:22.225 30660 32168 D ActivityManager: sync unfroze 8710 com.brave.browser:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:2 for 19
+11-08 13:26:22.226 30660 32168 D ActivityManager: sync unfroze 8453 com.brave.browser for 19
+11-08 13:26:22.230 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /99.84.234.10, srcPort: 42292, dstPort: 443, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /99.84.234.10, srcPort: 42292, dstPort: 443, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.230 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /99.84.234.10, dst4: /192.0.0.2, srcPort: 443, dstPort: 42292, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /99.84.234.10, dst46: /10.22.123.216, srcPort: 443, dstPort: 42292, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.230 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /99.84.234.10, srcPort: 42292, dstPort: 443, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /99.84.234.10, srcPort: 42292, dstPort: 443, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.230 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /99.84.234.10, dst4: /192.0.0.2, srcPort: 443, dstPort: 42292, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /99.84.234.10, dst46: /10.22.123.216, srcPort: 443, dstPort: 42292, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.231 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /99.84.234.10, srcPort: 42292, dstPort: 443, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /99.84.234.10, srcPort: 42292, dstPort: 443, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.232 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /99.84.234.10, dst4: /192.0.0.2, srcPort: 443, dstPort: 42292, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /99.84.234.10, dst46: /10.22.123.216, srcPort: 443, dstPort: 42292, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.234 30660 31679 I BatteryService_BatteryPropertiesRegistrar: [getProperty]id:4
+11-08 13:26:22.234 30660 31679 I BatteryService_BatteryPropertiesRegistrar: [getProperty]prop.long:-9223372036854775808 ,prop.string:null
+11-08 13:26:22.248  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:22.248  3654  3654 I EffectManager: isSupportDolbyAtmosOnThisAudioPath() : path is speaker (0)
+11-08 13:26:22.248  3654  3654 I EffectManager: isSupportDolbyAtmosOnThisAudioPath() : speaker type is stereo
+11-08 13:26:22.248  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:22.248  3654  3654 I EffectManager: isSupportVoiceBoostOnCurrentAudioPath() : path is speaker (0)
+11-08 13:26:22.248  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:22.248  3654  3654 I EffectManager: isSupportVolumeNormalizationOnCurrentAudioPath() : path is speaker (0)
+11-08 13:26:22.248  3654  3654 I DVFSHelper: isNecessaryToBoostCPU() : isDolbyOn? true, isUHQUpscalerOn? false, isVoiceBoostOn? false, isVolumeNormalizationOn? true
+11-08 13:26:22.248  3654  3654 I SemDvfsHyPerManager: acquire hyper - class com.sec.android.app.soundalive.SoundAliveApplication/3654@0, type = -999
+11-08 13:26:22.249  3654  3654 I DVFSHelper: acquireBoostingCPU() : cpu is boosting by hint 10004
+11-08 13:26:22.249 30328 30351 I HYPER-HAL: [RequestManager.cpp]acquire(): Acquired ID : 6677685  [3654 / 0]    HINT : SOUNDALIVE_DVFS_20_PERCENT    list : [TIMEOUT / 30000] 
+11-08 13:26:22.259 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]id:1
+11-08 13:26:22.259 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]prop.long:-9223372036854775808 ,prop.string:null
+11-08 13:26:22.266 30660 31679 I BatteryService_BatteryPropertiesRegistrar: [getProperty]id:3
+11-08 13:26:22.266 30660 31679 I BatteryService_BatteryPropertiesRegistrar: [getProperty]prop.long:-9223372036854775808 ,prop.string:null
+11-08 13:26:22.270 14135 14160 I cariflabs.horus: Explicit concurrent mark compact GC freed 1828KB AllocSpace bytes, 1(20KB) LOS objects, 72% free, 9398KB/33MB, paused 133us,1.518ms total 19.473ms
+11-08 13:26:22.282 30660 32168 D ActivityManager: freezer override set to false
+11-08 13:26:22.286 29773 29773 I OnTrimMemoryDispatcher: Dispatching onTrimMemory(40)
+11-08 13:26:22.289  2569  2569 I CMHApplication: [#CMH#] Block to verify, Change Trim Memory Level: 40 
+11-08 13:26:22.290 16600 16600 I CMHApplication: [#CMH#] Block to verify, Change Trim Memory Level: 40 
+11-08 13:26:22.291  8593  8593 I Finsky  : [2] Memory trim requested to level 40
+11-08 13:26:22.291  8593  8593 I Finsky  : [2] Flushing in-memory image cache
+11-08 13:26:22.293 23713 23713 I Finsky:quick_launch: [2] Memory trim requested to level 40
+11-08 13:26:22.298 26352 26418 I dtsv    : reclaimMemory: Clearing caches
+11-08 13:26:22.298 26352 26418 I dyto    : HadesBitmapStore: Purged 0 images during memory reclamation
+11-08 13:26:22.301 12877 12877 I adbd    : adbd service requested 'shell,v2,TERM=dumb,raw:dumpsys meminfo com.scariflabs.horus:terminal'
+11-08 13:26:22.307 28942 28942 I MediaSearch.MediaSearchContentProvider: onTrimMemory() called with: level = [40]
+11-08 13:26:22.308 24417 24417 I SamsungCalendar$CalendarApplication: onTrimMemory level : 40
+11-08 13:26:22.309 32424 32424 I Reminder$ReminderCache: trimMemory 40
+11-08 13:26:22.312 32055 32055 I SCallUI : InCallApp(1b3a0db) - Perf: onTrimMemory, level: 40
+11-08 13:26:22.312 32055 32055 I SCallUI : CallPerf:ModelsFactory - CallUIMemory: trimMemory, level: 40, duration=0ms
+11-08 13:26:22.315  8453  8491 I cr_BindingManager: onTrimMemory: level=40, size=0
+11-08 13:26:22.315 15268 15268 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: meminfo
+11-08 13:26:22.316 30660 32168 D ActivityManager: freezer override set to true
+11-08 13:26:22.324 26008 26008 I Finsky:background: [2] Memory trim requested to level 40
+11-08 13:26:22.327 26352 26418 W dwcy    : TextClassifierLibManagerImpl: Reclaiming memory at level: 40
+11-08 13:26:22.329 26218 26218 W ajqp    : Trimming memory to level 40
+11-08 13:26:22.329  1196  1196 D io_stats: !@   8,0 r 17946431 288224240 w 9718058 96197484 d 1428593 67076856 f 302866 897234 iot 8343912 0 th 0 0 0 pt 0 inp 0 2 141120.510
+11-08 13:26:22.329  1196  1196 D io_stats: !@ Read_top(KB): .android.videos(13865) 4172 twitter.android(25172) 1996 ndroid.shopping(17065) 1312
+11-08 13:26:22.329  1196  1196 D io_stats: !@ Write_top(KB): kworker/u16:6(11408) 9632 m.brave.browser(8453) 72 ck_tile_service(7928) 36
+11-08 13:26:22.333 14338 14338 I [PASS][CMN]DrawableCache: clearData: clearing cache (current size=0KB)
+11-08 13:26:22.334 28191 28191 I Gallery : [  25:  GalleryApplication] onTrimMemory(40) 22MB +24
+11-08 13:26:22.334 14426 14426 I [AUTHFW][PASS]AuthFwApp: otlv40
+11-08 13:26:22.342 14272 14287 I .horus:terminal: Explicit concurrent mark compact GC freed 172KB AllocSpace bytes, 1(20KB) LOS objects, 89% free, 2736KB/26MB, paused 50us,863us total 5.040ms
+11-08 13:26:22.350 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]id:4
+11-08 13:26:22.350 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]prop.long:-9223372036854775808 ,prop.string:null
+11-08 13:26:22.351 30660 32168 D ActivityManager: freezer override set to false
+11-08 13:26:22.355 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]id:4
+11-08 13:26:22.355 30660 32327 I BatteryService_BatteryPropertiesRegistrar: [getProperty]prop.long:-9223372036854775808 ,prop.string:null
+11-08 13:26:22.374 30660 30739 I system_server: Background young concurrent mark compact GC freed 40MB AllocSpace bytes, 166(4680KB) LOS objects, 24% free, 147MB/195MB, paused 1.412ms,6.880ms total 132.225ms
+11-08 13:26:22.393 31491 31644 I Tethering: [BpfCoordinator] onAlertReached
+11-08 13:26:22.479 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /99.84.234.10, srcPort: 42292, dstPort: 443, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /99.84.234.10, srcPort: 42292, dstPort: 443, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.479 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /99.84.234.10, dst4: /192.0.0.2, srcPort: 443, dstPort: 42292, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /99.84.234.10, dst46: /10.22.123.216, srcPort: 443, dstPort: 42292, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:22.543 30660 32600 I SemWifiApDataUsage: handleMessage: 14
+11-08 13:26:22.543 30660 32600 I SemWifiApEbpf: DATA_USAGE_STATS_START_POLL,mhs= true,upstream= 2,client size 1
+11-08 13:26:22.544 30660 32600 D SemWifiApEbpf: getWifiApDataUsageForOverAllMhs():  overall data is707342553
+11-08 13:26:22.544 30660 32600 I SemWifiApEbpf: updating the overall dataUsage , overall =707342553 , global = {mTotalDataBytes=707028222,mTotalDataIngressBytes=0,mTotalDataEgressBytes=0,mCellularBytes=707028222,mCurrentDayAndSimCellularBytes=707028222}
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: handleDataUsageStats : 50:5a:65:34:6c:29 : alive=true,mBitratePerSecond=1.254814 Mbps,mBitrateIngressPerSecond=674.147 kbps,mBitrateEgressPerSecond=580.666 kbps,mCellularBytes=707341165,mWifiDataBytes=0,mTotalDataBytes=707341165,mTotalDataIngressBytes=346055343,mTotalDataEgressBytes=361285822,mRtBytes=0,mnRtBytes=707341165,ip=Not available.,mRtBitratePerSecond=0 bps,mNrtBitrateperSecond=1.254814 Mbps,
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: triggerStartStopNsd: mhsActive:true,mIsNsdActivated:false,mDurationTrafficBelowLimit:0
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: mAtleastOneClientSpeedisAboveLimit:true,mConnectedClientCount:1,mIsSmartPriorityEnablefromUI:false
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: mGapiValue:25.047,mCurrSpeedEstimation:25
+11-08 13:26:22.545 30660 32600 D SemWifiApTrafficPriority: activeNetworkSpeed: 25 MbpswifiInfoSpeed: -1 Mbps
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: Recalibration mCurrSpeedEstimation: 25
+11-08 13:26:22.545 30660 32600 D SemWifiApTrafficPriority: Log----> Interface Name: rmnet_data0 totalStatsRxMegaBitRate: 0.348696,ebpfDatarate: 0.580666 ,mCurrSpeedEstimation: 25 mGapiValue: 25.047 mEnablePriorityeBpfAPICalled false
+11-08 13:26:22.545 30660 32600 D SemWifiApTrafficPriority: mCurrentNonGBRAllocated:0
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: calculateRecalRestrictTimer,ebpfrate:0,currentNonGBRAllocated:0
+11-08 13:26:22.545 30660 32600 I SemWifiApTrafficPriority: Recal Timer stoped Polling Interval: 5000
+11-08 13:26:22.545 30660 32600 I SemWifiApDataUsage: handleMessage: 19
+11-08 13:26:22.545 30660 32600 I SemWifiApDataUsage: Polling Interval set to 5000
+11-08 13:26:22.585 14667 13462 W PhBaseOp: Phenotype API error. Event: # jtaz@2c0836db, EventCode: COMMIT_CONFIG [CONTEXT service_id=51 ]
+11-08 13:26:22.585 14667 13462 W PhBaseOp: fyri: 29547: Stale snapshot for com.google.android.libraries.mediahome.providers.video#com.google.android.videos(new configuration available)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at fytl.d(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):436)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at fytl.b(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):42)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at fytk.i(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):3)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at fytg.h(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):38)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at fytg.f(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):20)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at doxk.fF(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):1)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at doxv.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):136)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at icmj.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):23)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at btde.d(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):50)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at btde.c(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):5)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at btde.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):81)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1100)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at btjj.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):8)
+11-08 13:26:22.585 14667 13462 W PhBaseOp: 	at java.lang.Thread.run(Thread.java:1571)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: operation=CommitToConfigurationOperationCall, opStatusCode=29547 [CONTEXT service_id=51 ]
+11-08 13:26:22.585 14667 13462 W AsyncOperation: OperationException[Status{statusCode=Stale snapshot for com.google.android.libraries.mediahome.providers.video#com.google.android.videos(new configuration available), resolution=null}]
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at fytg.h(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):68)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at fytg.f(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):20)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at doxk.fF(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):1)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at doxv.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):136)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at icmj.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):23)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at btde.d(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):50)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at btde.c(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):5)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at btde.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):81)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1100)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at btjj.run(:com.google.android.gms@264330035@26.43.30 (260400-1006944126):8)
+11-08 13:26:22.585 14667 13462 W AsyncOperation: 	at java.lang.Thread.run(Thread.java:1571)
+11-08 13:26:22.724 30660 19866 D BSOHChargingDataCollector:  BSOH Sys-servce ... 
+11-08 13:26:22.724 30660 19866 D BSOHChargingDataCollector: performBatteryWork++
+11-08 13:26:22.724 30660 19866 D BSOHChargingDataCollector: performBatteryWork battery com.android.server.bsoh.device.PrimeBattery@9ad4c1
+11-08 13:26:22.725 30660 19866 D BSOHChargingDataCollector: primeBatt readVoltage from sysFsBattVolt,  path : /sys/class/power_supply/battery/batt_voltage_now
+11-08 13:26:22.736 30660 19866 D BSOHChargingDataCollector: 0 	 BattData addData data : BattData { voltage:3.909, current:0.146093, soc:0.6, temperature:37.9, status:2, timestamp:1794124582736, voltage_chg:null}
+11-08 13:26:22.736 30660 19866 D BSOHChargingDataCollector: performBatteryWork--
+11-08 13:26:22.815 30660 31262 D SemWifiTrafficPoller: getSoftApTotalTrafficInBytes:707583098
+11-08 13:26:22.899  1380 14403 I keystore2: system/security/keystore2/watchdog/src/lib.rs:371 - Watchdog thread idle -> terminating. Have a great day.
+11-08 13:26:22.992 31387 31387 D TelephonyManager: requestModemActivityInfo: Sending result to app: ModemActivityInfo{ mTimestamp=184438743 mSleepTimeMs=55248150 mIdleTimeMs=1726113 mActivityStatsTechSpecificInfo=[{mRat=UNKNOWN,mFrequencyRange=UNKNOWN,mTxTimeMs[]=[101666, 72010, 52640, 62007, 283712],mRxTimeMs=63462343}]}
+11-08 13:26:23.196 30660 31335 D NetdEventListenerService: DNS Requested by 101, 10477(com.scariflabs.horus), SUCCESS, 0ms
+11-08 13:26:23.266  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74be went down
+11-08 13:26:23.266  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74be went down
+11-08 13:26:23.268  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74bf went down
+11-08 13:26:23.268  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74bf went down
+11-08 13:26:23.269  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c0 went down
+11-08 13:26:23.269  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c0 went down
+11-08 13:26:23.271  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c1 went down
+11-08 13:26:23.271  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c1 went down
+11-08 13:26:23.543 30660 32757 I NSLocationMonitor: getGPSUsingApps() called
+11-08 13:26:23.543 32718  6848 I NSLocationManager_FLP: getGPSUsingApps, No change
+11-08 13:26:23.548 30660 32757 W Binder  : Outgoing transactions from this process must be FLAG_ONEWAY
+11-08 13:26:23.548 30660 32757 W Binder  : java.lang.Throwable
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.BinderProxy.transact(BinderProxy.java:575)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.bluetooth.IBluetoothGatt$Stub$Proxy.getAdvertisingSetUids(IBluetoothGatt.java:992)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.bluetooth.BluetoothAdapter.getAdvertisingSetUids(BluetoothAdapter.java:1995)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.bluetooth.BluetoothAdapter.getHWUsingApps(BluetoothAdapter.java:2266)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at com.android.server.am.mars.filter.filter.BlueToothConnectedFilter.updateBTUsingPackages(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:22)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at com.android.server.am.FreecessController.freeze(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:126)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleLcdOnFreeze(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:55)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleMessage(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:1686)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.Handler.dispatchMessage(Handler.java:132)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.Looper.dispatchMessage(Looper.java:358)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.Looper.loopOnce(Looper.java:288)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.Looper.loop(Looper.java:392)
+11-08 13:26:23.548 30660 32757 W Binder  : 	at android.os.HandlerThread.run(HandlerThread.java:139)
+11-08 13:26:23.551 30660 32757 W Binder  : Outgoing transactions from this process must be FLAG_ONEWAY
+11-08 13:26:23.551 30660 32757 W Binder  : java.lang.Throwable
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.BinderProxy.transact(BinderProxy.java:575)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.bluetooth.IBluetoothScan$Stub$Proxy.getScannerUids(IBluetoothScan.java:459)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.bluetooth.BluetoothAdapter.getScannerUids(BluetoothAdapter.java:2041)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.bluetooth.BluetoothAdapter.getHWUsingApps(BluetoothAdapter.java:2273)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at com.android.server.am.mars.filter.filter.BlueToothConnectedFilter.updateBTUsingPackages(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:22)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at com.android.server.am.FreecessController.freeze(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:126)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleLcdOnFreeze(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:55)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleMessage(qb/110706454 dd5cbdf62120b6b22f0d65ddbeb6268f3e039baa5d24047f68eea34e1a8ea8ac:1686)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.Handler.dispatchMessage(Handler.java:132)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.Looper.dispatchMessage(Looper.java:358)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.Looper.loopOnce(Looper.java:288)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.Looper.loop(Looper.java:392)
+11-08 13:26:23.551 30660 32757 W Binder  : 	at android.os.HandlerThread.run(HandlerThread.java:139)
+11-08 13:26:23.554 30660 32757 D FreecessHandler: skipping freeze app.olauncher(10306) result : 11
+11-08 13:26:23.725 30660 19866 D BSOHChargingDataCollector:  BSOH Sys-servce ... 
+11-08 13:26:23.725 30660 19866 D BSOHChargingDataCollector: performBatteryWork++
+11-08 13:26:23.725 30660 19866 D BSOHChargingDataCollector: performBatteryWork battery com.android.server.bsoh.device.PrimeBattery@9ad4c1
+11-08 13:26:23.726 30660 19866 D BSOHChargingDataCollector: primeBatt readVoltage from sysFsBattVolt,  path : /sys/class/power_supply/battery/batt_voltage_now
+11-08 13:26:23.738 30660 19866 D BSOHChargingDataCollector: 0 	 BattData addData data : BattData { voltage:3.897, current:-0.240625, soc:0.6, temperature:37.9, status:2, timestamp:1794124583738, voltage_chg:null}
+11-08 13:26:23.738 30660 19866 D BSOHChargingDataCollector: performBatteryWork--
+11-08 13:26:23.816 30660 31262 D SemWifiTrafficPoller: getSoftApTotalTrafficInBytes:708174413
+11-08 13:26:23.839 14667 14667 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.measurement.START xflg=0x4 pkg=com.google.android.gms }
+11-08 13:26:23.896 19253 19302 E fzsx    : (REDACTED) Trace %s timed out after %d ms. Complete trace: %s
+11-08 13:26:23.896 19253 19302 E fzsx    : fzug: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.Write UserRegionData(Started After:2)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.Update UserRegionData(Started After:2)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityService/GetEligibility(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 1008(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.NoAccountWorkerFactory startWork()(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork()(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork()(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	at tk_trace.WorkManager:TikTokListenableWorker startWork(Started After:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_END(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1155 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 1008 794 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_END(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1213 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 612 761 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_END(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1170 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 7 766 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.GET_FILE_GROUPS_BY_FILTER_FINISHED(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: MultiModelAutoUpdateSynclet 375 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_START(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1213 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 612 761 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.GET_FILE_GROUPS_BY_FILTER_FINISHED(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: MultiModelAutoUpdateSynclet 375 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_START(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1170 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 7 766 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.SERVER_ELIGIBILITY_FETCH_START(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.java.com.google.android.apps.search.assistant.surfaces.voice.robin.eligibility.EligibilityServiceGetEligibility 1155 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: EntrypointToFeatureEligibilityUpdaterSynclet 1008 794 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.GET_FILE_GROUPS_BY_FILTER_FINISHED(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: MultiModelAutoUpdateSynclet 375 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.ROBIN_SUW_CONSENT_BACKFILL_ENDED(unfinished)(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Synclet: SuwHeygConsentBackfillSynclet 4 587 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.NoAccountWorkerFactory startWork() 1090 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncPeriodicWorker startWork() 1097 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.WorkManager:TikTokListenableWorker startWork 2 ms(Unknown Source:0)
+11-08 13:26:23.896 19253 19302 E fzsx    : 	Suppressed: fzuf: 
+11-08 13:26:23.896 19253 19302 E fzsx    : 		at tk_trace.Suppressed exceptions exceeds the limit 10, additional unfinished spans will not be reported(Unknown Source:0)
+11-08 13:26:23.937 30311 30614 D DlbDap2Process: process() called [5350500] times with input format 0x22 and channel mask 0x3 (ProcessingMode=10), htEnable=0(0, 0, 0)
+11-08 13:26:24.081 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /90.148.94.128, srcPort: 60836, dstPort: 35285, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /90.148.94.128, srcPort: 60836, dstPort: 35285, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.082 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /90.148.94.128, dst4: /192.0.0.2, srcPort: 35285, dstPort: 60836, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /90.148.94.128, dst46: /10.22.123.216, srcPort: 35285, dstPort: 60836, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.084 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /93.158.213.92, srcPort: 55846, dstPort: 1337, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /93.158.213.92, srcPort: 55846, dstPort: 1337, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.085  1801 25924 I sensors-hal: handle_sns_std_sensor_event:90, light_cct: ts = 184439831653087 ns; value = [0, 0, 10, 10, 0, 41, 4, 10, 1289, 10]
+11-08 13:26:24.085 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /93.158.213.92, dst4: /192.0.0.2, srcPort: 1337, dstPort: 55846, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /93.158.213.92, dst46: /10.22.123.216, srcPort: 1337, dstPort: 55846, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.086 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /90.148.94.128, srcPort: 60836, dstPort: 35285, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /90.148.94.128, srcPort: 60836, dstPort: 35285, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.086 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /90.148.94.128, dst4: /192.0.0.2, srcPort: 35285, dstPort: 60836, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /90.148.94.128, dst46: /10.22.123.216, srcPort: 35285, dstPort: 60836, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.159  1801  8694 I sensors-hal: handle_sns_client_event:574, [0][1183122] accel_sample [ 7.207,  6.374, -0.414] 184439848491212
+11-08 13:26:24.207 30660 31263 D SemHostapdHalAidlImpl: ISehHostapd command: GET_STATION_INFO_SWLAN0 ALL
+11-08 13:26:24.208 19095 19095 I hostapd : sehSendCommand 
+11-08 13:26:24.208 19095 19095 I hostapd : doDriverCommand 
+11-08 13:26:24.208 19095 19095 I hostapd : IHostapd iface swlan0
+11-08 13:26:24.213 19095 19095 I wpa_sslib: Recv STA info 50:5a:65:34:6c:29
+11-08 13:26:24.213 19095 19095 I wpa_sslib: rx_retry_pkts 132696
+11-08 13:26:24.213 19095 19095 I wpa_sslib: rx_bcmc_pkts 1252
+11-08 13:26:24.213 19095 19095 I wpa_sslib: tx_pkts_retried 0
+11-08 13:26:24.213 19095 19095 I wpa_sslib: tx_pkts_retry_exhausted 0
+11-08 13:26:24.213 19095 19095 I wpa_sslib: tx_pkts_fw_total 289716
+11-08 13:26:24.213 19095 19095 I wpa_sslib: tx_pkts_fw_retries 0
+11-08 13:26:24.213 19095 19095 I wpa_sslib: tx_pkts_fw_retry_exhausted 0
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[0] 11
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[1] 126
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[2] 4
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[3] 88
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[4] 1064
+11-08 13:26:24.213 19095 19095 I wpa_sslib: mcs_tx_pkts[5] 41262
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[6] 28672
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[7] 67050
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[8] 61011
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[9] 90428
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[10] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[11] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[12] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[13] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[14] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_tx_pkts[15] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[0] 1
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[1] 177
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[2] 2151
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[3] 6026
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[4] 12252
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[5] 23162
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[6] 41408
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[7] 128669
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[8] 74593
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[9] 149476
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[10] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[11] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[12] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[13] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[14] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: mcs_rx_pkts[15] 0
+11-08 13:26:24.214 19095 19095 I wpa_sslib: num_received_vendor_sta_info 1
+11-08 13:26:24.214 19095 19095 I wpa_sslib: num_request_vendor_sta_info 1
+11-08 13:26:24.216 19095 19095 I wpa_sslib: Recv STA info 50:5a:65:34:6c:29
+11-08 13:26:24.216 19095 19095 I wpa_sslib: HT supported
+11-08 13:26:24.216 19095 19095 I wpa_sslib: VHT supported
+11-08 13:26:24.216 19095 19095 I wpa_sslib: tx_rate 150
+11-08 13:26:24.216 19095 19095 I wpa_sslib: bandwidth 40
+11-08 13:26:24.216 19095 19095 I wpa_sslib: data_rate 150
+11-08 13:26:24.216 19095 19095 I wpa_sslib: rssi -38
+11-08 13:26:24.216 19095 19095 I wpa_sslib: rx_lastpkt_rssi -38
+11-08 13:26:24.216 19095 19095 I wpa_sslib: avg_rssi_per_chain[0] -52
+11-08 13:26:24.216 19095 19095 I wpa_sslib: avg_rssi_per_chain[1] -48
+11-08 13:26:24.216 19095 19095 E wpa_sslib: WMI_MAX_CHAINS reached
+11-08 13:26:24.216 19095 19095 I wpa_sslib: avg_rssi -50
+11-08 13:26:24.216 19095 19095 I wpa_sslib: tx_pkts_total 289717
+11-08 13:26:24.216 19095 19095 I wpa_sslib: tx_pckts 289717
+11-08 13:26:24.216 19095 19095 I wpa_sslib: tx_failures 0
+11-08 13:26:24.216 19095 19095 I wpa_sslib: rx_pkts 437919
+11-08 13:26:24.216 19095 19095 I wpa_sslib: num_received_nl80211_sta_info 1
+11-08 13:26:24.216 19095 19095 I wpa_sslib: num_request_nl80211_sta_info 1
+11-08 13:26:24.216 19095 19095 I wpa_sslib: cap 0000
+11-08 13:26:24.216 19095 19095 I wpa_sslib: freq 5745
+11-08 13:26:24.216 19095 19095 I wpa_sslib: dot11_mode 4
+11-08 13:26:24.216 19095 19095 I wpa_sslib: supported_mode 3
+11-08 13:26:24.216 19095 19095 I wpa_sslib: STA information completed
+11-08 13:26:24.216 19095 19095 I wpa_sslib: All STAs information completed
+11-08 13:26:24.216 19095 19095 I wpa_sslib: GETSTAINFO 50:5a:65:34:6c:29 Rx_Retry_Pkts=132696 Rx_BcMc_Pkts=1252 CAP=0000 50:5a:65 5745 40 -38 150 3 0 0 0 7 -50 15=0,14=0,13=0,12=0,11=0,10=0,9=90428,8=61011,7=67050,6=28672,5=41262,4=1064,3=88,2=4,1=126,0=11 289716 0 0 15=0,14=0,13=0,12=0,11=0,10=0,9=149476,8=74593,7=128669,6=41408,5=23162,4=12252,3=6026,2=2151,1=177,0=1 437919 -1 132696
+11-08 13:26:24.216 19095 19095 I hostapd : command is GET_STATION_INFO_SWLAN0 ALL,return value is =345
+11-08 13:26:24.218 30660 32626 D SemWifiApTrafficPoller: received START_TPUT_LOG
+11-08 13:26:24.231 31387 31421 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+11-08 13:26:24.231 31387 31421 D SatelliteController: getCarrierRoamingNtnConnectType: Falling back to global carrier config connect type: 0
+11-08 13:26:24.232 31387 31421 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(1)
+11-08 13:26:24.232 31387 31421 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(1) lastNotifiedSignalStrength level: 0
+11-08 13:26:24.232 31387 31421 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(1) currSignalStrength level: 0
+11-08 13:26:24.275 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /93.158.213.92, srcPort: 55846, dstPort: 1337, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /93.158.213.92, srcPort: 55846, dstPort: 1337, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.275 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /93.158.213.92, dst4: /192.0.0.2, srcPort: 1337, dstPort: 55846, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /93.158.213.92, dst46: /10.22.123.216, srcPort: 1337, dstPort: 55846, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.276 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /93.158.213.92, srcPort: 55846, dstPort: 1337, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /93.158.213.92, srcPort: 55846, dstPort: 1337, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.276 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /93.158.213.92, dst4: /192.0.0.2, srcPort: 1337, dstPort: 55846, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /93.158.213.92, dst46: /10.22.123.216, srcPort: 1337, dstPort: 55846, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.276 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /93.158.213.92, srcPort: 55846, dstPort: 1337, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /93.158.213.92, srcPort: 55846, dstPort: 1337, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.276 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /93.158.213.92, dst4: /192.0.0.2, srcPort: 1337, dstPort: 55846, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /93.158.213.92, dst46: /10.22.123.216, srcPort: 1337, dstPort: 55846, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.330  1196  1196 D io_stats: !@   8,0 r 17947075 288249352 w 9718272 96198464 d 1428897 67087420 f 302871 897243 iot 8344308 0 th 0 0 0 pt 0 inp 0 0 141122.510
+11-08 13:26:24.343 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /90.148.94.128, srcPort: 60836, dstPort: 35285, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /90.148.94.128, srcPort: 60836, dstPort: 35285, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.343 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /90.148.94.128, dst4: /192.0.0.2, srcPort: 35285, dstPort: 60836, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /90.148.94.128, dst46: /10.22.123.216, srcPort: 35285, dstPort: 60836, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.369  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c2 went down
+11-08 13:26:24.369  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c2 went down
+11-08 13:26:24.370  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c3 went down
+11-08 13:26:24.370  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c3 went down
+11-08 13:26:24.370  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c4 went down
+11-08 13:26:24.370  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c4 went down
+11-08 13:26:24.372  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c5 went down
+11-08 13:26:24.372  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c5 went down
+11-08 13:26:24.443 30660 31015 D ActivityManager: freezing 29164 com.samsung.android.forest
+11-08 13:26:24.449 30660 31015 D ActivityManager: FCA:FCA recordedFileRss = 46416, and changeinRss = 1800
+11-08 13:26:24.450 30660 31015 D ActivityManager: freezing 6840 com.samsung.android.provider.filterprovider
+11-08 13:26:24.451 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /93.158.213.92, srcPort: 55846, dstPort: 1337, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /93.158.213.92, srcPort: 55846, dstPort: 1337, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.451 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /93.158.213.92, dst4: /192.0.0.2, srcPort: 1337, dstPort: 55846, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /93.158.213.92, dst46: /10.22.123.216, srcPort: 1337, dstPort: 55846, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.452 30660 31015 D ActivityManager: freezing 26300 com.android.settings
+11-08 13:26:24.453 30660 31015 D ActivityManager: freezing 6721 com.android.keychain
+11-08 13:26:24.454 30660 31015 D ActivityManager: freezing 2500 com.samsung.android.dqagent
+11-08 13:26:24.455 30660 31015 D ActivityManager: freezing 19428 com.samsung.android.lool
+11-08 13:26:24.456 30660 31015 D ActivityManager: freezing 5300 com.samsung.android.cameraxservice
+11-08 13:26:24.457 30660 31015 D ActivityManager: freezing 28488 com.samsung.android.fmm
+11-08 13:26:24.473 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /86.162.183.211, srcPort: 50350, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /86.162.183.211, srcPort: 50350, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.473 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /86.162.183.211, dst4: /192.0.0.2, srcPort: 51413, dstPort: 50350, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /86.162.183.211, dst46: /10.22.123.216, srcPort: 51413, dstPort: 50350, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.517 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /51.158.68.165, srcPort: 54968, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /51.158.68.165, srcPort: 54968, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.518 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /51.158.68.165, dst4: /192.0.0.2, srcPort: 51413, dstPort: 54968, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /51.158.68.165, dst46: /10.22.123.216, srcPort: 51413, dstPort: 54968, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.565  1801 14144 I sensors-hal: handle_sns_std_sensor_event:436, [SSC_LIGHT] P: 0(0),m:13,c:0,b:41,c0:1307,l:0,f(r):93,u(bl):98,j:0
+11-08 13:26:24.694 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /51.158.68.165, srcPort: 54968, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /51.158.68.165, srcPort: 54968, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.695 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /51.158.68.165, dst4: /192.0.0.2, srcPort: 51413, dstPort: 54968, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /51.158.68.165, dst46: /10.22.123.216, srcPort: 51413, dstPort: 54968, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.702 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /51.158.68.165, srcPort: 54968, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /51.158.68.165, srcPort: 54968, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.702 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /51.158.68.165, dst4: /192.0.0.2, srcPort: 51413, dstPort: 54968, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /51.158.68.165, dst46: /10.22.123.216, srcPort: 51413, dstPort: 54968, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.705 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /51.158.68.165, srcPort: 54968, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /51.158.68.165, srcPort: 54968, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.705 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /51.158.68.165, dst4: /192.0.0.2, srcPort: 51413, dstPort: 54968, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /51.158.68.165, dst46: /10.22.123.216, srcPort: 51413, dstPort: 54968, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:24.727 30660 19866 D BSOHChargingDataCollector:  BSOH Sys-servce ... 
+11-08 13:26:24.727 30660 19866 D BSOHChargingDataCollector: performBatteryWork++
+11-08 13:26:24.727 30660 19866 D BSOHChargingDataCollector: performBatteryWork battery com.android.server.bsoh.device.PrimeBattery@9ad4c1
+11-08 13:26:24.727 30660 19866 D BSOHChargingDataCollector: primeBatt readVoltage from sysFsBattVolt,  path : /sys/class/power_supply/battery/batt_voltage_now
+11-08 13:26:24.737 30660 19866 D BSOHChargingDataCollector: 0 	 BattData addData data : BattData { voltage:3.925, current:0.545312, soc:0.6, temperature:37.9, status:2, timestamp:1794124584737, voltage_chg:null}
+11-08 13:26:24.737 30660 19866 D BSOHChargingDataCollector: performBatteryWork--
+11-08 13:26:24.818 30660 31262 D SemWifiTrafficPoller: getSoftApTotalTrafficInBytes:708221805
+11-08 13:26:24.870 30660 32757 I NSLocationMonitor: getGPSUsingApps() called
+11-08 13:26:24.871 32718  6848 I NSLocationManager_FLP: getGPSUsingApps, No change
+11-08 13:26:24.877 30660 32757 D MARs:ActiveTrafficFilter: filter : com.brave.browser(0)
+11-08 13:26:24.878 30660 32757 D FreecessHandler: skipping freeze com.brave.browser(10376) result : 8
+11-08 13:26:24.892 30660 32757 I NSLocationMonitor: getGPSUsingApps() called
+11-08 13:26:24.893 32718  6848 I NSLocationManager_FLP: getGPSUsingApps, No change
+11-08 13:26:24.902 30660 32757 D MARs:ActiveTrafficFilter: filter : com.jio.myjio(0)
+11-08 13:26:24.902 30660 32757 D FreecessHandler: skipping freeze com.jio.myjio(10326) result : 8
+11-08 13:26:24.955 30660 32757 I NSLocationMonitor: getGPSUsingApps() called
+11-08 13:26:24.956 32718  6848 I NSLocationManager_FLP: getGPSUsingApps, No change
+11-08 13:26:24.962 30660 32757 D FreecessHandler: skipping freeze com.whatsapp(10335) result : 7
+11-08 13:26:25.023 30660 31015 D ActivityManager: freezing 22286 com.google.android.permissioncontroller
+11-08 13:26:25.027 30660 31015 D ActivityManager: FCA:FCA recordedFileRss = 67840, and changeinRss = 20836
+11-08 13:26:25.031 30660 31165 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+11-08 13:26:25.034 30660 31165 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+11-08 13:26:25.034 30660 31165 D InetDiagMessage: Destroyed live tcp sockets for uids={10272} in 6ms
+11-08 13:26:25.095 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /86.162.183.211, srcPort: 50350, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /86.162.183.211, srcPort: 50350, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.096 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /86.162.183.211, dst4: /192.0.0.2, srcPort: 51413, dstPort: 50350, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /86.162.183.211, dst46: /10.22.123.216, srcPort: 51413, dstPort: 50350, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.097 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /86.162.183.211, srcPort: 50350, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /86.162.183.211, srcPort: 50350, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.098 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /86.162.183.211, dst4: /192.0.0.2, srcPort: 51413, dstPort: 50350, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /86.162.183.211, dst46: /10.22.123.216, srcPort: 51413, dstPort: 50350, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.207 30660 31335 D NetdEventListenerService: DNS Requested by 101, 10477(com.scariflabs.horus), SUCCESS, 0ms
+11-08 13:26:25.257  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:25.257  3654  3654 I EffectManager: isSupportDolbyAtmosOnThisAudioPath() : path is speaker (0)
+11-08 13:26:25.257  3654  3654 I EffectManager: isSupportDolbyAtmosOnThisAudioPath() : speaker type is stereo
+11-08 13:26:25.257  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:25.257  3654  3654 I EffectManager: isSupportVoiceBoostOnCurrentAudioPath() : path is speaker (0)
+11-08 13:26:25.257  3654  3654 I AudioPathManager: loadAudioPath() : loaded audio path is speaker (0)
+11-08 13:26:25.257  3654  3654 I EffectManager: isSupportVolumeNormalizationOnCurrentAudioPath() : path is speaker (0)
+11-08 13:26:25.257  3654  3654 I DVFSHelper: isNecessaryToBoostCPU() : isDolbyOn? true, isUHQUpscalerOn? false, isVoiceBoostOn? false, isVolumeNormalizationOn? true
+11-08 13:26:25.311 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /86.162.183.211, srcPort: 50350, dstPort: 51413, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /86.162.183.211, srcPort: 50350, dstPort: 51413, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.312 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /86.162.183.211, dst4: /192.0.0.2, srcPort: 51413, dstPort: 50350, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /86.162.183.211, dst46: /10.22.123.216, srcPort: 51413, dstPort: 50350, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:25.474  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c6 went down
+11-08 13:26:25.474  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c6 went down
+11-08 13:26:25.475  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c7 went down
+11-08 13:26:25.476  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c7 went down
+11-08 13:26:25.478  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c8 went down
+11-08 13:26:25.478  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c8 went down
+11-08 13:26:25.480  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c9 went down
+11-08 13:26:25.480  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74c9 went down
+11-08 13:26:25.729 30660 19866 D BSOHChargingDataCollector:  BSOH Sys-servce ... 
+11-08 13:26:25.729 30660 19866 D BSOHChargingDataCollector: performBatteryWork++
+11-08 13:26:25.729 30660 19866 D BSOHChargingDataCollector: performBatteryWork battery com.android.server.bsoh.device.PrimeBattery@9ad4c1
+11-08 13:26:25.729 30660 19866 D BSOHChargingDataCollector: primeBatt readVoltage from sysFsBattVolt,  path : /sys/class/power_supply/battery/batt_voltage_now
+11-08 13:26:25.740 30660 19866 D BSOHChargingDataCollector: 0 	 BattData addData data : BattData { voltage:3.939, current:0.760156, soc:0.6, temperature:37.9, status:2, timestamp:1794124585739, voltage_chg:null}
+11-08 13:26:25.740 30660 19866 D BSOHChargingDataCollector: performBatteryWork--
+11-08 13:26:25.819 30660 31262 D SemWifiTrafficPoller: getSoftApTotalTrafficInBytes:708225088
+11-08 13:26:26.038 32555 32561 W com.myairtelapp: Suspending all threads took: 5.513ms
+11-08 13:26:26.162  1801  8694 I sensors-hal: handle_sns_client_event:574, [0][1183329] accel_sample [ 4.700,  8.262, -2.457] 184441851799597
+11-08 13:26:26.330  1196  1196 D io_stats: !@   8,0 r 17947085 288249624 w 9718344 96198892 d 1429201 67097148 f 302872 897249 iot 8344500 0 th 0 0 0 pt 0 inp 0 0 141124.511
+11-08 13:26:26.336  1196  1196 D io_stats: !@ Read_top(KB): .android.videos(13865) 15104 twitter.android(25172) 3268 droid.apps.maps(23149) 2152
+11-08 13:26:26.336  1196  1196 D io_stats: !@ Write_top(KB): f2fs_ckpt-254:6(1429) 396 android.youtube(32009) 152 plug.androidapp(26420) 44
+11-08 13:26:26.412 17065 17167 I MlsIntegration: Treatment for Weblab MLS_USE_PSEUDO_DEVICE_ID_ANDROID_1109242 is C_default (changed?: false)
+11-08 13:26:26.413 17065 17167 I MlsIntegration: Treatment for Weblab MLS_ANDROID_ZAZ_MIGRATION_1364350 is C_default (changed?: false)
+11-08 13:26:26.413 17065 17167 I MlsIntegration: Treatment for Weblab MLS_ENABLE_DEBUG_LOGS_1366122 is C_default (changed?: false)
+11-08 13:26:26.451 30660 31015 D ActivityManager: FCA:Reclamation for pid: 29164
+11-08 13:26:26.577  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74ca went down
+11-08 13:26:26.577  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74ca went down
+11-08 13:26:26.579  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cb went down
+11-08 13:26:26.580  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cb went down
+11-08 13:26:26.581  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cc went down
+11-08 13:26:26.581  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cc went down
+11-08 13:26:26.582  1778  1895 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cd went down
+11-08 13:26:26.582  1778  1913 E minksocket: MinkIPC_QRTR_Service: client with node 1 port 74cd went down
+11-08 13:26:26.645  1801 25924 I sensors-hal: handle_sns_std_sensor_event:90, light_cct: ts = 184442391655899 ns; value = [0, 0, 10, 10, 0, 41, 4, 10, 1169, 10]
+11-08 13:26:26.681 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /89.216.164.151, srcPort: 53744, dstPort: 49999, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /89.216.164.151, srcPort: 53744, dstPort: 49999, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:26.681 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /89.216.164.151, dst4: /192.0.0.2, srcPort: 49999, dstPort: 53744, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /89.216.164.151, dst46: /10.22.123.216, srcPort: 49999, dstPort: 53744, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:26.731 30660 19866 D BSOHChargingDataCollector:  BSOH Sys-servce ... 
+11-08 13:26:26.731 30660 19866 D BSOHChargingDataCollector: performBatteryWork++
+11-08 13:26:26.731 30660 19866 D BSOHChargingDataCollector: performBatteryWork battery com.android.server.bsoh.device.PrimeBattery@9ad4c1
+11-08 13:26:26.731 30660 19866 D BSOHChargingDataCollector: primeBatt readVoltage from sysFsBattVolt,  path : /sys/class/power_supply/battery/batt_voltage_now
+11-08 13:26:26.741 30660 19866 D BSOHChargingDataCollector: 0 	 BattData addData data : BattData { voltage:3.934, current:0.521875, soc:0.6, temperature:37.9, status:2, timestamp:1794124586741, voltage_chg:null}
+11-08 13:26:26.741 30660 19866 D BSOHChargingDataCollector: performBatteryWork--
+11-08 13:26:26.821 30660 31262 D SemWifiTrafficPoller: getSoftApTotalTrafficInBytes:708445220
+11-08 13:26:26.836   818  2263 I SDHMS:x : SIOP:: AP:500 BAT:379 USB:373 CHG:499 PA:488 CP:-200 WIFI:460 CF:414 BLK:0 SUBBAT:0 SKIN:416 SKINF:416 SKINB:414 LRP:416 LRP2:416 LRF2:416 LRB2:414 AP2:412 CHG2:402 WIFI2:416 UANT2:412 RCV2:415 SPK2:398 FCAM:374 UPSPK:555 DNSPK:566 VAP02:507 VWIFI:454 AMB:354 AMB2:304 AVGCUR:143 AVGSYS:1255 POWER:559
+11-08 13:26:26.841   818  1051 I n2      : limitGPUFreq:: freq = 615
+11-08 13:26:26.841   818  1051 I n2      : limitCPUFreq:: freq = 2841600
+11-08 13:26:26.841   818  1051 I SemDvfsHyPerManager: acquire hyper - SIOP_ARM_MAX/818@3, type = 301993986
+11-08 13:26:26.843 30328 30351 I HYPER-HAL: [RequestManager.cpp]acquire(): Acquired ID : 337434  [818 / 3]    HINT :      list : [CPUMaxFreq / 2841600] 
+11-08 13:26:26.855   818  1051 I SemDvfsHyPerManager: acquire hyper - SIOP_GPU_FREQ_MAX/818@5, type = 536875010
+11-08 13:26:26.856 30328 30351 I HYPER-HAL: [RequestManager.cpp]acquire(): Acquired ID : 339081  [818 / 5]    HINT :      list : [GPUMaxFreq / 615] 
+11-08 13:26:27.030 30660 31015 D ActivityManager: FCA:Reclamation for pid: 22286
+11-08 13:26:27.220 30660 31335 D NetdEventListenerService: DNS Requested by 101, 10477(com.scariflabs.horus), SUCCESS, 0ms
+11-08 13:26:27.383 30660 32600 I SemWifiApDataUsage: handleMessage: 15
+11-08 13:26:27.392 30660 32600 D SemWifiApDbHistoryTableHelper: insertOrUpdateOnGivenDate() : data has been updated or inserted for date=2026-11-08
+11-08 13:26:27.394 30660 32600 I SemWifiApDbSimTableHelper: updated for SIM : 8991862040**********
+11-08 13:26:27.405 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /89.216.164.151, srcPort: 53744, dstPort: 49999, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /89.216.164.151, srcPort: 53744, dstPort: 49999, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:27.405 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /89.216.164.151, dst4: /192.0.0.2, srcPort: 49999, dstPort: 53744, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /89.216.164.151, dst46: /10.22.123.216, srcPort: 49999, dstPort: 53744, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:27.407 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /89.216.164.151, srcPort: 53744, dstPort: 49999, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /89.216.164.151, srcPort: 53744, dstPort: 49999, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:27.407 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /89.216.164.151, dst4: /192.0.0.2, srcPort: 49999, dstPort: 53744, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /89.216.164.151, dst46: /10.22.123.216, srcPort: 49999, dstPort: 53744, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:27.430 12877 12877 I adbd    : adbd service requested 'shell,v2,TERM=dumb:export ANDROID_LOG_TAGS=''; exec logcat '-d''
+11-08 13:26:27.537 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 79, dstMac: 8a:bb:90:36:8f:79, l4proto: 6, src4: /10.22.123.216, dst4: /101.190.186.243, srcPort: 58606, dstPort: 11640, oif: 53, ethDstMac: 00:00:00:00:00:00, ethSrcMac: 00:00:00:00:00:00, ethProto: 2048, pmtu: 1400, src46: /192.0.0.2, dst46: /101.190.186.243, srcPort: 58606, dstPort: 11640, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)
+11-08 13:26:27.537 31491 31644 E Tethering: [BpfCoordinator] ERROR Could not insert entry (iif: 53, dstMac: 00:00:00:00:00:00, l4proto: 6, src4: /101.190.186.243, dst4: /192.0.0.2, srcPort: 11640, dstPort: 58606, oif: 79, ethDstMac: 50:5a:65:34:6c:29, ethSrcMac: 8a:bb:90:36:8f:79, ethProto: 2048, pmtu: 1400, src46: /101.190.186.243, dst46: /10.22.123.216, srcPort: 11640, dstPort: 58606, lastUsed: 0): android.system.ErrnoException: nativeWriteToMapEntry failed: E2BIG (Argument list too long)

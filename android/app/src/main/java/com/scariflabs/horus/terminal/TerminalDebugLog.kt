@@ -46,6 +46,19 @@ object TerminalDebugLog {
     val tail: String,
   )
 
+  @Volatile private var defaultContext: Context? = null
+
+  fun setDefaultContext(context: Context) {
+    defaultContext = context.applicationContext
+  }
+
+  fun record(event: String) {
+    val ctx = defaultContext
+    if (ctx != null) {
+      record(ctx, event)
+    }
+  }
+
   fun record(context: Context, event: String) {
     val files = listOfNotNull(logFile(context), externalLogFile(context))
       .distinctBy(File::getAbsolutePath)

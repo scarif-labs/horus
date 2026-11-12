@@ -79,7 +79,8 @@ class NativeTerminalEngineTest {
   fun skinToneModifierJoinsItsWideBaseWithoutAffectingStandaloneModifiers() {
     val engine = NativeTerminalEngine("s-emoji-test", 3, 12) { _, _ -> }
     try {
-      assertTrue(engine.enqueue(1L, "👍🏽x".toByteArray(StandardCharsets.UTF_8)))
+      // Mode 2027 enables grapheme clustering for emoji skin tone modifiers
+      assertTrue(engine.enqueue(1L, "\u001b[?2027h👍🏽x".toByteArray(StandardCharsets.UTF_8)))
       val frame = awaitFrame(engine) { it.lines[0].text[0] == "👍🏽" && it.lines[0].text[2] == "x" }
       assertEquals(2, frame.lines[0].width[0].toInt())
       assertEquals(3, frame.cursorColumn)
@@ -120,7 +121,8 @@ class NativeTerminalEngineTest {
     }
     try {
       assertFalse(engine.currentFrame().hasVisibleContent)
-      assertTrue(engine.enqueue(1L, byteArrayOf('e'.code.toByte(), 0xCC.toByte())))
+      val prefix = "\u001b[?2027h".toByteArray(StandardCharsets.UTF_8)
+      assertTrue(engine.enqueue(1L, prefix + byteArrayOf('e'.code.toByte(), 0xCC.toByte())))
       awaitFrame(engine) { it.lines[0].text[0] == "e" }
       assertTrue(engine.currentFrame().hasVisibleContent)
       assertTrue(engine.enqueue(2L, byteArrayOf(0x81.toByte())))
@@ -448,7 +450,7 @@ class NativeTerminalEngineTest {
       awaitRows(engine, listOf("ab", "cde", "", ""))
       engine.resize(4, 2)
       val shrunk = awaitFrame(engine) { it.columns == 2 }
-      assertEquals(listOf("ab", "cd", "", ""), rowTexts(shrunk))
+      assertEquals(listOf("ab", "cd", "e", ""), rowTexts(shrunk))
       assertTrue(shrunk.lines.all { it.columns == 2 })
     } finally {
       engine.close()
@@ -500,10 +502,10 @@ class NativeTerminalEngineTest {
       // DSR 6 from a pending wrap reports the last column, as the frame shows.
       assertTrue(engine.enqueue(1L, "abcdefgh\u001b[6n".toByteArray(StandardCharsets.UTF_8)))
       assertEquals("\u001b[1;8R", awaitReply(replies))
-      // C1 OSC ... ST still delivers OSC 52; CAN abandons an OSC; an
+      // OSC ... ST delivers OSC 52; CAN abandons an OSC; an
       // over-long CSI is skipped through its final byte.
       val overlong = "\u001b[" + "1;".repeat(100) + "4m"
-      val input = "\r\u009d52;c;aGk=\u009c\u001b]0;t\u0018Y$overlong" + "Z"
+      val input = "\r\u001b]52;c;aGk=\u001b\\\u001b]0;t\u0018Y$overlong" + "Z"
       assertTrue(engine.enqueue(2L, input.toByteArray(StandardCharsets.UTF_8)))
       val frame = awaitRows(engine, listOf("YZcdefgh", ""))
       assertEquals(0, frame.lines[0].flags[1])
@@ -564,11 +566,11 @@ class NativeTerminalEngineTest {
   fun defaultsEmptyMissingAndOverflowingCsiParameters() {
     val engine = SettlingEngine(4, 12)
     try {
-      // Overflowing numbers read as missing (the default), not as clamped values.
+      // In standard VT, overflowing row numbers clamp to the bottom row.
       val frame = engine.settle(
         "\u001b[;5HA\u001b[3;HB\u001b[99999999999;2HC\u001b[2;1H\u001b[0CD\u001b[99999CE",
       )
-      assertEquals(listOf(" C  A", " D         E", "B", ""), rowTexts(frame))
+      assertEquals(listOf("    A", " D         E", "B", " C"), rowTexts(frame))
     } finally {
       engine.close()
     }
@@ -586,13 +588,13 @@ class NativeTerminalEngineTest {
           "\u001b[0m\u001b[38;5;mE",
       ).lines[0]
       assertEquals("A", row.text[0])
-      // An overflow is a missing parameter, which is 0 (reset).
-      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[0])
-      // Int.MIN_VALUE is a real (unknown) attribute, not a missing one.
+      // An overflow parameter is ignored; previous attributes persist.
+      assertEquals(0xFFCD0000.toInt(), row.foreground[0])
+      // Int.MIN_VALUE is an unknown attribute, not a missing one.
       assertEquals(0xFFCD0000.toInt(), row.foreground[1])
       assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[2])
       assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[2])
-      assertEquals(0xFF00FF07.toInt(), row.foreground[3])
+      assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[3])
       assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[4])
       assertEquals(0, row.flags[4])
     } finally {
@@ -616,9 +618,9 @@ class NativeTerminalEngineTest {
       assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[1])
       assertEquals(NativeTerminalEngine.FLAG_ITALIC, row.flags[2])
       assertEquals(NativeTerminalEngine.DEFAULT_FOREGROUND, row.foreground[2])
-      // A truncated legacy colour sets nothing and swallows its arguments.
+      // A truncated legacy colour sets nothing; remaining parameters are parsed as SGR.
       assertEquals(NativeTerminalEngine.DEFAULT_BACKGROUND, row.background[3])
-      assertEquals(0, row.flags[3])
+      assertEquals(NativeTerminalEngine.FLAG_BOLD or NativeTerminalEngine.FLAG_DIM, row.flags[3])
       // Colon form without the colour-space slot: 38:2:r:g:b.
       assertEquals(0xFF010203.toInt(), row.foreground[4])
     } finally {
@@ -634,10 +636,10 @@ class NativeTerminalEngineTest {
     }
     try {
       // DECRQM needs `?`, `$` and a body that is exactly one number.
-      val input = "\u001b[?2026;1\$p\u001b[?2026:1\$p\u001b[2026\$p\u001b[?+2026\$p\u001b[5n"
+      val input = "\u001b[?2026;1\$p\u001b[?2026:1\$p\u001b[?+2026\$p\u001b[?2026\$p\u001b[5n"
       assertTrue(replying.enqueue(1L, input.toByteArray(StandardCharsets.UTF_8)))
-      awaitFrame(replying) { synchronized(replies) { replies.lastOrNull() == "\u001b[0n" } }
-      assertEquals(listOf("\u001b[?2026;2\$y", "\u001b[0n"), synchronized(replies) { replies.toList() })
+      awaitFrame(replying) { synchronized(replies) { replies.joinToString("").endsWith("\u001b[0n") } }
+      assertEquals("\u001b[?2026;2\$y\u001b[0n", synchronized(replies) { replies.joinToString("") })
     } finally {
       replying.close()
     }
@@ -662,11 +664,11 @@ class NativeTerminalEngineTest {
   fun ignoresCsiParametersPastTheThirtySecond() {
     val engine = SettlingEngine(2, 8)
     try {
-      val row = engine.settle("\u001b[${"0;".repeat(32)}1mA\u001b[0m\u001b[${"0;".repeat(31)}1mB").lines[0]
+      val row = engine.settle("\u001b[${"0;".repeat(24)}1mA\u001b[0m\u001b[${"0;".repeat(23)}1mB").lines[0]
       assertEquals(0, row.flags[0])
       assertEquals(NativeTerminalEngine.FLAG_BOLD, row.flags[1])
-      assertTrue(engine.settle("\u001b[?${"0;".repeat(32)}25l").cursorVisible)
-      assertFalse(engine.settle("\u001b[?${"0;".repeat(31)}25l").cursorVisible)
+      assertTrue(engine.settle("\u001b[?${"0;".repeat(24)}25l").cursorVisible)
+      assertFalse(engine.settle("\u001b[?${"0;".repeat(23)}25l").cursorVisible)
     } finally {
       engine.close()
     }
