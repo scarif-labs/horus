@@ -74,5 +74,61 @@
   {
     "raw": "\u0000\ufffd\ufffd\nENOSPC SYNTHETIC_INVALID_TEXT_SECRET\n",
     "safe": "No space left on device."
+  },
+  {
+    "raw": "ERROR: zsh-5.9-r6: failed to extract usr/bin/zsh-5.9: Too many links",
+    "safe": "Writing package files to the phone's storage failed."
+  },
+  {
+    "raw": "ERROR: git-2.51.0-r0: failed to commit /private/usr/libexec/git-core/git-add: Operation not permitted",
+    "safe": "Writing package files to the phone's storage failed."
+  },
+  {
+    "raw": "ERROR: python3-3.13.7-r0: failed to extract /private/usr/lib/x.py: No such file or directory",
+    "safe": "Writing package files to the phone's storage failed."
+  },
+  {
+    "raw": "WARNING: fetching https://private.invalid/SYNTHETIC_TOKEN/main: DNS: transient error (try again later)",
+    "safe": "Could not resolve a download host."
+  },
+  {
+    "raw": "WARNING: fetching https://private.invalid/SYNTHETIC_TOKEN/main: TLS: server certificate not trusted",
+    "safe": "The secure download connection failed (TLS)."
+  },
+  {
+    "raw": "ERROR: libcurl-8.16.0-r0: Network unreachable",
+    "safe": "Network is unreachable while downloading packages."
+  },
+  {
+    "raw": "ERROR: jq-1.8.1-r0: Connection refused",
+    "safe": "Network is unreachable while downloading packages."
+  },
+  {
+    "raw": "ERROR: less-679-r0: Operation timed out",
+    "safe": "A download connection timed out."
+  },
+  {
+    "raw": "ERROR: ripgrep-14.1.1-r1: HTTP 407: Proxy Authentication Required",
+    "safe": "The download server returned an HTTP error."
+  },
+  {
+    "raw": "ERROR: tzdata-2025b-r0: BAD signature",
+    "safe": "A downloaded package was damaged or failed its signature check."
+  },
+  {
+    "raw": "ERROR: openssh-client-default-10.0_p1-r9: unexpected end of file",
+    "safe": "A downloaded package was damaged or failed its signature check."
+  },
+  {
+    "raw": "ERROR: unable to select packages:\n  zsh (no such package):\n    required by: world[zsh]",
+    "safe": "A required package is missing from the package list."
+  },
+  {
+    "raw": "(3/40) Installing ca-certificates (20250911-r0)\n(4/40) Installing ca-certificates-bundle (20250911-r0)",
+    "safe": "Installer output was omitted because it contained no recognized safe diagnostic message."
+  },
+  {
+    "raw": "(12/40) Installing zsh (5.9-r6)\nERROR: zsh-5.9-r6: failed to extract usr/bin/zsh-5.9: Too many links\nERROR: git-2.51.0-r0: Network unreachable\nERROR: unrecognized SYNTHETIC_SECRET",
+    "safe": "Writing package files to the phone's storage failed.\nNetwork is unreachable while downloading packages.\nThe package manager reported an installation error."
   }
 ]
