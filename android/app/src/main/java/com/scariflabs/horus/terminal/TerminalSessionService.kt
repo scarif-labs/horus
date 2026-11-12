@@ -48,7 +48,7 @@ class TerminalSessionService : Service() {
   private val provisionExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "horus-toolchain-provision").apply { isDaemon = true }
   }
-  private val provisionInProgress = AtomicBoolean(false)
+  private val provisionGate = ProvisionGate<ProvisionWaiter>()
   private val provisionProcess = AtomicReference<Process?>(null)
 
   private val journal by lazy {
@@ -244,7 +244,7 @@ class TerminalSessionService : Service() {
   private fun lifecycleWork() = TerminalServiceLifecycle.Work(
     sessions = sessionRecords.isNotEmpty() ||
       (supervisorDelegate.isInitialized() && supervisor.activeSessionIds().isNotEmpty()),
-    provisioning = provisionInProgress.get(),
+    provisioning = provisionGate.busy,
     remoteAccess = remoteStore.isEnabled() || isRemoteActive(),
   )
 
@@ -653,59 +653,72 @@ class TerminalSessionService : Service() {
         return
       }
       is TerminalSessionSpecFactory.ProvisionBuildOutcome.Work -> {
-        if (!provisionInProgress.compareAndSet(false, true)) {
-          sendResponse(reply, provisionError(requestId, "install_in_progress", ProvisioningResult("not_started")))
-          return
+        when (provisionGate.admit(built.target, ProvisionWaiter(requestId, reply))) {
+          ProvisionGate.Admission.BUSY -> {
+            sendResponse(reply, provisionError(requestId, "install_in_progress", ProvisioningResult("not_started")))
+            return
+          }
+          ProvisionGate.Admission.JOINED -> {
+            TerminalDebugLog.record(this, "service_provision_joined request=$requestId target=${built.target}")
+            return
+          }
+          ProvisionGate.Admission.STARTED -> Unit
         }
         if (!retainForWork()) {
-          provisionInProgress.set(false)
-          sendResponse(reply, provisionError(requestId, "internal_error", ProvisioningResult("not_started")))
+          finishProvision { id -> provisionError(id, "internal_error", ProvisioningResult("not_started")) }
           return
         }
         syncWakeLock(true)
         try {
           provisionExecutor.execute {
             var diagnostics = ProvisioningResult("not_started")
-            val response = try {
-              if (stopping) {
-                provisionError(requestId, "internal_error", diagnostics.copy(outcome = "cancelled"))
+            var respond: (String) -> Bundle = { id -> provisionError(id, "internal_error", ProvisioningResult("not_started")) }
+            try {
+              respond = if (stopping) {
+                val cancelled = diagnostics.copy(outcome = "cancelled")
+                ({ id -> provisionError(id, "internal_error", cancelled) })
               } else {
                 val stageFile = File(built.guestHomeDir, ".cache/horus/provision-stage")
                 // Never attribute a previous attempt's stage or private log to this failure.
                 check(!stageFile.exists() || stageFile.delete())
                 val logFile = provisionLog(built.guestHomeDir, built.target)
                 val previousLog = logFile.lastModified() to logFile.length()
-                diagnostics = runBoundedProvision(built.launch, TOOLCHAIN_PROVISION_TIMEOUT_MS)
+                diagnostics = runBoundedProvision(built.launch, ProvisionGate.RUN_TIMEOUT_MS)
                 val freshTail = if (previousLog != (logFile.lastModified() to logFile.length())) readPrivateTail(logFile) else null
                 diagnostics = diagnostics.withPrivateFallback(readPrivateTail(stageFile).trim(), freshTail)
                 val ready = diagnostics.succeeded && built.launcher.hasProvisionedToolchain(
                   built.rootfsDir, built.guestHomeDir, built.target,
                 )
                 if (ready) {
-                  successResponse(requestId)
+                  ({ id -> successResponse(id) })
                 } else {
                   if (diagnostics.succeeded) diagnostics = diagnostics.copy(outcome = "incomplete")
-                  provisionError(requestId, diagnostics.errorCode(), diagnostics)
+                  val failed = diagnostics
+                  ({ id -> provisionError(id, failed.errorCode(), failed) })
                 }
               }
             } catch (_: Exception) {
-              provisionError(requestId, "internal_error", diagnostics.copy(
-                outcome = if (diagnostics.succeeded) "incomplete" else diagnostics.outcome,
-              ))
+              val failed = diagnostics.copy(outcome = if (diagnostics.succeeded) "incomplete" else diagnostics.outcome)
+              respond = { id -> provisionError(id, "internal_error", failed) }
             } finally {
-              provisionInProgress.set(false)
-              enqueueWorker { refreshSessionNotifications() }
+              finishProvision(respond)
             }
-            sendResponse(reply, response)
             if (!hasClient()) enqueueWorker { maybeStopIfIdle() }
           }
         } catch (_: RuntimeException) {
-          provisionInProgress.set(false)
-          enqueueWorker { refreshSessionNotifications() }
-          sendResponse(reply, provisionError(requestId, "internal_error", ProvisioningResult("not_started")))
+          finishProvision { id -> provisionError(id, "internal_error", ProvisioningResult("not_started")) }
         }
       }
     }
+  }
+
+  private class ProvisionWaiter(val requestId: String, val reply: Messenger)
+
+  /** Ends the install and answers everyone waiting on it with their own request id. */
+  private fun finishProvision(respond: (String) -> Bundle) {
+    val waiters = provisionGate.finish()
+    enqueueWorker { refreshSessionNotifications() }
+    waiters.forEach { waiter -> sendResponse(waiter.reply, respond(waiter.requestId)) }
   }
 
   private fun runBoundedProvision(
@@ -1197,7 +1210,7 @@ class TerminalSessionService : Service() {
     if (running.isEmpty()) {
       cancelSessionNotifications()
       notificationManager.cancel(REMOTE_NOTIFICATION_ID)
-      if (provisionInProgress.get() || work.sessions) {
+      if (provisionGate.busy || work.sessions) {
         startForeground(NOTIFICATION_ID, buildNotification())
       } else if (remoteActive) {
         startForeground(NOTIFICATION_ID, buildRemoteNotification(remoteInstalling))
@@ -1594,9 +1607,6 @@ class TerminalSessionService : Service() {
     const val DEFAULT_ROWS = 24
     const val DEFAULT_COLUMNS = 80
     const val INVALID_REQUEST_ID = "invalid-request"
-    // Debian's first tools install under PRoot can pass five minutes on a
-    // slow phone, and stopping it mid-dpkg left installs failing after.
-    const val TOOLCHAIN_PROVISION_TIMEOUT_MS = 900_000L
     const val PROVISION_STOP_WAIT_MS = 2_000L
     const val MAX_CLASSIFICATION_BYTES = 16 * 1024L
     const val LOG_TAG = "HorusTerminal"
