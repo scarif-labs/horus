@@ -255,9 +255,12 @@ tasks.register("buildHorusPtyHelper") {
     dependsOn("buildHorusPtyHelperArm64", "buildHorusPtyHelperX86_64")
 }
 
+def hostIsMac = System.getProperty("os.name").toLowerCase().contains("mac")
+
 tasks.register("buildHorusPtyHelperHost", Exec) {
     dependsOn("buildLibghosttyVtHost")
-    def ptyOutput = new File(hostPtyOutputDir, "libhorus_pty.so")
+    // System.loadLibrary looks for libhorus_pty.dylib on macOS and .so on Linux.
+    def ptyOutput = new File(hostPtyOutputDir, System.mapLibraryName("horus_pty"))
     def libghosttyA = new File(libghosttyGeneratedDir, "host/lib/libghostty-vt.a")
     def javaHomeDir = resolveJavaHome()
     inputs.file(ptyHelperSource)
@@ -275,7 +278,7 @@ tasks.register("buildHorusPtyHelperHost", Exec) {
             "-shared",
             "-I${libghosttyIncludeDir.absolutePath}",
             "-I${new File(javaHomeDir, "include").absolutePath}",
-            "-I${new File(javaHomeDir, "include/linux").absolutePath}",
+            "-I${new File(javaHomeDir, hostIsMac ? "include/darwin" : "include/linux").absolutePath}",
             ptyHelperSource.absolutePath,
             libghosttyA.absolutePath,
             "-o",

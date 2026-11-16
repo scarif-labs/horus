@@ -7,7 +7,7 @@
 # Targets:
 #   arm64-v8a | aarch64-linux-android : Android ARM64
 #   x86_64    | x86_64-linux-android  : Android x86_64
-#   host      | linux-x86_64          : Host system (for local JVM unit tests)
+#   host      | linux-x86_64          : Host system, Linux or macOS (for local JVM unit tests)
 #   all                               : Build all supported targets
 #
 # Follows the official libghostty-vt packaging specifications:
@@ -48,7 +48,12 @@ verify_sha256() {
     return 1
   fi
   local actual
-  actual=$(sha256sum "$file" | awk '{print $1}')
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$file" | awk '{print $1}')
+  else
+    # macOS ships shasum instead of sha256sum.
+    actual=$(shasum -a 256 "$file" | awk '{print $1}')
+  fi
   [ "$actual" = "$expected" ]
 }
 
@@ -79,9 +84,11 @@ build_target() {
 
   echo "=== Building libghostty-vt for $arch ($zig_target) ==="
   local work_dir
-  work_dir=$(mktemp -d -t "ghostty-build-${arch}-XXXXXX")
+  # Resolve symlinks (macOS temp dirs live under /var -> /private/var), or
+  # zig cannot find the build tools it runs from its relative cache paths.
+  work_dir=$(cd "$(mktemp -d -t "ghostty-build-${arch}-XXXXXX")" && pwd -P)
   local cache_dir
-  cache_dir=$(mktemp -d -t "ghostty-cache-${arch}-XXXXXX")
+  cache_dir=$(cd "$(mktemp -d -t "ghostty-cache-${arch}-XXXXXX")" && pwd -P)
 
   trap 'rm -rf "$work_dir" "$cache_dir"' EXIT
 
