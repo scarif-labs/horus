@@ -102,10 +102,8 @@ internal object NativeTerminalLinks {
 
   /** Returns the URL covering ([row], [column]), checking OSC 8 hyperlinks before text detection. */
   fun urlAt(engine: NativeTerminalEngine, row: Int, column: Int): String? {
-    if (engine.nativeHandle != 0L) {
-      val link = TerminalPtyJni.nativeEngineGetHyperlink(engine.nativeHandle, column, row)
-      if (!link.isNullOrEmpty()) return link
-    }
+    val link = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineGetHyperlink(h, column, row) }
+    if (!link.isNullOrEmpty()) return link
     return urlAt(engine.currentFrame().lines, row, column)
   }
 

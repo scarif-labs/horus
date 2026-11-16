@@ -145,8 +145,13 @@ internal class NativeTerminalEngine(
     )
   }
 
-  val nativeHandle: Long
-    get() = (delegate as? LibghosttyTerminalBackend)?.nativeHandle ?: 0L
+  /**
+   * Runs [block] with the live libghostty handle, or returns null when this
+   * session uses the legacy engine or is closed. The handle cannot be freed
+   * while [block] runs.
+   */
+  internal fun <T> withNativeHandle(block: (Long) -> T): T? =
+    (delegate as? LibghosttyTerminalBackend)?.withHandle(block)
 
   override val bracketedPaste: Boolean get() = delegate.bracketedPaste
   override val defaultBackground: Int get() = delegate.defaultBackground
@@ -235,6 +240,7 @@ internal class LibghosttyTerminalBackend(
     private const val NATIVE_FRAME_BATCH_NANOS = 16_000_000L
     private const val NATIVE_FRAME_QUIET_NANOS = 3_000_000L
     private const val SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS = 150_000_000L
+    private const val MAX_RENDER_BUFFER_GROWTHS = 4
   }
 
   override val defaultBackground: Int get() = NativeTerminalEngine.DEFAULT_BACKGROUND
@@ -247,8 +253,9 @@ internal class LibghosttyTerminalBackend(
 
   private data class RowKey(val b0: Long, val b1: Long)
 
-  var nativeHandle: Long = 0L
-    private set
+  /** Guards [nativeHandle]: every native call and the final destroy hold it. */
+  private val nativeLock = Any()
+  private var nativeHandle: Long = 0L
 
   private val commands = ArrayBlockingQueue<Command>(1024)
   private val closed = AtomicBoolean(false)
@@ -326,11 +333,19 @@ internal class LibghosttyTerminalBackend(
     commands.clear()
     parserThread.interrupt()
     listeners.clear()
-    val h = nativeHandle
-    nativeHandle = 0L
-    if (h != 0L) {
-      TerminalPtyJni.nativeEngineDestroy(h)
+    // The parser thread may be inside a native call; wait for it before freeing.
+    synchronized(nativeLock) {
+      val h = nativeHandle
+      nativeHandle = 0L
+      if (h != 0L) {
+        TerminalPtyJni.nativeEngineDestroy(h)
+      }
     }
+  }
+
+  internal fun <T> withHandle(block: (Long) -> T): T? = synchronized(nativeLock) {
+    val h = nativeHandle
+    if (h == 0L) null else block(h)
   }
 
   private fun parseLoop() {
@@ -375,16 +390,18 @@ internal class LibghosttyTerminalBackend(
         if (command.seq != lastAppliedSeq + 1L) recoverFromOutputGap()
         val readyBytes = prepareUtf8Bytes(command.bytes)
         if (readyBytes.isNotEmpty()) {
-          val reply = TerminalPtyJni.nativeEngineFeed(nativeHandle, readyBytes, 0, readyBytes.size)
+          val (reply, clip) = withHandle { h ->
+            TerminalPtyJni.nativeEngineFeed(h, readyBytes, 0, readyBytes.size) to
+              TerminalPtyJni.nativeEnginePollClipboard(h)
+          } ?: return
           if (reply != null && reply.isNotEmpty()) {
             runCatching { inputWriter(sessionId, reply) }
           }
-          val clip = TerminalPtyJni.nativeEnginePollClipboard(nativeHandle)
           if (clip != null && clip.isNotEmpty()) {
             runCatching { clipboardWriter(clip) }
           }
         }
-        val syncNow = TerminalPtyJni.nativeEngineIsSynchronizedOutput(nativeHandle)
+        val syncNow = withHandle(TerminalPtyJni::nativeEngineIsSynchronizedOutput) ?: return
         if (syncNow && !synchronizedOutput) {
           synchronizedOutputStartedAt = System.nanoTime()
         }
@@ -417,10 +434,8 @@ internal class LibghosttyTerminalBackend(
   private fun isContinuation(value: Byte): Boolean = value.toInt() and 0xc0 == 0x80
 
   override fun recoverFromOutputGap() {
-    if (nativeHandle != 0L) {
-      val resetBytes = "\u0018\u001b[!p\u001b[m".toByteArray(StandardCharsets.UTF_8)
-      TerminalPtyJni.nativeEngineFeed(nativeHandle, resetBytes, 0, resetBytes.size)
-    }
+    val resetBytes = "\u0018\u001b[!p\u001b[m".toByteArray(StandardCharsets.UTF_8)
+    withHandle { h -> TerminalPtyJni.nativeEngineFeed(h, resetBytes, 0, resetBytes.size) }
     synchronizedOutput = false
     utf8Tail = ByteArray(0)
     normalRowCache.clear()
@@ -429,9 +444,7 @@ internal class LibghosttyTerminalBackend(
   }
 
   private fun resizeNow(newRows: Int, newColumns: Int) {
-    if (nativeHandle != 0L) {
-      TerminalPtyJni.nativeEngineResize(nativeHandle, newColumns, newRows, 0, 0)
-    }
+    withHandle { h -> TerminalPtyJni.nativeEngineResize(h, newColumns, newRows, 0, 0) }
   }
 
   private fun publish() {
@@ -440,16 +453,19 @@ internal class LibghosttyTerminalBackend(
   }
 
   private fun syncRender(): Frame {
-    if (nativeHandle == 0L) return createEmptyFrame()
-
-    var res = TerminalPtyJni.nativeEngineSyncRender(nativeHandle, renderBuffer)
-    if (res?.getOrNull(0) == -1) {
+    var res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer) }
+      ?: return createEmptyFrame()
+    // Long graphemes can outgrow the native size estimate, so allow a few doublings.
+    var attempts = 0
+    while (res.getOrNull(0) == -1 && attempts < MAX_RENDER_BUFFER_GROWTHS) {
       val needed = res[1]
       val nextCap = maxOf(needed, renderBuffer.capacity() * 2)
       renderBuffer = ByteBuffer.allocateDirect(nextCap).order(ByteOrder.LITTLE_ENDIAN)
-      res = TerminalPtyJni.nativeEngineSyncRender(nativeHandle, renderBuffer)
+      res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer) }
+        ?: return createEmptyFrame()
+      attempts += 1
     }
-    if (res == null || res[0] != 0) {
+    if (res[0] != 0) {
       return runCatching { publishedFrame }.getOrNull() ?: createEmptyFrame()
     }
 

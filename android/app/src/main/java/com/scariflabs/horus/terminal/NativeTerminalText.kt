@@ -11,13 +11,11 @@ internal object NativeTerminalText {
    * [libghostty-vt] if engine is available, falling back to frame line extraction.
    */
   fun from(engine: NativeTerminalEngine, unwrap: Boolean = true, trim: Boolean = true): NativeTerminalTextSnapshot {
-    if (engine.nativeHandle != 0L) {
-      val text = TerminalPtyJni.nativeEngineGetFormattedText(engine.nativeHandle, unwrap, trim)
-      if (text != null) {
-        val truncated = text.length > MAX_CHARACTERS
-        val bounded = if (truncated) text.takeLast(MAX_CHARACTERS) else text
-        return NativeTerminalTextSnapshot(bounded, truncated)
-      }
+    val text = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineGetFormattedText(h, unwrap, trim) }
+    if (text != null) {
+      val truncated = text.length > MAX_CHARACTERS
+      val bounded = if (truncated) text.takeLast(MAX_CHARACTERS) else text
+      return NativeTerminalTextSnapshot(bounded, truncated)
     }
     return from(engine.currentFrame().lines)
   }

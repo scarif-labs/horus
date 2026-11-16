@@ -20,7 +20,11 @@
 #include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
+#if defined(__APPLE__)
+#include <util.h>
+#else
 #include <pty.h>
+#endif
 #include <poll.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -509,7 +513,111 @@ typedef struct {
   size_t reply_len;
   char *clipboard_data;
   size_t clipboard_len;
+  /* Scrollback rows placed before the viewport in the last rendered frame. */
+  uint32_t frame_overscan_above;
 } SessionEngine;
+
+/* Longest grapheme text stored for one cell; the frame keeps the length in a byte. */
+#define HORUS_MAX_CELL_TEXT 255
+
+/*
+ * JNI's GetStringUTFChars returns modified UTF-8, which encodes characters
+ * outside the BMP as two 3-byte surrogates. libghostty expects standard
+ * UTF-8, so encode from the UTF-16 chars instead. The caller frees the result.
+ */
+static uint8_t *jstring_to_utf8(JNIEnv *env, jstring text, size_t *out_len) {
+  jsize len = (*env)->GetStringLength(env, text);
+  const jchar *chars = (*env)->GetStringChars(env, text, NULL);
+  if (!chars) return NULL;
+  uint8_t *out = (uint8_t *)malloc((size_t)len * 3 + 1);
+  if (!out) {
+    (*env)->ReleaseStringChars(env, text, chars);
+    return NULL;
+  }
+  size_t n = 0;
+  for (jsize i = 0; i < len; i++) {
+    uint32_t cp = chars[i];
+    if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < len && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF) {
+      cp = 0x10000 + ((cp - 0xD800) << 10) + ((uint32_t)chars[i + 1] - 0xDC00);
+      i++;
+    } else if (cp >= 0xD800 && cp <= 0xDFFF) {
+      cp = 0xFFFD;
+    }
+    if (cp < 0x80) {
+      out[n++] = (uint8_t)cp;
+    } else if (cp < 0x800) {
+      out[n++] = (uint8_t)(0xC0 | (cp >> 6));
+      out[n++] = (uint8_t)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+      out[n++] = (uint8_t)(0xE0 | (cp >> 12));
+      out[n++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+      out[n++] = (uint8_t)(0x80 | (cp & 0x3F));
+    } else {
+      out[n++] = (uint8_t)(0xF0 | (cp >> 18));
+      out[n++] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+      out[n++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+      out[n++] = (uint8_t)(0x80 | (cp & 0x3F));
+    }
+  }
+  (*env)->ReleaseStringChars(env, text, chars);
+  out[n] = '\0';
+  *out_len = n;
+  return out;
+}
+
+/*
+ * Builds a Java string from standard UTF-8 that need not be NUL-terminated.
+ * NewStringUTF needs modified UTF-8 and a terminator, so decode to UTF-16
+ * here. Invalid sequences become U+FFFD.
+ */
+static jstring utf8_to_jstring(JNIEnv *env, const uint8_t *s, size_t len) {
+  jchar *out = (jchar *)malloc((len > 0 ? len : 1) * sizeof(jchar));
+  if (!out) return NULL;
+  size_t n = 0;
+  size_t i = 0;
+  while (i < len) {
+    uint8_t b = s[i];
+    uint32_t cp;
+    size_t need;
+    uint32_t min;
+    if (b < 0x80) {
+      out[n++] = b;
+      i++;
+      continue;
+    } else if ((b & 0xE0) == 0xC0) {
+      cp = b & 0x1F; need = 1; min = 0x80;
+    } else if ((b & 0xF0) == 0xE0) {
+      cp = b & 0x0F; need = 2; min = 0x800;
+    } else if ((b & 0xF8) == 0xF0) {
+      cp = b & 0x07; need = 3; min = 0x10000;
+    } else {
+      out[n++] = 0xFFFD;
+      i++;
+      continue;
+    }
+    bool valid = len - i > need;
+    for (size_t k = 1; valid && k <= need; k++) {
+      if ((s[i + k] & 0xC0) != 0x80) valid = false;
+      else cp = (cp << 6) | (s[i + k] & 0x3F);
+    }
+    if (!valid || cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+      out[n++] = 0xFFFD;
+      i++;
+      continue;
+    }
+    if (cp >= 0x10000) {
+      cp -= 0x10000;
+      out[n++] = (jchar)(0xD800 + (cp >> 10));
+      out[n++] = (jchar)(0xDC00 + (cp & 0x3FF));
+    } else {
+      out[n++] = (jchar)cp;
+    }
+    i += need + 1;
+  }
+  jstring result = (*env)->NewString(env, out, (jsize)n);
+  free(out);
+  return result;
+}
 
 static void on_write_pty(GhosttyTerminal term, void *userdata, const uint8_t *data, size_t len) {
   (void)term;
@@ -918,8 +1026,11 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
   int32_t has_visible_content = 0;
   bool prev_row_had_spacer_head = false;
   int32_t rows_written = 0;
+  /* The estimate above allows 16 bytes of text per cell; long graphemes can need more. */
+  bool out_of_space = false;
+  bool full_redraw = dirty_mode == GHOSTTY_RENDER_STATE_DIRTY_FULL;
 
-  for (int32_t r = 0; r < total_rows; r++) {
+  for (int32_t r = 0; r < total_rows && !out_of_space; r++) {
     bool has_next = ghostty_render_state_row_iterator_next(engine->row_it);
     if (!has_next) break;
 
@@ -948,6 +1059,10 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     size_t text_data_offset = cell_data_offset + (size_t)cols * 12;
     size_t text_written = 0;
     bool row_has_visible = false;
+    if (text_data_offset > (size_t)cap) {
+      out_of_space = true;
+      break;
+    }
 
     for (uint16_t c = 0; c < cols; c++) {
       ghostty_render_state_row_cells_select(engine->row_cells, c);
@@ -971,19 +1086,43 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
         cell_width = 1;
       }
 
-      uint8_t utf8_cell[64];
+      uint8_t utf8_cell[HORUS_MAX_CELL_TEXT + 1];
+      uint8_t *heap_cell = NULL;
       GhosttyBuffer gb = { .ptr = utf8_cell, .cap = sizeof(utf8_cell), .len = 0 };
-      ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &gb);
+      GhosttyResult gr = ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &gb);
+      if (gr == GHOSTTY_OUT_OF_SPACE && gb.len > sizeof(utf8_cell)) {
+        /* On OUT_OF_SPACE nothing was written and len holds the size needed. */
+        heap_cell = (uint8_t *)malloc(gb.len);
+        if (heap_cell) {
+          gb.ptr = heap_cell;
+          gb.cap = gb.len;
+          gb.len = 0;
+          gr = ghostty_render_state_row_cells_get(engine->row_cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &gb);
+        }
+      }
+      size_t cell_text_len = gr == GHOSTTY_SUCCESS ? gb.len : 0;
+      if (cell_text_len > HORUS_MAX_CELL_TEXT) {
+        /* Keep the base character and as many marks as fit, ending on a whole code point. */
+        cell_text_len = HORUS_MAX_CELL_TEXT;
+        while (cell_text_len > 0 && (gb.ptr[cell_text_len] & 0xC0) == 0x80) cell_text_len--;
+      }
+      if (text_data_offset + text_written + (cell_text_len > 0 ? cell_text_len : 1) > (size_t)cap) {
+        free(heap_cell);
+        out_of_space = true;
+        break;
+      }
 
       uint8_t text_len = 0;
-      if (gb.len > 0) {
-        text_len = (uint8_t)gb.len;
-        memcpy(buf + text_data_offset + text_written, gb.ptr, gb.len);
-        text_written += gb.len;
-        if (gb.len != 1 || gb.ptr[0] != ' ') {
+      if (cell_text_len > 0) {
+        text_len = (uint8_t)cell_text_len;
+        memcpy(buf + text_data_offset + text_written, gb.ptr, cell_text_len);
+        text_written += cell_text_len;
+        if (cell_text_len != 1 || gb.ptr[0] != ' ') {
           row_has_visible = true;
         }
+        free(heap_cell);
       } else {
+        free(heap_cell);
         if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL) {
           text_len = 0;
         } else {
@@ -1028,6 +1167,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
       memcpy(cell_ptr + 4, &fg_argb, 4);
       memcpy(cell_ptr + 8, &bg_argb, 4);
     }
+    if (out_of_space) break;
 
     if (row_has_visible) {
       last_content_row = rows_written;
@@ -1037,7 +1177,8 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     /* Write 32-byte Row Table Entry */
     memcpy(row_entry, &row_id.bits[0], 8);
     memcpy(row_entry + 8, &row_id.bits[1], 8);
-    uint8_t dirty_byte = row_dirty ? 1 : 0;
+    /* A full redraw leaves row flags clean, but colors baked into cells may have changed. */
+    uint8_t dirty_byte = (row_dirty || full_redraw) ? 1 : 0;
     uint8_t wrap_byte = wrapped ? 1 : 0;
     uint8_t pad_byte = wrap_padding ? 1 : 0;
     uint8_t vis_byte = row_has_visible ? 1 : 0;
@@ -1058,6 +1199,18 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
     current_data_offset = (current_data_offset + 3) & ~((size_t)3);
     rows_written++;
   }
+
+  if (out_of_space) {
+    /* The render state stays dirty, so a retry with a larger buffer sees the same rows. */
+    pthread_mutex_unlock(&engine->lock);
+    size_t grown = (size_t)cap * 2;
+    jint needed = grown > (size_t)INT32_MAX ? INT32_MAX : (jint)grown;
+    jintArray err = (*env)->NewIntArray(env, 4);
+    jint vals[4] = {-1, needed, total_rows, (jint)dirty_mode};
+    (*env)->SetIntArrayRegion(env, err, 0, 4, vals);
+    return err;
+  }
+  engine->frame_overscan_above = overscan.above;
 
   int32_t cursor_row = 0;
   int32_t cursor_col = 0;
@@ -1135,12 +1288,14 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKey(
   ghostty_key_event_set_mods(event, (GhosttyMods)mods);
   ghostty_key_event_set_action(event, (GhosttyKeyAction)action);
 
+  /* The event does not copy its text, so keep the bytes until encoding is done. */
+  uint8_t *utf = NULL;
   if (text) {
-    const char *utf = (*env)->GetStringUTFChars(env, text, NULL);
+    size_t utf_len = 0;
+    utf = jstring_to_utf8(env, text, &utf_len);
     if (utf) {
-      GhosttyString gstr = { .ptr = (const uint8_t *)utf, .len = strlen(utf) };
+      GhosttyString gstr = { .ptr = utf, .len = utf_len };
       ghostty_key_event_set_utf8(event, gstr);
-      (*env)->ReleaseStringUTFChars(env, text, utf);
     }
   }
 
@@ -1148,6 +1303,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKey(
   size_t written = 0;
   GhosttyResult res = ghostty_key_encoder_encode(engine->key_encoder, event, buf, sizeof(buf), &written);
   ghostty_key_event_free(event);
+  free(utf);
 
   jbyteArray result = NULL;
   if (res == GHOSTTY_SUCCESS && written > 0) {
@@ -1206,18 +1362,15 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodePaste(
   SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
   if (!engine || !text) return NULL;
 
-  const char *utf = (*env)->GetStringUTFChars(env, text, NULL);
-  if (!utf) return NULL;
+  size_t text_len = 0;
+  char *copy_text = (char *)jstring_to_utf8(env, text, &text_len);
+  if (!copy_text) return NULL;
 
-  size_t text_len = strlen(utf);
   pthread_mutex_lock(&engine->lock);
 
   GhosttyTerminalModeConfig paste_cfg = { .mode = GHOSTTY_MODE_BRACKETED_PASTE, .value = false };
   ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE, &paste_cfg);
   bool bracketed = paste_cfg.value;
-
-  char *copy_text = strdup(utf);
-  (*env)->ReleaseStringUTFChars(env, text, utf);
 
   size_t needed = 0;
   ghostty_paste_encode(copy_text, text_len, bracketed, NULL, 0, &needed);
@@ -1264,7 +1417,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetFormattedText(
   size_t out_len = 0;
   jstring result = NULL;
   if (ghostty_formatter_format_alloc(formatter, &g_tracking_allocator, &out_buf, &out_len) == GHOSTTY_SUCCESS && out_buf) {
-    result = (*env)->NewStringUTF(env, (const char *)out_buf);
+    result = utf8_to_jstring(env, out_buf, out_len);
     ghostty_free(&g_tracking_allocator, out_buf, out_len);
   }
   ghostty_formatter_free(formatter);
@@ -1280,21 +1433,38 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineGetHyperlink(
   if (!engine || col < 0 || row < 0) return NULL;
 
   pthread_mutex_lock(&engine->lock);
-  GhosttyPoint point = {
-      .tag = GHOSTTY_POINT_TAG_ACTIVE,
-      .value = { .coordinate = { .x = (uint16_t)col, .y = (uint16_t)row } },
-  };
+  /*
+   * [row] indexes the last rendered frame, which lists overscan scrollback
+   * rows before the viewport. Viewport rows map directly; scrollback rows
+   * are addressed on the full screen, assuming the viewport is at the bottom.
+   */
+  GhosttyPoint point;
+  uint32_t above = engine->frame_overscan_above;
+  if ((uint32_t)row >= above) {
+    point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+    point.value.coordinate.x = (uint16_t)col;
+    point.value.coordinate.y = (uint32_t)row - above;
+  } else {
+    size_t scrollback = 0;
+    ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS, &scrollback);
+    if (scrollback + (size_t)row < above) {
+      pthread_mutex_unlock(&engine->lock);
+      return NULL;
+    }
+    point.tag = GHOSTTY_POINT_TAG_SCREEN;
+    point.value.coordinate.x = (uint16_t)col;
+    point.value.coordinate.y = (uint32_t)(scrollback + (size_t)row - above);
+  }
   GhosttyGridRef ref = {0};
   jstring result = NULL;
   if (ghostty_terminal_grid_ref(engine->terminal, point, &ref) == GHOSTTY_SUCCESS) {
     size_t needed = 0;
     if (ghostty_grid_ref_hyperlink_uri(&ref, NULL, 0, &needed) == GHOSTTY_OUT_OF_SPACE && needed > 0) {
-      uint8_t *uri_buf = (uint8_t *)malloc(needed + 1);
+      uint8_t *uri_buf = (uint8_t *)malloc(needed);
       if (uri_buf) {
         size_t written = 0;
         if (ghostty_grid_ref_hyperlink_uri(&ref, uri_buf, needed, &written) == GHOSTTY_SUCCESS) {
-          uri_buf[written] = '\0';
-          result = (*env)->NewStringUTF(env, (const char *)uri_buf);
+          result = utf8_to_jstring(env, uri_buf, written);
         }
         free(uri_buf);
       }
