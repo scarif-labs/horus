@@ -80,7 +80,13 @@ class TerminalSessionSettings(
     val temporary = File(parent, ".${file.name}.tmp")
     if (Files.isSymbolicLink(temporary.toPath())) return false
     return runCatching {
-      temporary.writeText(JSONObject().put(KEY_LIMIT, limit).toString(), Charsets.UTF_8)
+      // Keep other keys such as the engine backend.
+      val json = if (file.isFile) {
+        runCatching { JSONObject(file.readText(Charsets.UTF_8)) }.getOrDefault(JSONObject())
+      } else {
+        JSONObject()
+      }
+      temporary.writeText(json.put(KEY_LIMIT, limit).toString(), Charsets.UTF_8)
       if (!temporary.renameTo(file)) {
         temporary.delete()
         false
