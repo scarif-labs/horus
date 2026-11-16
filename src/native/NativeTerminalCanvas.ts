@@ -1,5 +1,6 @@
 import {requireNativeComponent, type ViewProps} from 'react-native';
 import type {TerminalFrame} from '../terminal/terminalBuffer';
+import type {TerminalSelectionRange} from './NativeTerminalRuntime';
 
 export type NativeTerminalLinkRange = Readonly<{
   row: number;
@@ -32,6 +33,8 @@ export type NativeTerminalCanvasProps = ViewProps & Readonly<{
   fontSize: number;
   links: readonly NativeTerminalLinkRange[];
   running: boolean;
+  /** Selected cells of the frozen native frame, drawn over the text. */
+  selection?: TerminalSelectionRange | null;
   onNativeFrameMeta?: (event: {nativeEvent: NativeTerminalFrameMeta}) => void;
 }>;
 

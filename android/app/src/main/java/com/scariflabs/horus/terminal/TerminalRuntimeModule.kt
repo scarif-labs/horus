@@ -1370,6 +1370,75 @@ class TerminalRuntimeModule(
     })
   }
 
+  override fun beginTerminalSelection(sessionId: String, row: Double, column: Double, promise: Promise) {
+    if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId) ||
+      !row.isFinite() || !column.isFinite() || row < 0.0 || column < 0.0
+    ) {
+      promise.resolve(null)
+      return
+    }
+    val engine = NativeTerminalEngineRegistry.get(sessionId)
+    if (engine == null) {
+      promise.resolve(null)
+      return
+    }
+    val frame = engine.beginSelection()
+    val word = NativeTerminalSelection.wordAt(frame.lines, row.toInt(), column.toInt())
+    if (word == null) {
+      engine.endSelection()
+      promise.resolve(null)
+      return
+    }
+    promise.resolve(Arguments.createMap().apply {
+      putMap("word", Arguments.createMap().apply {
+        putInt("startRow", word.startRow)
+        putInt("startColumn", word.startColumn)
+        putInt("endRow", word.endRow)
+        putInt("endColumn", word.endColumn)
+      })
+      putInt("contentRows", frame.lines.size)
+      putInt("columns", frame.columns)
+    })
+  }
+
+  override fun copyTerminalSelection(
+    sessionId: String,
+    startRow: Double,
+    startColumn: Double,
+    endRow: Double,
+    endColumn: Double,
+    promise: Promise,
+  ) {
+    val frame = NativeTerminalEngineRegistry.get(sessionId)?.selectionFrame
+    val values = listOf(startRow, startColumn, endRow, endColumn)
+    if (isInvalidated() || frame == null || values.any { !it.isFinite() || it < 0.0 }) {
+      promise.resolve(0)
+      return
+    }
+    val range = NativeTerminalSelectionRange(startRow.toInt(), startColumn.toInt(), endRow.toInt(), endColumn.toInt())
+    val text = NativeTerminalSelection.text(frame.lines, range).text
+    if (text.isEmpty()) {
+      promise.resolve(0)
+      return
+    }
+    android.os.Handler(android.os.Looper.getMainLooper()).post {
+      val copied = runCatching {
+        val clipboard = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Terminal", text))
+        // Android 13+ shows its own copied-text preview.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+          android.widget.Toast.makeText(appContext, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+        }
+      }.isSuccess
+      promise.resolve(if (copied) text.length else 0)
+    }
+  }
+
+  override fun endTerminalSelection(sessionId: String, promise: Promise) {
+    NativeTerminalEngineRegistry.get(sessionId)?.endSelection()
+    promise.resolve(true)
+  }
+
   /**
    * Keeps the text of a native session's last screen once it exits, so the
    * app can show why it quit. Held in memory only, for a few sessions, until

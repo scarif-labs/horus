@@ -17,6 +17,11 @@ class TerminalCanvasViewManager : SimpleViewManager<TerminalCanvasView>() {
     view.setFrame(frame)
   }
 
+  @ReactProp(name = "selection")
+  fun setSelection(view: TerminalCanvasView, value: ReadableMap?) {
+    view.setSelection(value)
+  }
+
   @ReactProp(name = "sessionId")
   fun setSessionId(view: TerminalCanvasView, value: String?) {
     view.setNativeSessionId(value)

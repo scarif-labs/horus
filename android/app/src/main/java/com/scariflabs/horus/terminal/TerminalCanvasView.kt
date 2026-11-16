@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewTreeObserver
 import com.facebook.react.bridge.Arguments
@@ -138,6 +139,7 @@ class TerminalCanvasView(context: Context) : View(context) {
   private var nativeCursorLastRow = -1
   private var nativeCursorLastColumn = -1
   private var loadingSweep = 0f
+  private var selection: NativeTerminalSelectionRange? = null
 
   init {
     setWillNotDraw(false)
@@ -237,6 +239,22 @@ class TerminalCanvasView(context: Context) : View(context) {
     }
   }
 
+  /** The selected range in frame rows/columns, or null. Drawn over the text. */
+  fun setSelection(value: ReadableMap?) {
+    val next = value?.let {
+      val startRow = it.getIntOrNull("startRow") ?: return@let null
+      val startColumn = it.getIntOrNull("startColumn") ?: return@let null
+      val endRow = it.getIntOrNull("endRow") ?: return@let null
+      val endColumn = it.getIntOrNull("endColumn") ?: return@let null
+      if (startRow < 0 || startColumn < 0 || endRow < startRow) return@let null
+      NativeTerminalSelectionRange(startRow, startColumn, endRow, endColumn)
+    }
+    if (next == selection) return
+    if (selection == null && next != null) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    selection = next
+    invalidate()
+  }
+
   fun setRunning(value: Boolean) {
     running = value
     invalidate()
@@ -264,7 +282,7 @@ class TerminalCanvasView(context: Context) : View(context) {
     if (!cellWidth.isFinite() || !cellHeight.isFinite() || cellWidth <= 0f || cellHeight <= 0f) return
 
     paint.textSize = fontSizeDp * density
-    val currentNativeFrame = nativeEngine?.currentFrame()
+    val currentNativeFrame = nativeEngine?.displayFrame()
     if (currentNativeFrame != null) {
       notifyNativeFrameMeta(currentNativeFrame)
       val loadingText = nativeLoadingText
@@ -466,6 +484,27 @@ class TerminalCanvasView(context: Context) : View(context) {
       val rowTop = row * cellHeight
       val links = NativeTerminalLinks.rowLinks(frame.lines, row, wrappedLinkCache)
       drawNativeLine(canvas, frame.lines[row], links, frame.columns, cellWidth, cellHeight, rowTop, rowTop + baselineOffset)
+    }
+    selection?.let { drawSelection(canvas, it, frame, firstRow, lastRow, cellWidth, cellHeight) }
+  }
+
+  /** Tints the selected cells over the drawn text, one rect per row. */
+  private fun drawSelection(
+    canvas: Canvas,
+    range: NativeTerminalSelectionRange,
+    frame: NativeTerminalEngine.Frame,
+    firstRow: Int,
+    lastRow: Int,
+    cellWidth: Float,
+    cellHeight: Float,
+  ) {
+    paint.style = Paint.Style.FILL
+    paint.color = SELECTION_COLOR
+    for (row in max(firstRow, range.startRow)..min(lastRow - 1, range.endRow)) {
+      val start = if (row == range.startRow) range.startColumn else 0
+      val end = if (row == range.endRow) range.endColumn else frame.columns
+      if (end <= start) continue
+      canvas.drawRect(start * cellWidth, row * cellHeight, end * cellWidth, (row + 1) * cellHeight, paint)
     }
   }
 
@@ -751,6 +790,8 @@ class TerminalCanvasView(context: Context) : View(context) {
     const val NATIVE_CURSOR_HIDE_GRACE_MS = 120L
     const val SYMBOLS_FONT_ASSET = "fonts/TerminalSymbols.ttf"
     const val CURSOR_COLOR = 0x73F2F4F5
+    /** Brand green (#80EB12) at about 35% so the text stays readable. */
+    const val SELECTION_COLOR = 0x5980EB12
     const val NATIVE_STYLE_FLAGS = NativeTerminalEngine.FLAG_BOLD or NativeTerminalEngine.FLAG_ITALIC or
       NativeTerminalEngine.FLAG_DIM or NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH
     const val NATIVE_LINE_FLAGS = NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH

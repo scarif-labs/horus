@@ -1,8 +1,13 @@
 import React from 'react';
-import {FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent, type NativeTouchEvent} from 'react-native';
+import {BackHandler, FlatList, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent, type NativeTouchEvent} from 'react-native';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {NativeTerminalCanvas, type NativeTerminalFrameMeta, type NativeTerminalLinkRange} from '../native/NativeTerminalCanvas';
 import nativeTerminalRuntime from '../native/NativeTerminalRuntime';
+import {
+  extendTerminalSelection, sameTerminalSelection, selectAllTerminal, terminalCellAt,
+  terminalSelectionBetween, terminalSelectionFixedCell,
+  type TerminalCellPoint, type TerminalSelectionRange,
+} from './terminalSelection';
 import {
   TERMINAL_BACKGROUND, TERMINAL_FOREGROUND,
   type TerminalCell, type TerminalFrame, type TerminalRow,
@@ -22,6 +27,9 @@ const SWIPE_REPEAT_INTERVAL_MS = 120;
 const MOUSE_WHEEL_DISTANCE = 24;
 const MOUSE_WHEEL_INTERVAL_MS = 32;
 const ASCII_CELL_TEXT = /^[\x20-\x7e]+$/;
+const LONG_PRESS_MS = 450;
+const SELECTION_HANDLE_SIZE = 22;
+const SELECTION_HANDLE_SLOP = {top: 12, bottom: 12, left: 12, right: 12};
 
 /**
  * Scroll offset that shows the end of the normal-buffer output. The grid keeps
@@ -96,7 +104,59 @@ type TerminalTouch = Pick<NativeTouchEvent, 'identifier' | 'pageX' | 'pageY'> & 
   lastPageAt: number;
   mouseTrackingMode: TerminalFrame['mouseTrackingMode'];
   mouseEncoding: TerminalFrame['mouseEncoding'];
+  /** A long press started a selection; moves extend it instead of scrolling. */
+  selecting: boolean;
 };
+
+/** A selection on a frozen native frame; [anchor] is the long-pressed word. */
+type ActiveSelection = Readonly<{
+  range: TerminalSelectionRange;
+  anchor: TerminalSelectionRange;
+  contentRows: number;
+  columns: number;
+}>;
+
+type SelectionHandleProps = Readonly<{
+  edge: 'start' | 'end';
+  /** Where the handle's stem meets the text, in content coordinates. */
+  left: number;
+  top: number;
+  /** Centre of the cell the handle marks, in content coordinates. */
+  cellX: number;
+  cellY: number;
+  onDragStart: (edge: 'start' | 'end') => void;
+  onDrag: (x: number, y: number) => void;
+}>;
+
+/**
+ * A draggable selection handle under the first or last selected cell. It
+ * claims the touch from the ScrollView so dragging it never scrolls.
+ */
+const SelectionHandle = React.memo(function SelectionHandleView({edge, left, top, cellX, cellY, onDragStart, onDrag}: SelectionHandleProps): React.JSX.Element {
+  const latest = React.useRef({edge, cellX, cellY, onDragStart, onDrag});
+  latest.current = {edge, cellX, cellY, onDragStart, onDrag};
+  const origin = React.useRef({x: 0, y: 0});
+  const responder = React.useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      origin.current = {x: latest.current.cellX, y: latest.current.cellY};
+      latest.current.onDragStart(latest.current.edge);
+    },
+    onPanResponderMove: (_, gesture) => latest.current.onDrag(origin.current.x + gesture.dx, origin.current.y + gesture.dy),
+  }), []);
+  return (
+    <View
+      {...responder.panHandlers}
+      hitSlop={SELECTION_HANDLE_SLOP}
+      onTouchStart={event => event.stopPropagation()}
+      onTouchEnd={event => event.stopPropagation()}
+      style={[styles.selectionHandle, edge === 'start' ? styles.selectionHandleStart : styles.selectionHandleEnd, {left: edge === 'start' ? left - SELECTION_HANDLE_SIZE : left, top}]}
+      testID={`terminal-selection-handle-${edge}`}
+    />
+  );
+});
 
 export type NativeScreenState = Readonly<{hasContent: boolean; alternate: boolean; mouseTracking: boolean}>;
 
@@ -330,6 +390,15 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const nativeRowsRef = React.useRef(nativeRows);
   nativeRowsRef.current = nativeRows;
   const touchStart = React.useRef<TerminalTouch | null>(null);
+  // Long-press selection. The native engine freezes the frame it shows while
+  // a selection exists, so row numbers stay put while output keeps arriving.
+  const [selection, setSelection] = React.useState<ActiveSelection | null>(null);
+  const selectionRef = React.useRef<ActiveSelection | null>(null);
+  // While a long-press drag extends the selection the ScrollView must not scroll.
+  const [selectionDragging, setSelectionDragging] = React.useState(false);
+  const selectionRequest = React.useRef(0);
+  const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleFixedCell = React.useRef<TerminalCellPoint | null>(null);
   const nativeScrollOffset = React.useRef(0);
   const nativeExpandedScrollOffset = React.useRef(0);
   const nativeViewportHeight = React.useRef(0);
@@ -559,19 +628,132 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       : {alternate: nextAlternate, contentRows, rows, cursorRow, lastContentRow, mouseTracking, mouseSgr});
   }, [onNativeScreenChange]);
 
+  const cancelLongPress = React.useCallback(() => {
+    if (longPressTimer.current === null) return;
+    clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+  }, []);
+
+  const applySelection = React.useCallback((next: ActiveSelection | null) => {
+    selectionRef.current = next;
+    setSelection(next);
+  }, []);
+
+  const clearSelection = React.useCallback(() => {
+    selectionRequest.current += 1;
+    handleFixedCell.current = null;
+    setSelectionDragging(false);
+    if (selectionRef.current === null) return;
+    applySelection(null);
+    if (nativeSessionId !== undefined) nativeTerminalRuntime?.endTerminalSelection(nativeSessionId).catch(() => undefined);
+  }, [applySelection, nativeSessionId]);
+
+  const beginSelection = React.useCallback((touch: TerminalTouch, x: number, y: number) => {
+    const runtime = nativeTerminalRuntime;
+    if (runtime === null || nativeSessionId === undefined || cellWidth <= 0) return;
+    const request = selectionRequest.current + 1;
+    selectionRequest.current = request;
+    const sessionId = nativeSessionId;
+    runtime.beginTerminalSelection(sessionId, Math.floor(y / TERMINAL_CELL_HEIGHT), Math.floor(x / cellWidth)).then(
+      start => {
+        if (request !== selectionRequest.current) {
+          // Cancelled while the engine froze its frame: unfreeze it again.
+          if (start !== null && selectionRef.current === null) runtime.endTerminalSelection(sessionId).catch(() => undefined);
+          return;
+        }
+        if (start === null) return;
+        applySelection({range: start.word, anchor: start.word, contentRows: start.contentRows, columns: start.columns});
+        // Still holding the finger down: moving it now extends the selection.
+        if (touchStart.current === touch) {
+          touch.selecting = true;
+          setSelectionDragging(true);
+        }
+      },
+      () => undefined,
+    );
+  }, [applySelection, cellWidth, nativeSessionId]);
+
+  const startHandleDrag = React.useCallback((edge: 'start' | 'end') => {
+    const current = selectionRef.current;
+    handleFixedCell.current = current === null ? null : terminalSelectionFixedCell(current.range, edge);
+  }, []);
+
+  const dragHandle = React.useCallback((x: number, y: number) => {
+    const current = selectionRef.current;
+    const fixed = handleFixedCell.current;
+    if (current === null || fixed === null) return;
+    const point = terminalCellAt(x, y, cellWidth, TERMINAL_CELL_HEIGHT, current.contentRows, current.columns);
+    const range = terminalSelectionBetween(fixed, point);
+    if (!sameTerminalSelection(range, current.range)) applySelection({...current, range, anchor: range});
+  }, [applySelection, cellWidth]);
+
+  const copySelection = React.useCallback(() => {
+    const current = selectionRef.current;
+    const runtime = nativeTerminalRuntime;
+    if (current === null || runtime === null || nativeSessionId === undefined) return;
+    const {startRow, startColumn, endRow, endColumn} = current.range;
+    // Copy before unfreezing: the copied text comes from the frozen frame.
+    runtime.copyTerminalSelection(nativeSessionId, startRow, startColumn, endRow, endColumn)
+      .catch(() => 0)
+      .then(() => clearSelection());
+  }, [clearSelection, nativeSessionId]);
+
+  const selectAll = React.useCallback(() => {
+    const current = selectionRef.current;
+    if (current === null) return;
+    const range = selectAllTerminal(current.contentRows, current.columns);
+    applySelection({...current, range, anchor: range});
+  }, [applySelection]);
+
+  const hasSelection = selection !== null;
+  React.useEffect(() => {
+    if (!hasSelection) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      clearSelection();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [clearSelection, hasSelection]);
+
+  // A new session (or leaving the screen) drops the selection and unfreezes the old frame.
+  React.useEffect(() => () => {
+    cancelLongPress();
+    selectionRequest.current += 1;
+    if (selectionRef.current !== null && nativeSessionId !== undefined) {
+      nativeTerminalRuntime?.endTerminalSelection(nativeSessionId).catch(() => undefined);
+    }
+    selectionRef.current = null;
+    setSelection(null);
+    setSelectionDragging(false);
+  }, [cancelLongPress, nativeSessionId]);
+
   const handleTouchStart = React.useCallback((event: GestureResponderEvent) => {
+    cancelLongPress();
     if (event.nativeEvent.touches.length > 1) {
       touchStart.current = null;
       return;
     }
     const touch = event.nativeEvent.changedTouches[0] ?? event.nativeEvent;
-    touchStart.current = {
+    const start: TerminalTouch = {
       identifier: touch.identifier, pageX: touch.pageX, pageY: touch.pageY,
       dragged: false, paged: false, lastPageY: touch.pageY, lastPageAt: 0,
       mouseTrackingMode: alternate ? mouseTrackingMode : 'none',
       mouseEncoding: alternate ? mouseEncoding : 'default',
+      selecting: false,
     };
-  }, [alternate, mouseEncoding, mouseTrackingMode]);
+    touchStart.current = start;
+    // The canvas has pointerEvents="none", so the location is relative to the
+    // scrolled content View and maps directly onto frame rows and columns.
+    const {locationX, locationY} = touch;
+    if (nativeSession && nativeTerminalRuntime !== null && Number.isFinite(locationX) && Number.isFinite(locationY) &&
+      locationX >= 0 && locationY >= 0) {
+      longPressTimer.current = setTimeout(() => {
+        longPressTimer.current = null;
+        if (touchStart.current !== start || start.dragged) return;
+        beginSelection(start, locationX, locationY);
+      }, LONG_PRESS_MS);
+    }
+  }, [alternate, beginSelection, cancelLongPress, mouseEncoding, mouseTrackingMode, nativeSession]);
 
   const shouldCaptureTouchMove = React.useCallback((event: GestureResponderEvent) => {
     const start = touchStart.current;
@@ -588,9 +770,20 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (start === null) return;
     const touch = event.nativeEvent.changedTouches.find(({identifier}) => identifier === start.identifier);
     if (touch === undefined) return;
+    if (start.selecting) {
+      const current = selectionRef.current;
+      if (current === null || !Number.isFinite(touch.locationX) || !Number.isFinite(touch.locationY)) return;
+      const point = terminalCellAt(touch.locationX, touch.locationY, cellWidth, TERMINAL_CELL_HEIGHT, current.contentRows, current.columns);
+      const range = extendTerminalSelection(current.anchor, point);
+      if (!sameTerminalSelection(range, current.range)) applySelection({...current, range});
+      return;
+    }
     const deltaX = touch.pageX - start.pageX;
     const deltaY = touch.pageY - start.pageY;
-    if (deltaX * deltaX + deltaY * deltaY > TAP_SLOP * TAP_SLOP) start.dragged = true;
+    if (deltaX * deltaX + deltaY * deltaY > TAP_SLOP * TAP_SLOP) {
+      start.dragged = true;
+      cancelLongPress();
+    }
     if (!alternate || Math.abs(deltaY) <= Math.abs(deltaX)) return;
 
     const pageDelta = touch.pageY - start.lastPageY;
@@ -620,15 +813,20 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     } else {
       onSwipe(pageDelta > 0 ? 'down' : 'up');
     }
-  }, [alternate, cellWidth, frame?.columns, frame?.rows, nativeColumns, nativeRows, onMouseWheel, onSwipe]);
+  }, [alternate, applySelection, cancelLongPress, cellWidth, frame?.columns, frame?.rows, nativeColumns, nativeRows, onMouseWheel, onSwipe]);
 
   const handleTouchEnd = React.useCallback((event: GestureResponderEvent) => {
     // The final position may be newer than the last delivered move. Consume
     // one eligible step before clearing, then ignore duplicate end callbacks.
     handleTouchMove(event);
+    cancelLongPress();
     const start = touchStart.current;
     touchStart.current = null;
     if (start === null) return;
+    if (start.selecting) {
+      setSelectionDragging(false);
+      return;
+    }
 
     const touch = event.nativeEvent.changedTouches.find(({identifier}) => identifier === start.identifier);
     if (touch === undefined) return;
@@ -636,6 +834,11 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     const deltaX = touch.pageX - start.pageX;
     const deltaY = touch.pageY - start.pageY;
     if (start.dragged || deltaX * deltaX + deltaY * deltaY > TAP_SLOP * TAP_SLOP) return;
+    // The first tap after selecting just dismisses the selection.
+    if (selectionRef.current !== null) {
+      clearSelection();
+      return;
+    }
     // Native sessions resolve links only on a tap: the canvas has
     // pointerEvents="none", so the touch location is relative to the scrolled
     // content View and maps directly onto frame rows and columns.
@@ -655,11 +858,13 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       return;
     }
     onTap();
-  }, [cellWidth, handleTouchMove, nativeSession, nativeSessionId, onLinkPress, onTap]);
+  }, [cancelLongPress, cellWidth, clearSelection, handleTouchMove, nativeSession, nativeSessionId, onLinkPress, onTap]);
 
   const handleTouchCancel = React.useCallback(() => {
+    cancelLongPress();
+    if (touchStart.current?.selecting === true) setSelectionDragging(false);
     touchStart.current = null;
-  }, []);
+  }, [cancelLongPress]);
 
   return (
     <View
@@ -694,7 +899,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
           <ScrollView
             key={alternate ? 'alternate-native' : 'normal-native'}
             ref={nativeScroll}
-            scrollEnabled={!alternate}
+            scrollEnabled={!alternate && !selectionDragging}
             keyboardShouldPersistTaps="always"
             contentContainerStyle={{height: (nativeSession ? nativeFrameMeta.contentRows : Math.max(displayFrame?.rows ?? nativeRows, displayFrame?.lines.length ?? 0)) * TERMINAL_CELL_HEIGHT}}
             onContentSizeChange={() => {
@@ -735,6 +940,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
                 links={nativeLinks}
                 running={running}
                 onNativeFrameMeta={handleNativeFrameMeta}
+                selection={nativeSession ? selection?.range ?? null : null}
                 pointerEvents="none"
                 style={StyleSheet.absoluteFill}
                 testID="terminal-native-canvas"
@@ -749,6 +955,28 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
                   testID={`terminal-link-native-${row}-${linkIndex}`}
                 />
               )))}
+              {nativeSession && selection !== null && cellWidth > 0 ? (
+                <>
+                  <SelectionHandle
+                    edge="start"
+                    left={selection.range.startColumn * cellWidth}
+                    top={(selection.range.startRow + 1) * TERMINAL_CELL_HEIGHT}
+                    cellX={(selection.range.startColumn + 0.5) * cellWidth}
+                    cellY={(selection.range.startRow + 0.5) * TERMINAL_CELL_HEIGHT}
+                    onDragStart={startHandleDrag}
+                    onDrag={dragHandle}
+                  />
+                  <SelectionHandle
+                    edge="end"
+                    left={selection.range.endColumn * cellWidth}
+                    top={(selection.range.endRow + 1) * TERMINAL_CELL_HEIGHT}
+                    cellX={(selection.range.endColumn - 0.5) * cellWidth}
+                    cellY={(selection.range.endRow + 0.5) * TERMINAL_CELL_HEIGHT}
+                    onDragStart={startHandleDrag}
+                    onDrag={dragHandle}
+                  />
+                </>
+              ) : null}
             </View>
           </ScrollView>
         ) : (
@@ -782,6 +1010,24 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
         )}
         </>
       )}
+      {nativeSession && selection !== null ? (
+        // Touches here must not reach the grid, which would dismiss the selection.
+        <View
+          onTouchStart={event => event.stopPropagation()}
+          onTouchEnd={event => event.stopPropagation()}
+          style={styles.selectionBar}
+          testID="terminal-selection-bar">
+          <Pressable accessibilityRole="button" onPress={copySelection} style={styles.selectionButton} testID="terminal-selection-copy">
+            <Text style={styles.selectionButtonText}>Copy</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={selectAll} style={styles.selectionButton} testID="terminal-selection-all">
+            <Text style={styles.selectionButtonText}>Select all</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={clearSelection} style={styles.selectionButton} testID="terminal-selection-done">
+            <Text style={styles.selectionButtonText}>Done</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -799,4 +1045,10 @@ const styles = StyleSheet.create({
   underline: {textDecorationLine: 'underline'},
   strike: {textDecorationLine: 'line-through'},
   underlineStrike: {textDecorationLine: 'underline line-through'},
+  selectionHandle: {position: 'absolute', width: SELECTION_HANDLE_SIZE, height: SELECTION_HANDLE_SIZE, borderRadius: SELECTION_HANDLE_SIZE / 2, backgroundColor: uiColors.accent},
+  selectionHandleStart: {borderTopRightRadius: 0},
+  selectionHandleEnd: {borderTopLeftRadius: 0},
+  selectionBar: {position: 'absolute', top: 8, right: 8, flexDirection: 'row', borderRadius: 8, backgroundColor: uiColors.panelRaised, borderWidth: StyleSheet.hairlineWidth, borderColor: uiColors.border, elevation: 6},
+  selectionButton: {paddingHorizontal: 14, paddingVertical: 10},
+  selectionButtonText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 14, fontWeight: '600'},
 });

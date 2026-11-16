@@ -153,6 +153,24 @@ internal class NativeTerminalEngine(
   internal fun <T> withNativeHandle(block: (Long) -> T): T? =
     (delegate as? LibghosttyTerminalBackend)?.withHandle(block)
 
+  /**
+   * The frame shown while the user selects text. Output keeps parsing, but
+   * the canvas and the copied text use this frame so rows do not shift under
+   * the selection. Null when nothing is selected.
+   */
+  @Volatile var selectionFrame: Frame? = null
+    private set
+
+  /** Freezes the current frame for selection and returns it. */
+  fun beginSelection(): Frame = selectionFrame ?: delegate.currentFrame().also { selectionFrame = it }
+
+  fun endSelection() {
+    selectionFrame = null
+  }
+
+  /** The frame to draw: the frozen selection frame, or the live one. */
+  fun displayFrame(): Frame = selectionFrame ?: delegate.currentFrame()
+
   override val bracketedPaste: Boolean get() = delegate.bracketedPaste
   override val defaultBackground: Int get() = delegate.defaultBackground
   override val defaultForeground: Int get() = delegate.defaultForeground
