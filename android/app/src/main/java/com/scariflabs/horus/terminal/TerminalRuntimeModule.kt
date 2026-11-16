@@ -147,6 +147,7 @@ class TerminalRuntimeModule(
     TerminalDebugLog.record(appContext, "module_created")
     appContext.addLifecycleEventListener(visibilityListener)
     if (appContext.lifecycleState == LifecycleState.RESUMED) sessionServiceClient.reportUiVisibility(true)
+    NativeTerminalEngineRegistry.setDefaultBackend(sessionSettings.readEngineBackend())
     NativeTerminalEngineRegistry.configureClipboardWriter(::writeTerminalClipboard)
     NativeTerminalEngineRegistry.configureOutputGapListener(::requestRedrawAfterOutputGap)
     NativeTerminalEngineRegistry.configureInputWriter { sessionId, bytes ->
