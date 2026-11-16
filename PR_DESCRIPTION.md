@@ -51,7 +51,7 @@ Migrating to `libghostty-vt` provides a battle-tested, high-performance VT state
 │                    │ Static Linkage                                    │
 │  ┌─────────────────▼────────────────────────────────────────────────┐  │
 │  │               libghostty-vt.a (Standalone VT C API)              │  │
-│  │      Cross-compiled with Zig 0.14.0 (-Dcpu=baseline, -Dstrip)     │  │
+│  │      Cross-compiled with Zig 0.17.0 (-Dcpu=baseline, -Dstrip)     │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -70,7 +70,7 @@ Migrating to `libghostty-vt` provides a battle-tested, high-performance VT state
 - **DEC Mode 2027 Default:** Kept disabled by default in accordance with DEC specifications, activating dynamically only when explicitly requested by guests via `CSI ? 2027 h`.
 
 ### 4. Native Toolchain & Reproducibility
-- Standalone build script `scripts/native/build-libghostty-vt.sh` cross-compiles `libghostty-vt.a` using Zig 0.14.0 for `arm64-v8a` (`-Dcpu=baseline` for universal ARMv8.0-A compatibility), `x86_64`, and `host`.
+- Standalone build script `scripts/native/build-libghostty-vt.sh` cross-compiles `libghostty-vt.a` using Zig 0.17.0 for `arm64-v8a` (`-Dcpu=baseline` for universal ARMv8.0-A compatibility), `x86_64`, and `host`.
 - Configured `-Dstrip=true` to strip local file paths and guarantee bit-for-bit reproducible compilation.
 - Verified Bionic libc dynamic symbol audit against Android `minSdk 24`: zero symbols require API > 24 (only `preadv64@LIBC_N` at API 24).
 - 16KB ELF page-alignment (`-Wl,-z,max-page-size=16384`) verified for Android 15/16.
@@ -139,7 +139,7 @@ Tested live on a physical **Samsung Galaxy S23 Ultra (`SM-S918B`, Android 16 / A
 ## CI & Build System Integration
 
 1. **GitHub Actions (`.github/workflows/ci.yml`):**
-   - Added Zig 0.14.0 setup via `goto-bus-stop/setup-zig@v2`.
+   - Added Zig 0.17.0 setup via `mlugg/setup-zig@v2` (libghostty-vt 1.0.0 needs Zig 0.17.0 or newer).
    - Multi-tier build caching configured for `~/.cache/zig`, `native/cache`, and `android/app/build/generated/libghostty-vt`.
    - Native compilation integrated into CI before unsigned APK assembly and test execution.
 2. **F-Droid Scanner Compliance:**
