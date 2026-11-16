@@ -100,8 +100,15 @@ class TerminalCanvasView(context: Context) : View(context) {
   private val visibleRect = Rect()
   private val fontMetrics = Paint.FontMetrics()
   // The canvas is as tall as scrollback + screen inside a ScrollView. Only
-  // the rows in (or near) the viewport are recorded, so re-record on scroll.
-  private val scrollListener = ViewTreeObserver.OnScrollChangedListener { invalidate() }
+  // the rows in (or near) the viewport are recorded. Re-recording on every
+  // scroll step redrew three screens of text per frame and made scrolling
+  // stutter, so re-record only when the viewport nears the recorded edge.
+  private val scrollListener = ViewTreeObserver.OnScrollChangedListener {
+    if (needsRecordForScroll()) invalidate()
+  }
+  private val scrollCheckRect = Rect()
+  private var recordedTop = 0
+  private var recordedBottom = 0
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
     isLinearText = true
   }
@@ -339,11 +346,25 @@ class TerminalCanvasView(context: Context) : View(context) {
   private fun updateVisibleRect() {
     if (!getLocalVisibleRect(visibleRect) || visibleRect.height() <= 0) {
       visibleRect.set(0, 0, width, height)
-      return
+    } else {
+      val pad = visibleRect.height()
+      visibleRect.top -= pad
+      visibleRect.bottom += pad
     }
-    val pad = visibleRect.height()
-    visibleRect.top -= pad
-    visibleRect.bottom += pad
+    recordedTop = visibleRect.top
+    recordedBottom = visibleRect.bottom
+  }
+
+  /**
+   * True once the viewport is within a quarter screen of the rows recorded by
+   * the last draw. Edges of the view itself never need more rows.
+   */
+  private fun needsRecordForScroll(): Boolean {
+    if (!getLocalVisibleRect(scrollCheckRect) || scrollCheckRect.height() <= 0) return false
+    val margin = scrollCheckRect.height() / 4
+    val topShort = recordedTop > 0 && scrollCheckRect.top - margin < recordedTop
+    val bottomShort = recordedBottom < height && scrollCheckRect.bottom + margin > recordedBottom
+    return topShort || bottomShort
   }
 
   private fun drawLoading(canvas: Canvas, text: String, density: Float) {
