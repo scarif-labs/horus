@@ -1,4 +1,5 @@
 import array
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -23,7 +24,8 @@ class SudoHelperLoggingTest(unittest.TestCase):
         self.log_path = Path(self.temp_dir.name) / "helper.log"
         self.log_path.touch(mode=0o600)
         os.environ["HORUS_SUDO_LOG"] = str(self.log_path)
-        spec = importlib.util.spec_from_file_location("sudo_helper", HELPER)
+        loader = importlib.machinery.SourceFileLoader("sudo_helper", str(HELPER))
+        spec = importlib.util.spec_from_loader("sudo_helper", loader)
         self.helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.helper)
 
