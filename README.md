@@ -158,6 +158,8 @@ Remote access stays off until you pair a computer or turn it on. Any app on
 the phone can reach loopback ports, so the paired key is what keeps others
 out.
 
+<a id="for-developers"></a>
+
 ## 𓏛 For developers
 
 <details>

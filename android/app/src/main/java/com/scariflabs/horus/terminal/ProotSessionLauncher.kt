@@ -745,12 +745,30 @@ class ProotSessionLauncher(
       }
     }
     if (groupLines.none { it.split(':').getOrNull(2) == gid.toString() }) {
-      val groupName = username.takeIf { name -> groupLines.none { it.substringBefore(':') == name } }
+      val groupName = "horus_shared".takeIf { gid == GUEST_GID && groupLines.none { it.substringBefore(':') == "horus_shared" } }
+        ?: username.takeIf { name -> groupLines.none { it.substringBefore(':') == name } }
         ?: "horus_shared"
       if (groupLines.any { it.substringBefore(':') == groupName }) {
         throw IllegalStateException("guest group name is already occupied")
       }
       groupLines = groupLines + "$groupName:x:$gid:"
+    }
+    // Horus's profile and harness identities share this numeric GID. Earlier
+    // builds named it after whichever identity happened to launch first.
+    // Rename only a single, recognizable Horus-owned group; leave custom or
+    // ambiguous groups alone and never change the numeric GID or members.
+    if (gid == GUEST_GID && groupLines.none { it.substringBefore(':') == "horus_shared" }) {
+      val matches = groupLines.indices.filter { groupLines[it].split(':').getOrNull(2) == gid.toString() }
+      val index = matches.singleOrNull()
+      if (index != null) {
+        val fields = groupLines[index].split(':')
+        val owner = passwdLines.firstOrNull { it.substringBefore(':') == fields.firstOrNull() }?.split(':')
+        val ownerUid = owner?.getOrNull(2)?.toIntOrNull()
+        if (fields.size == 4 && fields[1] == "x" && owner?.getOrNull(3) == gid.toString() &&
+          (ownerUid == GUEST_UID || (ownerUid != null && ownerUid in 61_001..61_003 && owner[0].startsWith("harness_")))) {
+          groupLines = groupLines.mapIndexed { row, line -> if (row == index) "horus_shared:${fields[1]}:${fields[2]}:${fields[3]}" else line }
+        }
+      }
     }
     // The Android login gate verifies the salted password verifier. Keep the
     // guest shadow entry locked so a second, unaudited auth path cannot bypass
@@ -1395,8 +1413,62 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
     internal const val UPSTREAM_NPM_VERSION = "11.12.1"
     internal const val UPSTREAM_NPM_INTEGRITY =
       "sha512-zcoUuF1kezGSAo0CqtvoLXX3mkRqzuqYdL6Y5tdo8g69NVV3CkjQ6ZBhBgB4d7vGkPcV6TcvLi3GRKPDFX+xTA=="
+    /** Shown when claude.ai/install.sh comes back as something other than a script. */
+    internal const val CLAUDE_INSTALLER_NOT_SCRIPT =
+      "claude.ai sent a web page instead of the Claude Code installer. Claude Code may not be available in your country, or this network blocks it."
+
+    /**
+     * One package install at a time on this Linux. Every session, harness
+     * user, and SSH login shares the rootfs, and apt and apk fail at once
+     * on a held lock rather than wait, so the lock lives in the rootfs and
+     * installs queue behind it.
+     */
+    internal val PACKAGE_LOCK_SCRIPT = """
+      pkg_lock_file=/var/lib/horus/packages.lock
+      pkg_lock_take() {
+        mkdir -p /var/lib/horus 2>/dev/null && touch "${'$'}pkg_lock_file" 2>/dev/null || return 0
+        command -v flock >/dev/null 2>&1 || return 0
+        exec 7>>"${'$'}pkg_lock_file"
+        if ! flock -n 7; then
+          printf '%s\n' 'Waiting for another install to finish…'
+          [ -z "${'$'}{pkg_progress:-}" ] || printf '%s\n' 'Waiting for another install to finish…' > "${'$'}pkg_progress"
+          flock 7 || true
+        fi
+      }
+      pkg_lock_release() { exec 7>&-; }
+      # A dpkg run that was killed (app closed, phone out of memory) makes
+      # apt refuse every later install until it is finished.
+      dpkg_interrupted() {
+        [ -x /usr/bin/dpkg ] || return 1
+        [ -n "${'$'}(ls -A /var/lib/dpkg/updates 2>/dev/null)" ] || [ -n "${'$'}(dpkg --audit 2>/dev/null)" ]
+      }
+      dpkg_recover() {
+        printf '%s\n' 'Finishing an earlier install that was interrupted…'
+        # dpkg --configure -a can exit 0 while a package still needs work
+        # (a reinstreq package is skipped, not configured), so re-audit.
+        if DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
+        # Passing the requested packages to apt together with --fix-broken
+        # can leave unrelated missing dependencies unresolved (#154).
+        # Never let automatic recovery remove an existing user package.
+        if DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install &&
+          DEBIAN_FRONTEND=noninteractive dpkg --configure -a && ! dpkg_interrupted; then return 0; fi
+
+        # A package marked reinstreq cannot be configured until it is
+        # reinstalled (#136). Restrict arguments to valid package names.
+        recovery_packages=${'$'}(dpkg-query -W -f='${'$'}{db:Status-Eflag} ${'$'}{binary:Package}\n' |
+          awk '${'$'}1 == "reinstreq" && ${'$'}2 ~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?${'$'}/ { print ${'$'}2 }') || return 1
+        if [ -n "${'$'}recovery_packages" ]; then
+          set -- ${'$'}recovery_packages
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken --reinstall install "${'$'}@" || return 1
+          DEBIAN_FRONTEND=noninteractive apt-get -y --no-remove --fix-broken install || return 1
+        fi
+        # Audit findings that configuring cannot fix do not block the install.
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+      }
+    """.trimIndent()
 
     internal val PACKAGE_MANAGER_SCRIPT = """
+${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
         # Debian splits venv (and its ensurepip) out of python3.
@@ -1410,11 +1482,12 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         # npm itself comes from npm's own release; see install_upstream_npm.
         pkgs_node="bash ca-certificates git openssh-client nodejs zsh"
         pkgs_procps="procps"
-        # Rewritten every time so an older Horus's settings are replaced.
+        # Rewritten every time so an older Horus's settings are replaced. The
+        # lock timeout covers apt runs Horus does not queue, like `sudo apt`.
         mkdir -p /etc/apt/apt.conf.d /etc/dpkg/dpkg.cfg.d
-        printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Acquire::Languages "none";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+        printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Acquire::Languages "none";' 'Dpkg::Use-Pty "0";' 'DPkg::Lock::Timeout "120";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
         # Every file dpkg writes is a trapped syscall under PRoot. Skip its
-        # per-file fsync (a broken install is simply provisioned again) and
+        # per-file fsync (pkg_install finishes an interrupted dpkg) and
         # the docs, manuals, and translations nothing here reads.
         printf '%s\n' force-unsafe-io \
           'path-exclude=/usr/share/doc/*' 'path-include=/usr/share/doc/*/copyright' \
@@ -1463,23 +1536,29 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       pkg_install() {
         pkg_log=${'$'}1
         shift
+        pkg_lock_take
         : > "${'$'}pkg_status"
         : > "${'$'}pkg_progress"
-        watch_packages &
+        # Its sleep outlives the kill below; it must not keep the lock open.
+        watch_packages 7>&- &
         pkg_watch_pid=${'$'}!
         if [ "${'$'}horus_pkg" = apt ]; then
           pkg_result=0
           if [ -z "${'$'}(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]; then
             run_logged "${'$'}pkg_log" apt-get update || pkg_result=${'$'}?
           fi
+          if [ "${'$'}pkg_result" -eq 0 ] && dpkg_interrupted; then
+            run_logged "${'$'}pkg_log" dpkg_recover || pkg_result=${'$'}?
+          fi
           if [ "${'$'}pkg_result" -eq 0 ]; then
-            run_logged "${'$'}pkg_log" apt_with_status install -y --no-install-recommends "${'$'}@" || pkg_result=${'$'}?
+            run_logged "${'$'}pkg_log" apt_with_status install -y --fix-broken --no-install-recommends "${'$'}@" || pkg_result=${'$'}?
           fi
         else
           if run_logged "${'$'}pkg_log" apk add --no-cache --no-progress "${'$'}@"; then pkg_result=0; else pkg_result=${'$'}?; fi
         fi
         kill "${'$'}pkg_watch_pid" 2>/dev/null || true
         wait "${'$'}pkg_watch_pid" 2>/dev/null || true
+        pkg_lock_release
         : > "${'$'}pkg_progress"
         return "${'$'}pkg_result"
       }
@@ -1687,7 +1766,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         rm -f "${'$'}log_pipe"
         if ! mkfifo "${'$'}log_pipe" 2>/dev/null; then
           # No pipe: keep the log file, without live output.
-          "${'$'}@" >"${'$'}log_file" 2>&1 &
+          # Children never need the package lock (FD 7); the shell holds it, and a
+          # daemon a package leaves running must not keep it after release.
+          "${'$'}@" 7>&- >"${'$'}log_file" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -1695,9 +1776,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           set -e
           tail -n 40 "${'$'}log_file" 2>/dev/null || true
         else
-          tee "${'$'}log_file" < "${'$'}log_pipe" &
+          tee "${'$'}log_file" < "${'$'}log_pipe" 7>&- &
           tee_pid=${'$'}!
-          "${'$'}@" >"${'$'}log_pipe" 2>&1 &
+          "${'$'}@" 7>&- >"${'$'}log_pipe" 2>&1 &
           command_pid=${'$'}!
           set +e
           wait "${'$'}command_pid"
@@ -1705,7 +1786,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           set -e
           # tee ends once every writer closes the pipe. A daemon the command
           # left running may hold it open, so give up on it after 5 seconds.
-          ( sleep 5; kill "${'$'}tee_pid" 2>/dev/null ) >/dev/null 2>&1 &
+          # Its sleep may outlive the watchdog shell; never inherit the package lock.
+          ( sleep 5; kill "${'$'}tee_pid" 2>/dev/null ) 7>&- >/dev/null 2>&1 &
           tee_watchdog=${'$'}!
           wait "${'$'}tee_pid" 2>/dev/null || true
           kill "${'$'}tee_watchdog" 2>/dev/null || true
@@ -1894,7 +1976,13 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         mark_provision_stage claude
         install_claude() {
           rm -f /root/.local/bin/claude /root/.cache/horus/claude-install.sh
-          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o /root/.cache/horus/claude-install.sh
+          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o /root/.cache/horus/claude-install.sh || return 1
+          # Where claude.ai is blocked it can answer with a web page, and
+          # bash would print its HTML as errors.
+          if [ "${'$'}(head -c 2 /root/.cache/horus/claude-install.sh)" != '#!' ]; then
+            printf '%s\n' "$CLAUDE_INSTALLER_NOT_SCRIPT" >&2
+            return 1
+          fi
           bash /root/.cache/horus/claude-install.sh
           test -x /root/.local/bin/claude
         }
@@ -2154,6 +2242,7 @@ EOF
       export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       stage() { printf 'HORUS_REMOTE_STAGE=%s\n' "${'$'}1"; }
       mkdir -p /root/.cache/horus
+${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] ||
         { [ ! -x /usr/lib/ssh/sftp-server ] && [ ! -x /usr/lib/openssh/sftp-server ]; } ||
         [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1 ||
@@ -2164,19 +2253,24 @@ EOF
           [ -f /etc/apt/apt.conf.d/99horus ] ||
             printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
           remote_install() {
-            DEBIAN_FRONTEND=noninteractive apt-get update &&
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
+            DEBIAN_FRONTEND=noninteractive apt-get update || return ${'$'}?
+            if dpkg_interrupted; then dpkg_recover || return ${'$'}?; fi
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-broken --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
           }
         else
           # python3 runs sudo's root helper for SSH logins.
           remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server python3 rsync zsh; }
         fi
-        if ! remote_install; then
+        pkg_lock_take
+        # The shell holds the lock; anything the install leaves running must not.
+        if ! remote_install 7>&-; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
             stage install_failed
             exit 30
           fi
         fi
+        # dropbear runs for as long as SSH is on; it must not hold the lock.
+        pkg_lock_release
       fi
       if [ ! -e /usr/lib/ssh/sftp-server ] && [ -x /usr/lib/openssh/sftp-server ]; then
         mkdir -p /usr/lib/ssh
@@ -2262,12 +2356,21 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       fi
       # On Debian the user cannot run apt; Horus's app tiles install the
       # system packages as root, and these need only what is already there.
+${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       system_packages() {
-        if command -v apk >/dev/null 2>&1; then apk add --no-cache --no-progress "${'$'}@"; else true; fi
+        if command -v apk >/dev/null 2>&1; then
+          pkg_lock_take
+          if apk add --no-cache --no-progress "${'$'}@" 7>&-; then package_status=0; else package_status=${'$'}?; fi
+          pkg_lock_release
+          return "${'$'}package_status"
+        else
+          true
+        fi
       }
       install_claude() {
         system_packages bash curl ca-certificates git libgcc libstdc++ &&
           curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
+          { [ "${'$'}(head -c 2 "${'$'}cache/claude-install.sh")" = '#!' ] || { printf '%s\n' "$CLAUDE_INSTALLER_NOT_SCRIPT" >&2; false; }; } &&
           bash "${'$'}cache/claude-install.sh"
       }
       # Debian's Node.js comes from the app tile's root provisioning. Say so

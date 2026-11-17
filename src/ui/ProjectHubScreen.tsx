@@ -205,6 +205,7 @@ export function ProjectHubScreen({toolName, connected, projects, loadingRepos, g
                 <Pressable accessibilityRole="button" onPress={clone} style={styles.smallButton} testID="project-clone"><Text style={styles.smallButtonText}>Clone</Text></Pressable>
               </View>
             )}
+            {mode === 'folder' ? <Text accessibilityLabel={`${newProject.length} of 48 characters used`} style={styles.hint} testID="project-new-name-count">{`${newProject.length}/48`}</Text> : null}
             <Text style={styles.hint}>{mode === 'folder' ? 'Created in /workspace/projects.' : 'HTTPS or SSH. The folder takes the repository name.'}</Text>
             {error !== undefined ? <Text style={styles.error} testID="project-error">{error}</Text> : null}
           </View>

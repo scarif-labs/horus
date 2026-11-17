@@ -43,6 +43,23 @@ const exists = (renderer: ReactTestRenderer.ReactTestRenderer, testID: string) =
   renderer.root.findAllByProps({testID}).length > 0;
 
 describe('ProjectHubScreen', () => {
+  test('shows the folder name count only in empty folder mode', async () => {
+    const renderer = await renderHub({});
+    await press(renderer, 'project-tab-new');
+    const input = () => renderer.root.findByProps({testID: 'project-new-name'});
+    const count = () => renderer.root.findByProps({testID: 'project-new-name-count'});
+    expect(input().props.maxLength).toBe(48);
+    expect(count().props.children).toBe('0/48');
+    for (const name of ['a'.repeat(48), 'notes', '']) {
+      await ReactTestRenderer.act(async () => { input().props.onChangeText(name); });
+      expect(count().props.children).toBe(`${name.length}/48`);
+      expect(count().props.accessibilityLabel).toBe(`${name.length} of 48 characters used`);
+    }
+    await press(renderer, 'project-new-mode-clone');
+    expect(exists(renderer, 'project-new-name-count')).toBe(false);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
   test('keeps the header and shows one tab at a time, starting on this device', async () => {
     const onBack = jest.fn();
     const renderer = await renderHub({onBack, toolName: 'Claude Code'});

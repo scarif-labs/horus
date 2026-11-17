@@ -17,6 +17,32 @@ async function render(element: React.ReactElement) {
 }
 
 describe('UserAccountScreen', () => {
+  test('rejects a name used by the other distribution', async () => {
+    const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+    await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
+    await ReactTestRenderer.act(async () => { find('user-account-username')[0].props.onChangeText('deb'); });
+    await ReactTestRenderer.act(async () => { find('user-account-edit-save')[0].props.onPress(); });
+    expect(onUpdateUser).not.toHaveBeenCalled();
+    expect(find('user-account-edit-error')[0].props.children).toBe('That username is already in use.');
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+  test('shows the existing username count and updates it while editing', async () => {
+    const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE]} />);
+    await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
+    const input = () => find('user-account-username')[0];
+    const count = () => find('user-account-username-count')[0];
+    expect(input().props.maxLength).toBe(32);
+    expect(count().props.children).toBe('5/32');
+    for (const username of ['a'.repeat(32), 'ra', '']) {
+      await ReactTestRenderer.act(async () => { input().props.onChangeText(username); });
+      expect(count().props.children).toBe(`${username.length}/32`);
+      expect(count().props.accessibilityLabel).toBe(`${username.length} of 32 characters used`);
+    }
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
   test('shows the signed-in user and offers to add the missing distribution', async () => {
     const onAddUser = jest.fn();
     const {renderer, find} = await render(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} user={ALPINE} users={[ALPINE]} />);

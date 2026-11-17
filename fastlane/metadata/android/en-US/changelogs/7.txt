@@ -1,0 +1,5 @@
+- Fix installs failing with "Could not get lock" or "Unable to lock database" when two apps install at once; they now take turns
+- Debian: recover from an interrupted install instead of failing with "dpkg was interrupted" every time after
+- Give slow first-time tool installs more time before stopping them
+- Say so when claude.ai sends a web page instead of the Claude Code installer
+- Show the length limit on username and project name fields

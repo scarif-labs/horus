@@ -615,9 +615,12 @@ class TerminalSessionSupervisorTest {
     harness.backend.emitOutput(masterFd, first)
     harness.backend.emitOutput(masterFd, second)
     harness.backend.emitOutput(masterFd, third)
-    awaitCondition { harness.listener.outputs.size >= 3 }
+    // Each 10 KiB write is split across 8 KiB reads. Wait for all bytes,
+    // not a callback count, before asking the fake process to exit.
+    val expectedBytes = first.size + second.size + third.size
+    awaitCondition { harness.listener.outputs.sumOf { it.third.size } == expectedBytes }
     harness.backend.exitProcess(handle.pid, 0)
-    awaitCondition { harness.supervisor.snapshot("s-1")!!.state == TerminalSessionSupervisor.SessionState.EXITED }
+    awaitCondition { harness.listener.exits.isNotEmpty() }
 
     val tail = harness.supervisor.diagnosticTail("s-1")!!
     assertEquals(BoundedOutputMirror.MIRROR_CAPACITY_BYTES, tail.size)

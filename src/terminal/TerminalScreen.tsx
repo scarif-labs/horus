@@ -1,10 +1,13 @@
 import React from 'react';
 import {
   AppState,
+  Alert,
+  BackHandler,
   Keyboard,
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
+  ScrollView,
   StyleSheet,
   StatusBar,
   Text,
@@ -44,9 +47,11 @@ import {uiColors} from './palette';
 import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastInstallStage} from './InstallProgressOverlay';
 import {SessionLimitOverlay} from './SessionLimitOverlay';
 import {readTerminalPaste} from './terminalPaste';
+import {terminalTextFromRows, type TerminalTextSnapshot} from './terminalText';
 import {TerminalControls, type TerminalArrow} from './TerminalControls';
 import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
 import {InstallFailedOverlay, installFailureIssueUrl} from './InstallFailedOverlay';
+import {sanitizeProvisionLog, safeExitCode, safeProvisionStage} from './provisioningDiagnostics';
 import {classifyInstallFailure, cleanInstallLog, INSTALL_LOG_TAIL_CHARS, type InstallFailure, type InstallFailureKind} from './installFailure';
 import {readDeviceSnapshot} from '../device/deviceSnapshot';
 
@@ -81,7 +86,7 @@ type TerminalViewState = 'idle' | 'starting' | 'running' | 'stopped' | 'error';
 type TerminalRuntimeBridge = Pick<
   Spec,
   'getRuntimeStatus' | 'installRootfs' | 'resetRuntime'
->;
+> & Partial<Pick<Spec, 'readClipboardText' | 'isBracketedPaste' | 'getTerminalText'>>;
 
 const TERMINAL_LAYOUT_SETTLE_MS = 120;
 const SESSION_SIZE_WAIT_MS = 1_000;
@@ -117,10 +122,10 @@ function applyTerminalModifiers(value: string, ctrl: boolean, alt: boolean): str
  * latched CTRL turned the next command into control codes, and its ^S froze
  * the terminal with no visible way out.
  */
-function applyOneShotModifiers(value: string, ctrl: boolean, alt: boolean): string {
+function applyOneShotModifiers(value: string, ctrl: boolean, alt: boolean, ctrlLocked = false, altLocked = false): string {
   if (!ctrl && !alt) return value;
   const [first = '', ...rest] = Array.from(value);
-  return applyTerminalModifiers(first, ctrl, alt) + rest.join('');
+  return applyTerminalModifiers(first, ctrl, alt) + applyTerminalModifiers(rest.join(''), ctrlLocked, altLocked);
 }
 
 function arrowSequence(direction: TerminalArrow, ctrl: boolean, alt: boolean): string {
@@ -275,13 +280,23 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // session's own copy goes away with the session.
   const installLogRef = React.useRef('');
   const [installLogVisible, setInstallLogVisible] = React.useState(false);
-  const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
+  const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false, mouseTracking: false});
+  const [copyTextOpen, setCopyTextOpen] = React.useState(false);
+  const [copyTextSnapshot, setCopyTextSnapshot] = React.useState<TerminalTextSnapshot | undefined>();
+  const [copyTextUnavailable, setCopyTextUnavailable] = React.useState(false);
+  const copyTextRequestRef = React.useRef(0);
   const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
   const [error, setError] = React.useState<string | undefined>(undefined);
   const sessionLimitReached = error === 'session_limit_reached';
   const [outputHistoryGap, setOutputHistoryGap] = React.useState(false);
-  const [ctrlActive, setCtrlActive] = React.useState(false);
-  const [altActive, setAltActive] = React.useState(false);
+  const [ctrlMode, setCtrlMode] = React.useState<'off' | 'once' | 'locked'>('off');
+  const [altMode, setAltMode] = React.useState<'off' | 'once' | 'locked'>('off');
+  const ctrlActive = ctrlMode !== 'off';
+  const altActive = altMode !== 'off';
+  const ctrlLocked = ctrlMode === 'locked';
+  const altLocked = altMode === 'locked';
+  const ctrlTapAt = React.useRef(0);
+  const altTapAt = React.useRef(0);
   const activeSessionRef = React.useRef<string | undefined>(undefined);
   const attachmentRef = React.useRef<TerminalSessionAttachment | undefined>(undefined);
   const lastOutputSeqRef = React.useRef(0);
@@ -370,12 +385,26 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
    * login) report through onCommandFailure instead. Android's own view of the
    * network settles "offline" without guessing from the log.
    */
-  const showInstallFailure = React.useCallback((kind?: InstallFailureKind) => {
+  const showInstallFailure = React.useCallback((kind?: InstallFailureKind, exit?: TerminalSessionExitView, errorCode?: string) => {
     if (completionMarker !== undefined) return;
     const rawLog = installLogRef.current;
     const stage = installStageRef.current;
     const log = cleanInstallLog(rawLog);
-    setInstallFailure({kind: kind ?? classifyInstallFailure(rawLog, stage, undefined), ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log})});
+    const commandExit = Array.from(rawLog.matchAll(/^HORUS_INSTALL_COMMAND_EXIT=(\d{1,3})\r?$/gm)).pop()?.[1];
+    const commandExitCode = safeExitCode(Number(commandExit));
+    const exitCode = safeExitCode(exit?.exitCode);
+    setInstallFailure({
+      kind: kind ?? classifyInstallFailure(rawLog, stage, undefined),
+      ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log}),
+      ...(errorCode === undefined ? {} : {errorCode}),
+      diagnostics: {
+        outcome: errorCode !== undefined ? 'not_started' : exit?.reason === 'user_stop' ? 'cancelled' : exitCode === 0 ? 'incomplete' : 'failed',
+        ...(safeProvisionStage(stage) === undefined ? {} : {stage: safeProvisionStage(stage)}),
+        ...(safeExitCode(exitCode) === undefined ? {} : {exitCode: safeExitCode(exitCode)}),
+        ...(commandExitCode === undefined ? {} : {commandExitCode}),
+        log: sanitizeProvisionLog(rawLog),
+      },
+    });
     void readDeviceSnapshot().then(snapshot => {
       if (!mountedRef.current || snapshot?.online !== false) return;
       setInstallFailure(current => current === undefined ? current : {...current, kind: 'offline'});
@@ -418,7 +447,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       activeSessionRef.current = undefined;
       setState('error');
       setError(toolchainInstallError(toolchain));
-      showInstallFailure();
+      showInstallFailure(undefined, exit);
       deliverCommandFailure();
       return;
     }
@@ -603,7 +632,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         setState('error');
         setError(started.errorCode);
         const failureKind = toolchain === 'shell' ? undefined : startInstallFailureKind(started.errorCode);
-        if (failureKind !== undefined) showInstallFailure(failureKind);
+        if (failureKind !== undefined) showInstallFailure(failureKind, undefined, started.errorCode);
         deliverCommandFailure();
         return;
       }
@@ -646,7 +675,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           void client.stopSession(nextRequestId('renderer-stop'), activeSession, 'screen_unmount');
         }
       },
-    });
+    }, {replyToThemeQueries: toolchain !== 'github'});
     if (resumed && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
     const attachment: TerminalSessionAttachment = {
       onOutput: chunk => {
@@ -659,7 +688,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           const outputText = textDecoder.decode(chunk.bytes);
           if (scanInstallMarker) {
             installLogRef.current = `${installLogRef.current}${outputText}`.slice(-INSTALL_LOG_TAIL_CHARS);
-            const stage = lastInstallStage(outputText);
+            const stage = safeProvisionStage(lastInstallStage(installLogRef.current));
             if (stage !== undefined && stage !== installStageRef.current) {
               installStageRef.current = stage;
               setInstallStage(stage);
@@ -780,7 +809,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setInstallStage(undefined);
     setInstallDownload(undefined);
     setInstallLogVisible(false);
-    setNativeScreen({hasContent: false, alternate: false});
+    setNativeScreen({hasContent: false, alternate: false, mouseTracking: false});
+    setCopyTextOpen(false);
+    setCopyTextSnapshot(undefined);
+    setCopyTextUnavailable(false);
+    copyTextRequestRef.current += 1;
     displayBufferRef.current?.dispose();
     displayBufferRef.current = undefined;
     setNativeSessionId(undefined);
@@ -858,8 +891,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [client]);
 
   const releaseModifiers = React.useCallback(() => {
-    setCtrlActive(false);
-    setAltActive(false);
+    setCtrlMode(mode => mode === 'once' ? 'off' : mode);
+    setAltMode(mode => mode === 'once' ? 'off' : mode);
   }, []);
 
   // The keyboard editor mirrors the line typed so far. Keys sent from the
@@ -882,9 +915,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     let common = 0;
     while (common < before.length && common < after.length && before[common] === after[common]) common += 1;
     const typed = after.slice(common).join('');
-    void write('\u007f'.repeat(before.length - common) + applyOneShotModifiers(typed, ctrlActive, altActive));
+    void write('\u007f'.repeat(before.length - common) + applyOneShotModifiers(typed, ctrlActive, altActive, ctrlLocked, altLocked));
     if (typed.length > 0) releaseModifiers();
-  }, [altActive, ctrlActive, releaseModifiers, write]);
+  }, [altActive, altLocked, ctrlActive, ctrlLocked, releaseModifiers, write]);
 
   const handleTerminalKeyPress = React.useCallback((event: {nativeEvent: {key: string}}) => {
     // RN emits soft-key Backspace before the corresponding text change.
@@ -895,6 +928,63 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [write]);
 
   const running = state === 'running';
+  const alternateScreen = nativeHarness ? nativeScreen.alternate : frame?.alternate === true;
+  const mouseTracking = nativeHarness ? nativeScreen.mouseTracking : (frame?.mouseTrackingMode ?? 'none') !== 'none';
+  const tuiMouseReporting = alternateScreen && mouseTracking;
+  const closeCopyText = React.useCallback(() => {
+    copyTextRequestRef.current += 1;
+    setCopyTextOpen(false);
+    setCopyTextSnapshot(undefined);
+    setCopyTextUnavailable(false);
+  }, []);
+  const openCopyText = React.useCallback(() => {
+    if (!running || tuiMouseReporting) return;
+    const request = copyTextRequestRef.current + 1;
+    copyTextRequestRef.current = request;
+    setCopyTextOpen(true);
+    setCopyTextSnapshot(undefined);
+    setCopyTextUnavailable(false);
+    if (keyboardFocusFrameRef.current !== null) {
+      cancelAnimationFrame(keyboardFocusFrameRef.current);
+      keyboardFocusFrameRef.current = null;
+    }
+    Keyboard.dismiss();
+    nativeTerminalInputRef.current?.blur();
+    terminalInputRef.current?.blur();
+    setKeyboardHideRequest(value => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1);
+    setKeyboardVisible(false);
+    if (!nativeHarness) {
+      setCopyTextSnapshot(terminalTextFromRows(displayBufferRef.current?.snapshot().lines ?? []));
+      return;
+    }
+    const sessionId = activeSessionRef.current;
+    const textRuntime = runtime === undefined ? nativeTerminalRuntime : runtime;
+    if (sessionId === undefined || textRuntime === null || textRuntime.getTerminalText === undefined) {
+      setCopyTextUnavailable(true);
+      return;
+    }
+    textRuntime.getTerminalText(sessionId).then(response => {
+      if (!mountedRef.current || copyTextRequestRef.current !== request) return;
+      if (response.status !== 'success' || typeof response.text !== 'string') {
+        setCopyTextUnavailable(true);
+        return;
+      }
+      setCopyTextSnapshot({text: response.text, truncated: response.truncated === true});
+    }).catch(() => {
+      if (mountedRef.current && copyTextRequestRef.current === request) setCopyTextUnavailable(true);
+    });
+  }, [nativeHarness, running, runtime, tuiMouseReporting]);
+  React.useEffect(() => {
+    if (copyTextOpen && tuiMouseReporting) closeCopyText();
+  }, [closeCopyText, copyTextOpen, tuiMouseReporting]);
+  React.useEffect(() => {
+    if (!copyTextOpen) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeCopyText();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [closeCopyText, copyTextOpen]);
   const focusTerminalInput = React.useCallback(() => {
     if (!running) return;
     const input = nativeTerminalInput ? nativeTerminalInputRef.current : terminalInputRef.current;
@@ -925,9 +1015,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const sendTerminalKey = React.useCallback((value: string, applyModifiers = true) => {
     clearKeyboardInput();
-    void write(applyModifiers ? applyOneShotModifiers(value, ctrlActive, altActive) : value);
+    void write(applyModifiers ? applyOneShotModifiers(value, ctrlActive, altActive, ctrlLocked, altLocked) : value);
     releaseModifiers();
-  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
+  }, [altActive, altLocked, clearKeyboardInput, ctrlActive, ctrlLocked, releaseModifiers, write]);
 
   const sendEscape = React.useCallback(() => {
     if (toolchain === 'codex' && transcriptPagerOpen) {
@@ -948,10 +1038,19 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const pasteClipboard = React.useCallback(() => {
     clearKeyboardInput();
     void (async () => {
-      const sequence = await readTerminalPaste(nativeSessionId, displayBufferRef.current?.bracketedPaste ?? false);
-      if (sequence !== undefined && mountedRef.current) await write(sequence);
+      try {
+        const pasteRuntime = runtime?.readClipboardText && runtime.isBracketedPaste
+          ? {readClipboardText: runtime.readClipboardText, isBracketedPaste: runtime.isBracketedPaste}
+          : runtime === null ? null : nativeTerminalRuntime;
+        const sequence = await readTerminalPaste(nativeSessionId, displayBufferRef.current?.bracketedPaste ?? false, pasteRuntime);
+        if (sequence !== undefined && mountedRef.current) await write(sequence);
+      } catch (error) {
+        if (mountedRef.current && typeof error === 'object' && error !== null && 'code' in error && error.code === 'clipboard_too_large') {
+          Alert.alert('Text too large to paste', 'The terminal can paste up to 262,144 characters at a time.');
+        }
+      }
     })();
-  }, [clearKeyboardInput, nativeSessionId, write]);
+  }, [clearKeyboardInput, nativeSessionId, runtime, write]);
 
   const restartApp = React.useCallback(() => {
     void start(true);
@@ -1038,8 +1137,18 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     void write(applyOneShotModifiers('\r', ctrlActive, altActive));
     releaseModifiers();
   }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
-  const toggleCtrl = React.useCallback(() => setCtrlActive(value => !value), []);
-  const toggleAlt = React.useCallback(() => setAltActive(value => !value), []);
+  const toggleCtrl = React.useCallback(() => {
+    const now = Date.now();
+    const doubleTap = now - ctrlTapAt.current <= 350;
+    ctrlTapAt.current = now;
+    setCtrlMode(mode => mode === 'off' ? 'once' : mode === 'once' && doubleTap ? 'locked' : 'off');
+  }, []);
+  const toggleAlt = React.useCallback(() => {
+    const now = Date.now();
+    const doubleTap = now - altTapAt.current <= 350;
+    altTapAt.current = now;
+    setAltMode(mode => mode === 'off' ? 'once' : mode === 'once' && doubleTap ? 'locked' : 'off');
+  }, []);
 
   React.useEffect(() => {
     const activeSession = activeSessionRef.current;
@@ -1104,7 +1213,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     <>
       <StatusBar barStyle="light-content" />
       <View style={styles.safeArea} testID="terminal-screen">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} collapsable={false} importantForAccessibility={copyTextOpen ? 'no-hide-descendants' : 'auto'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
           <TerminalHeader onBack={onBack} onHome={onHome} />
 
           <View onLayout={handleOutputLayout} style={styles.output}>
@@ -1177,10 +1286,12 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             <NativeTerminalInput
               ref={nativeTerminalInputRef}
               sessionId={terminalInputSessionId}
-              terminalEnabled={running}
-              terminalAutoFocus
+              terminalEnabled={running && !copyTextOpen}
+              terminalAutoFocus={!copyTextOpen}
               ctrlActive={ctrlActive}
               altActive={altActive}
+              ctrlLocked={ctrlLocked}
+              altLocked={altLocked}
               onModifiersConsumed={releaseModifiers}
               keyboardShowRequest={keyboardShowRequest}
               keyboardHideRequest={keyboardHideRequest}
@@ -1188,7 +1299,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               onLayout={() => {
                 const wasLayoutReady = inputLayoutReadyRef.current;
                 inputLayoutReadyRef.current = true;
-                if (running && !wasLayoutReady) nativeTerminalInputRef.current?.focus();
+                if (running && !copyTextOpen && !wasLayoutReady) nativeTerminalInputRef.current?.focus();
               }}
               pointerEvents="none"
               style={styles.keyboardInput}
@@ -1200,15 +1311,15 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect={false}
-              autoFocus
-              editable={running}
+              autoFocus={!copyTextOpen}
+              editable={running && !copyTextOpen}
               importantForAutofill="noExcludeDescendants"
               onChangeText={handleTerminalText}
               onKeyPress={handleTerminalKeyPress}
               onLayout={() => {
                 const wasLayoutReady = inputLayoutReadyRef.current;
                 inputLayoutReadyRef.current = true;
-                if (running && !wasLayoutReady) terminalInputRef.current?.focus();
+                if (running && !copyTextOpen && !wasLayoutReady) terminalInputRef.current?.focus();
               }}
               onSubmitEditing={submitTerminalInput}
               submitBehavior="submit"
@@ -1232,6 +1343,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           {sessionLimitReached || appExitVisible || installFailureVisible ? null : <TerminalControls
             altActive={altActive}
             ctrlActive={ctrlActive}
+            altLocked={altLocked}
+            ctrlLocked={ctrlLocked}
             keyboardVisible={keyboardVisible}
             onArrow={sendArrow}
             onEscape={sendEscape}
@@ -1242,11 +1355,31 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             onToggleAlt={toggleAlt}
             onToggleCtrl={toggleCtrl}
             onToggleTranscriptPager={toggleCodexTranscriptPager}
+            onCopyText={openCopyText}
+            copyTextDisabled={tuiMouseReporting}
             running={running}
             toolchain={toolchain}
             transcriptPagerOpen={transcriptPagerOpen}
           />}
         </KeyboardAvoidingView>
+        {copyTextOpen ? (
+          <View accessibilityViewIsModal style={styles.copyTextOverlay} testID="terminal-copy-text-screen">
+            <View style={styles.copyTextHeader}>
+              <Text style={styles.copyTextTitle}>TERMINAL TEXT</Text>
+              <Pressable accessibilityLabel="Back to terminal" accessibilityRole="button" onPress={closeCopyText} style={styles.copyTextBack} testID="terminal-copy-text-back">
+                <Text style={styles.copyTextBackLabel}>BACK</Text>
+              </Pressable>
+            </View>
+            {copyTextUnavailable ? <Text style={styles.copyTextNotice}>Terminal text is no longer available.</Text> : null}
+            {copyTextSnapshot?.truncated ? <Text style={styles.copyTextNotice}>Showing the most recent terminal text.</Text> : null}
+            {copyTextSnapshot === undefined && !copyTextUnavailable ? <Text style={styles.copyTextNotice}>Preparing terminal text…</Text> : null}
+            {copyTextSnapshot?.text ? (
+              <ScrollView contentContainerStyle={styles.copyTextContent} keyboardShouldPersistTaps="handled" style={styles.copyTextScroll} testID="terminal-copy-text-scroll">
+                <Text selectable selectionColor={uiColors.accent} style={styles.copyTextBody} testID="terminal-copy-text-content">{copyTextSnapshot.text}</Text>
+              </ScrollView>
+            ) : copyTextSnapshot !== undefined && !copyTextUnavailable ? <Text style={styles.copyTextNotice}>The terminal is empty.</Text> : null}
+          </View>
+        ) : null}
       </View>
     </>
   );
@@ -1265,6 +1398,15 @@ const styles = StyleSheet.create({
   logToggleText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
   historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
   keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
+  copyTextOverlay: {backgroundColor: TERMINAL_BACKGROUND, bottom: 0, elevation: 30, left: 0, position: 'absolute', right: 0, top: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0, zIndex: 30},
+  copyTextHeader: {alignItems: 'center', borderBottomColor: uiColors.border, borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 54, paddingHorizontal: 14},
+  copyTextTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.7},
+  copyTextBack: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 36, minWidth: 66, paddingHorizontal: 10},
+  copyTextBackLabel: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.6},
+  copyTextScroll: {flex: 1},
+  copyTextContent: {padding: 14},
+  copyTextBody: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, lineHeight: 19},
+  copyTextNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, paddingHorizontal: 14, paddingTop: 12},
 });
 
 export default TerminalScreen;

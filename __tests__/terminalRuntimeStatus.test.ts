@@ -328,6 +328,8 @@ describe('typed install/reset wrappers', () => {
     const reply = (line: unknown) => ({readProvisionProgress: jest.fn().mockResolvedValue({status: 'success', line})});
     await expect(readProvisionProgress(reply('Downloading packages… 37%'))).resolves.toBe('Downloading packages… 37%');
     await expect(readProvisionProgress(reply('Installing packages… 100%'))).resolves.toBe('Installing packages… 100%');
+    await expect(readProvisionProgress(reply('Waiting for another install to finish…'))).resolves.toBe('Waiting for another install to finish…');
+    await expect(readProvisionProgress(reply('Waiting for another install to finish… rm -rf /'))).resolves.toBeUndefined();
     await expect(readProvisionProgress(reply(undefined))).resolves.toBeUndefined();
     await expect(readProvisionProgress(reply('rm -rf / … 5%'))).resolves.toBeUndefined();
     await expect(readProvisionProgress(reply('Installing packages… 1000%'))).resolves.toBeUndefined();

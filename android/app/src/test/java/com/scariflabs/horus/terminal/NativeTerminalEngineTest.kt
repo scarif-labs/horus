@@ -10,6 +10,87 @@ import org.junit.Test
 
 class NativeTerminalEngineTest {
   @Test
+  fun copyTextOmitsPaddingBeforeWrappedWideCharacter() {
+    val engine = NativeTerminalEngine("s-native-copy-wide", 2, 4) { _, _ -> }
+    try {
+      assertTrue(engine.enqueue(1L, "abc中".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines[1].text[0] == "中" }
+      assertEquals("abc中", NativeTerminalText.from(frame.lines).text)
+    } finally { engine.close() }
+  }
+
+  @Test
+  fun copyTextPreservesSpacesAtSoftWrap() {
+    val engine = NativeTerminalEngine("s-native-copy-spaces", 2, 4) { _, _ -> }
+    try {
+      assertTrue(engine.enqueue(1L, "ab  c".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines[1].text[0] == "c" }
+      assertEquals("ab  c", NativeTerminalText.from(frame.lines).text)
+    } finally { engine.close() }
+  }
+  @Test
+  fun copyTextJoinsSoftWrapsAcrossScrollbackAndKeepsWideCharacters() {
+    val engine = NativeTerminalEngine("s-native-copy-text", 2, 4) { _, _ -> }
+    try {
+      assertTrue(engine.enqueue(1L, "abcdEFGH中\r\nlast".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.contentRows == 4 && it.lines.last().text[0] == "l" }
+      assertTrue(frame.lines[1].wrapped)
+      assertTrue(frame.lines[2].wrapped)
+      assertFalse(frame.lines[0].wrapped)
+      assertEquals("abcdEFGH中\nlast", NativeTerminalText.from(frame.lines).text)
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun copyTextKeepsHardLineBreaksWhenTheCursorWasAtTheRightEdge() {
+    val engine = NativeTerminalEngine("s-native-copy-hard-break", 3, 4) { _, _ -> }
+    try {
+      assertTrue(engine.enqueue(1L, "abcd\r\nwxyz".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines[1].text[0] == "w" }
+      assertFalse(frame.lines[1].wrapped)
+      assertEquals("abcd\nwxyz", NativeTerminalText.from(frame.lines).text)
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun copyTextCapsPathologicalCombiningCellsAndKeepsNewestLines() {
+    val lines = Array(10) { index ->
+      NativeTerminalEngine.FrameRow(
+        text = Array(500) { "${index}${"x".repeat(63)}" },
+        width = ByteArray(500) { 1 },
+        foreground = IntArray(500),
+        background = IntArray(500),
+        flags = IntArray(500),
+        wrapped = false,
+      )
+    }
+    val snapshot = NativeTerminalText.from(lines)
+    assertTrue(snapshot.truncated)
+    assertTrue(snapshot.text.length <= NativeTerminalText.MAX_CHARACTERS)
+    assertTrue(snapshot.text.contains("9"))
+    assertFalse(snapshot.text.startsWith('\n'))
+  }
+
+  @Test
+  fun skinToneModifierJoinsItsWideBaseWithoutAffectingStandaloneModifiers() {
+    val engine = NativeTerminalEngine("s-emoji-test", 3, 12) { _, _ -> }
+    try {
+      assertTrue(engine.enqueue(1L, "👍🏽x".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines[0].text[0] == "👍🏽" && it.lines[0].text[2] == "x" }
+      assertEquals(2, frame.lines[0].width[0].toInt())
+      assertEquals(3, frame.cursorColumn)
+      assertTrue(engine.enqueue(2L, "\r\n中🏽".toByteArray(StandardCharsets.UTF_8)))
+      val next = awaitFrame(engine) { it.lines[1].text[0] == "中" && it.lines[1].text[2] == "🏽" }
+      assertEquals(4, next.cursorColumn)
+    } finally {
+      engine.close()
+    }
+  }
+  @Test
   fun parsesOpenCodeAlternateScreenAndPublishesNativeFrame() {
     val engine = NativeTerminalEngine("s-native-test", 4, 12) { _, _ -> }
     try {
@@ -634,6 +715,7 @@ class NativeTerminalEngineTest {
       assertEquals("$message: row $row fg", want.foreground.toList(), got.foreground.toList())
       assertEquals("$message: row $row bg", want.background.toList(), got.background.toList())
       assertEquals("$message: row $row flags", want.flags.toList(), got.flags.toList())
+      assertEquals("$message: row $row wrapped", want.wrapped, got.wrapped)
     }
   }
 

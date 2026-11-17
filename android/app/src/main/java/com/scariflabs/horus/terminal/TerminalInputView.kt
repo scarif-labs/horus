@@ -41,10 +41,11 @@ internal fun applyTerminalInputModifiers(value: String, ctrlActive: Boolean, alt
  * next commit only. A latched CTRL turned the next command into control codes,
  * and its ^S froze the terminal with no visible way out.
  */
-internal fun applyOneShotTerminalModifiers(value: String, ctrlActive: Boolean, altActive: Boolean): String {
+internal fun applyOneShotTerminalModifiers(value: String, ctrlActive: Boolean, altActive: Boolean, ctrlLocked: Boolean = false, altLocked: Boolean = false): String {
   if ((!ctrlActive && !altActive) || value.isEmpty()) return value
   val firstEnd = value.offsetByCodePoints(0, 1)
-  return applyTerminalInputModifiers(value.substring(0, firstEnd), ctrlActive, altActive) + value.substring(firstEnd)
+  return applyTerminalInputModifiers(value.substring(0, firstEnd), ctrlActive, altActive) +
+    applyTerminalInputModifiers(value.substring(firstEnd), ctrlLocked, altLocked)
 }
 
 private class ModifiersConsumedEvent(surfaceId: Int, viewTag: Int) : Event<ModifiersConsumedEvent>(surfaceId, viewTag) {
@@ -141,6 +142,8 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
   private var wantsAutoFocus = false
   private var ctrlActive = false
   private var altActive = false
+  private var ctrlLocked = false
+  private var altLocked = false
   private var lastKeyboardShowRequest = 0
   private var lastKeyboardHideRequest = 0
   private var lastLineResetRequest = 0
@@ -226,6 +229,10 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
   fun setAltActive(value: Boolean) {
     altActive = value
   }
+
+  fun setCtrlLocked(value: Boolean) { ctrlLocked = value }
+
+  fun setAltLocked(value: Boolean) { altLocked = value }
 
   fun setKeyboardShowRequest(value: Int) {
     if (value == lastKeyboardShowRequest) return
@@ -324,7 +331,7 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
     val edit = terminalLineEdit(sentLine, editable.toString())
     sentLine = editable.toString()
     val modified = edit.insert.isNotEmpty() && (ctrlActive || altActive)
-    val insert = if (modified) applyOneShotTerminalModifiers(edit.insert, ctrlActive, altActive) else edit.insert
+    val insert = if (modified) applyOneShotTerminalModifiers(edit.insert, ctrlActive, altActive, ctrlLocked, altLocked) else edit.insert
     write("\u007f".repeat(edit.deletes) + insert)
     if (modified) {
       releaseModifiers()
@@ -355,8 +362,8 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
 
   /** Clears CTRL/ALT here at once and tells React Native to clear its buttons. */
   private fun releaseModifiers() {
-    ctrlActive = false
-    altActive = false
+    if (!ctrlLocked) ctrlActive = false
+    if (!altLocked) altActive = false
     if (id == NO_ID) return
     val reactContext = context as? ThemedReactContext ?: return
     UIManagerHelper.getEventDispatcher(reactContext)?.dispatchEvent(
