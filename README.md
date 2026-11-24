@@ -29,10 +29,10 @@ No root. No Termux. Open source.
 
 <br>
 
-Horus gives your phone a full Alpine Linux ARM64 workspace and a proper
-terminal to drive it, then puts the coding agents one tap away. Pick Claude
-Code, Codex, OpenCode, or a plain zsh shell, point it at a project, and let it
-work; sessions keep running with the screen off.
+Horus gives your phone a full ARM64 Linux workspace (Alpine, or Debian if you
+prefer) and a proper terminal to drive it, then puts the coding agents one tap
+away. Pick Claude Code, Codex, OpenCode, or a plain zsh shell, point it at a
+project, and let it work; sessions keep running with the screen off.
 
 For the launch demo, Claude Code downloaded a film, installed ffmpeg, and cut
 a trailer, while Codex trained a neural network from scratch to 97.97% on
@@ -46,8 +46,9 @@ MNIST. Both ran on a budget phone from 2021.
    or download the APK from [GitHub Releases](https://github.com/scarif-labs/horus/releases/latest).
    Both are the same F-Droid-signed file, so you can switch between them and
    keep your data.
-2. **Open Horus and set a password.** It downloads Alpine Linux (a few MB) and
-   sets up the workspace.
+2. **Open Horus, pick Alpine or Debian, and set a password.** It downloads
+   Linux (a few MB for Alpine, about 17 MB for Debian) and sets up the
+   workspace.
 3. **Tap an agent.** It installs on first open, and you sign in to your
    account inside the agent itself.
 
@@ -60,9 +61,11 @@ You need an ARM64 phone on Android 7.0 or newer. New to all this? The
 <tr><td>
 
 ### 𓉐 A real Linux box
-Alpine Linux in app storage, checked against a pinned SHA-256 before it's
-unpacked. `git`, `curl`, `jq`, `rg`, `python3`, and Node arrive when you first
-need them, and `apk add` gets you the rest.
+Alpine Linux in app storage, or Debian 13 (experimental) for programs that
+need glibc, checked against a pinned SHA-256 before it's unpacked. `git`,
+`curl`, `jq`, `rg`, `python3`, and Node arrive when you first need them, and
+`apk add` or `apt install` gets you the rest. You get your own user with
+`sudo`, and can add a second user on the other distro later in Settings.
 
 </td></tr>
 <tr><td>
@@ -76,8 +79,9 @@ time you open them, with the installer output right there in the terminal.
 
 ### 𓏞 A terminal that behaves
 Native PTY and renderer with resize, Ctrl‑C, and job control. The key bar
-adds Esc, Tab, arrows, and sticky Ctrl/Alt for everything a phone keyboard
-leaves out.
+adds Esc, Tab, arrows, and Ctrl/Alt for everything a phone keyboard leaves
+out (tap for one key, double-tap to lock). COPY opens the screen and
+scrollback as selectable text.
 
 </td></tr>
 <tr><td>
@@ -138,7 +142,7 @@ Kotlin native layer (android/app/src/main/java/com/scariflabs/horus/terminal)
   └─ NativeTerminalEngine / TerminalCanvasView  VT parsing and rendering
         │
         ▼
-terminal_pty.c (JNI) ── PRoot (native/, built from source) ── Alpine rootfs
+terminal_pty.c (JNI) ── PRoot (native/, built from source) ── Alpine or Debian rootfs
 ```
 
 Each agent runs as its own guest user (UIDs 61001–61003) with a private home,
@@ -225,7 +229,7 @@ pinned toolchain, local commands, required checks, and release acceptance.
 
 | Permission | Why |
 | :-- | :-- |
-| `INTERNET`, `ACCESS_NETWORK_STATE` | Download Alpine, packages, and agents; show network state on the home screen |
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Download Linux (Alpine or Debian), packages, and agents; show network state on the home screen |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep terminal sessions running in a separate `:terminal` process while the UI is closed |
 | `POST_NOTIFICATIONS` | One notification per running session, and "waiting for you" when an agent finishes a turn |
 | `WAKE_LOCK` | Keep the CPU awake while a session is running |
@@ -260,7 +264,7 @@ in fdroiddata. New versions are picked up automatically from `vX.Y.Z` tags.
 
 **Anti-features**
 
-- **NonFreeNet.** Horus downloads Alpine Linux, its packages, and the coding
+- **NonFreeNet.** Horus downloads Alpine or Debian, its packages, and the coding
   agents from their upstream servers. Claude Code and Codex need accounts with
   their providers.
 - **NonFreeAdd.** Horus offers to install Claude Code, which is proprietary.
@@ -291,8 +295,12 @@ No binaries are committed except `android/gradle/wrapper/gradle-wrapper.jar`.
 **Runtime downloads:** a pinned Alpine minirootfs from
 `dl-cdn.alpinelinux.org`, checked against a SHA-256 in
 [`AlpineRootfsCatalog.kt`](android/app/src/main/java/com/scariflabs/horus/terminal/AlpineRootfsCatalog.kt),
-then Alpine packages, then each agent from its publisher the first time it is
-opened.
+or, if you pick Debian, a Debian 13 slim rootfs from this repo's
+[`rootfs-debian-13.7-20261005`](https://github.com/scarif-labs/horus/releases/tag/rootfs-debian-13.7-20261005)
+release, checked against a SHA-256 in
+[`RootfsCatalog.kt`](android/app/src/main/java/com/scariflabs/horus/terminal/RootfsCatalog.kt);
+then that distro's packages, then each agent from its publisher the first time
+it is opened.
 
 </details>
 
