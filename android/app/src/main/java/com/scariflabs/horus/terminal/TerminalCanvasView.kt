@@ -179,6 +179,8 @@ class TerminalCanvasView(context: Context) : View(context) {
   private var anchorStart: IntArray? = null
   private var anchorEnd: IntArray? = null
   private var handleFixed: IntArray? = null
+  /** The finger moved after the long press, so the selection follows it. */
+  private var selectionDragged = false
   /** From the finger to the centre of the cell the grabbed handle marks. */
   private var handleOffsetX = 0f
   private var handleOffsetY = 0f
@@ -720,10 +722,17 @@ class TerminalCanvasView(context: Context) : View(context) {
             lastTouchY = y
           }
           TouchMode.SELECT, TouchMode.HANDLE -> {
-            lastTouchX = x
-            lastTouchY = y
-            dragSelectionTo(x, y)
-            updateAutoScroll(y)
+            // A held finger jitters: extend the long-pressed word only once
+            // the finger really moves, or a press beside it grabs the gap.
+            if (touchMode == TouchMode.SELECT && !selectionDragged) {
+              selectionDragged = hypot(x - downX, y - downY) > touchSlop
+            }
+            if (touchMode == TouchMode.HANDLE || selectionDragged) {
+              lastTouchX = x
+              lastTouchY = y
+              dragSelectionTo(x, y)
+              updateAutoScroll(y)
+            }
           }
           else -> Unit
         }
@@ -918,6 +927,7 @@ class TerminalCanvasView(context: Context) : View(context) {
     anchorStart = intArrayOf(word[0], word[1])
     anchorEnd = intArrayOf(word[2], word[3])
     selectionBoundsFrame = null
+    selectionDragged = false
     touchMode = TouchMode.SELECT
     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     lastEvent?.let(::claimGesture)
