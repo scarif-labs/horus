@@ -1833,4 +1833,67 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('uses padding keyboard avoidance without remounting or restoring stale portrait viewport across rotation', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.resizeSession = jest.fn(runtime.spec.resizeSession);
+    const keyboardListeners: Partial<Record<'keyboardDidShow' | 'keyboardDidHide', (event: never) => void>> = {};
+    jest.spyOn(Keyboard, 'addListener').mockImplementation((event, listener) => {
+      if (event === 'keyboardDidShow' || event === 'keyboardDidHide') {
+        keyboardListeners[event] = listener as (event: never) => void;
+      }
+      return {remove: jest.fn()};
+    });
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} />);
+      await flushAsync();
+    });
+
+    const kav = renderer.root.findByType(KeyboardAvoidingView);
+    expect(kav.props.behavior).toBe('padding');
+
+    // Only TerminalGrid (terminal-output) handles onLayout; parent wrapper (<View style={styles.output}>) does not duplicate it.
+    const terminalOutput = renderer.root.findByProps({testID: 'terminal-output'});
+    expect(terminalOutput.parent?.parent?.props.onLayout).toBeUndefined();
+
+    // Commit portrait viewport while keyboard is hidden.
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 720}}});
+      await flushAsync();
+    });
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 40, columns: 50}));
+
+    // Keyboard opens in portrait, then user rotates to landscape and keyboard hides.
+    await ReactTestRenderer.act(async () => {
+      keyboardListeners.keyboardDidShow?.({} as never);
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 360}}});
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 800, height: 270}}});
+      keyboardListeners.keyboardDidHide?.({} as never);
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+    // Must stay at landscape dimensions (width 800 -> 100 columns, 270 -> 15 rows) rather than reverting to portrait.
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 15, columns: 100}));
+
+    // Rotate back to portrait; KeyboardAvoidingView instance must not have remounted.
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 720}}});
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+    expect(renderer.root.findByType(KeyboardAvoidingView)).toBe(kav);
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 40, columns: 50}));
+
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
 });

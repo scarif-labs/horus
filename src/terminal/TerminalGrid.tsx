@@ -327,10 +327,13 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const nativeFrameMetaRef = React.useRef(nativeFrameMeta);
   const nativeScreen = React.useRef<NativeScreenState>({hasContent: false, alternate: false, mouseTracking: false});
   nativeFrameMetaRef.current = nativeFrameMeta;
+  const nativeRowsRef = React.useRef(nativeRows);
+  nativeRowsRef.current = nativeRows;
   const touchStart = React.useRef<TerminalTouch | null>(null);
   const nativeScrollOffset = React.useRef(0);
   const nativeExpandedScrollOffset = React.useRef(0);
   const nativeViewportHeight = React.useRef(0);
+  const nativeViewportWidth = React.useRef(0);
   const nativeRestorePending = React.useRef(false);
   // The cursor row changes on nearly every TUI redraw but is only read when
   // the keyboard resizes the viewport, so keep it out of render state.
@@ -380,8 +383,8 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
 
   React.useEffect(() => {
     nativeCursorRow.current = 0;
-    setNativeFrameMeta({alternate: false, contentRows: nativeRows, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
-  }, [nativeRows, nativeSession]);
+    setNativeFrameMeta({alternate: false, contentRows: nativeRowsRef.current, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
+  }, [nativeSessionId, nativeSession]);
 
   // A restarted app is a new session on the same screen. The screen resets
   // its copy of the native screen state, so forget ours too: otherwise a new
@@ -460,24 +463,49 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     if (atTail && !wasFollowingTail) setDisplayFrame(latestFrame.current);
   }, [nativeSession, notifyScrollState]);
 
-  const handleNativeScrollLayout = React.useCallback((event: {nativeEvent: {layout: {height: number}}}) => {
-    const height = event.nativeEvent.layout.height;
+  const handleNativeScrollLayout = React.useCallback((event: {nativeEvent: {layout: {width?: number; height: number}}}) => {
+    const {height} = event.nativeEvent.layout;
+    const width = event.nativeEvent.layout.width ?? 0;
     if (!Number.isFinite(height) || height <= 0) return;
     const previousHeight = nativeViewportHeight.current;
+    const previousWidth = nativeViewportWidth.current;
     nativeViewportHeight.current = height;
+    if (width > 0) nativeViewportWidth.current = width;
+
+    const widthChanged = previousWidth > 0 && width > 0 && width !== previousWidth;
+    const meta = nativeFrameMetaRef.current;
+
+    if (widthChanged) {
+      if (meta.alternate || meta.contentRows * TERMINAL_CELL_HEIGHT <= height) {
+        nativeScrollOffset.current = 0;
+        nativeExpandedScrollOffset.current = 0;
+        nativeRestorePending.current = false;
+        nativeScroll.current?.scrollTo({y: 0, animated: false});
+      }
+      return;
+    }
+
+    if (meta.alternate && meta.contentRows * TERMINAL_CELL_HEIGHT <= height) {
+      nativeScrollOffset.current = 0;
+      nativeExpandedScrollOffset.current = 0;
+      nativeRestorePending.current = false;
+      nativeScroll.current?.scrollTo({y: 0, animated: false});
+      return;
+    }
+
     if (!followTail.current || previousHeight <= 0 || height >= previousHeight || nativeRestorePending.current) return;
     nativeRestorePending.current = true;
-    const targetOffset = nativeFrameMeta.alternate
+    const targetOffset = meta.alternate
       ? nativeKeyboardRestoreOffset({
         previousOffset: nativeExpandedScrollOffset.current,
-        contentRows: nativeFrameMeta.contentRows,
+        contentRows: meta.contentRows,
         viewportHeight: height,
         cursorRow: nativeCursorRow.current,
       })
       : nativeTailOffset({
-        contentRows: nativeFrameMeta.contentRows,
-        screenRows: nativeFrameMeta.rows,
-        lastContentRow: nativeFrameMeta.lastContentRow,
+        contentRows: meta.contentRows,
+        screenRows: meta.rows,
+        lastContentRow: meta.lastContentRow,
         cursorRow: nativeCursorRow.current,
         viewportHeight: height,
       });
@@ -487,7 +515,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
         nativeRestorePending.current = false;
       });
     });
-  }, [nativeFrameMeta]);
+  }, []);
 
   const handleNativeFrameMeta = React.useCallback((event: {nativeEvent: NativeTerminalFrameMeta}) => {
     const {alternate: nextAlternate, contentRows, rows, cursorRow, mouseTracking, mouseSgr} = event.nativeEvent;
@@ -502,7 +530,12 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     // starts. Scroll just far enough to keep the cursor in view. The user
   // cannot scroll this view themselves, so there is no position to keep.
     const viewportHeight = nativeViewportHeight.current;
-    if (nextAlternate && cursorMoved && !nativeRestorePending.current && viewportHeight > 0) {
+    if (nextAlternate && viewportHeight > 0 && contentRows * TERMINAL_CELL_HEIGHT <= viewportHeight && nativeScrollOffset.current > 0) {
+      nativeScrollOffset.current = 0;
+      nativeExpandedScrollOffset.current = 0;
+      nativeRestorePending.current = false;
+      nativeScroll.current?.scrollTo({y: 0, animated: false});
+    } else if (nextAlternate && cursorMoved && !nativeRestorePending.current && viewportHeight > 0) {
       const target = nativeKeyboardRestoreOffset({
         previousOffset: nativeScrollOffset.current,
         contentRows,
@@ -675,6 +708,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
               nativeScroll.current?.scrollTo({
                 y: nativeTailOffset({
                   contentRows: nativeFrameMeta.contentRows,
+                  screenRows: nativeFrameMeta.rows,
                   lastContentRow: nativeFrameMeta.lastContentRow,
                   cursorRow: nativeCursorRow.current,
                   viewportHeight: nativeViewportHeight.current,

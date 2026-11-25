@@ -160,13 +160,29 @@ class TerminalCanvasView(context: Context) : View(context) {
   }
 
   fun setNativeRows(value: Int) {
-    nativeRows = value.coerceIn(2, 250)
-    if (nativeSessionId != null) bindNativeEngine()
+    val coerced = value.coerceIn(2, 250)
+    if (nativeRows == coerced) return
+    nativeRows = coerced
+    if (nativeSessionId != null) {
+      if (nativeEngine != null && nativeSubscription != null) {
+        invalidate()
+      } else {
+        bindNativeEngine()
+      }
+    }
   }
 
   fun setNativeColumns(value: Int) {
-    nativeColumns = value.coerceIn(2, 500)
-    if (nativeSessionId != null) bindNativeEngine()
+    val coerced = value.coerceIn(2, 500)
+    if (nativeColumns == coerced) return
+    nativeColumns = coerced
+    if (nativeSessionId != null) {
+      if (nativeEngine != null && nativeSubscription != null) {
+        invalidate()
+      } else {
+        bindNativeEngine()
+      }
+    }
   }
 
   fun setNativeLoadingText(value: String?) {
