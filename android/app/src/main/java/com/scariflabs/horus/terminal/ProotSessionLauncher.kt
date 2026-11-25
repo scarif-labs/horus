@@ -400,6 +400,9 @@ class ProotSessionLauncher(
       add("XDG_DATA_HOME=$launchHomePath/.local/share")
       add("XDG_CACHE_HOME=$launchHomePath/.cache")
       add("TERM=$term")
+      // The terminal opens OSC 8 hyperlinks on a tap. Without this, Node CLIs
+      // (Claude Code, npm) print bare URLs that wrapping can cut in two.
+      add("FORCE_HYPERLINK=1")
       if (toolchainTarget == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE) {
         // Claude's fullscreen alternate buffer owns its own sparse viewport
         // and bypasses terminal scrollback. Keep conversation output in the

@@ -150,7 +150,9 @@ class VtConformanceTest {
           widthDiffs += "$at: expected ${cell.width}, actual ${got.width[column]}"
         }
         val attrs = mutableListOf<String>()
-        if (cell.flags != got.flags[column]) attrs += "flags ${flagNames(cell.flags)} vs ${flagNames(got.flags[column])}"
+        // The hyperlink flag marks OSC 8 cells for drawing; it is not an SGR attribute.
+        val gotFlags = got.flags[column] and NativeTerminalEngine.FLAG_HYPERLINK.inv()
+        if (cell.flags != gotFlags) attrs += "flags ${flagNames(cell.flags)} vs ${flagNames(gotFlags)}"
         if (cell.background != got.background[column]) attrs += "bg ${hex(cell.background)} vs ${hex(got.background[column])}"
         val foregroundVisible = cell.text.isNotBlank() ||
           cell.flags and (NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH) != 0

@@ -311,6 +311,8 @@ internal class NativeTerminalEngine(
     const val FLAG_STRIKETHROUGH = 1 shl 4
     const val FLAG_INVISIBLE = 1 shl 5
     const val FLAG_INVERSE = 1 shl 6
+    /** An OSC 8 hyperlink covers the cell; tapping it opens the link. */
+    const val FLAG_HYPERLINK = 1 shl 7
     /** Cells tried, in order, when a long press lands between words. */
     private val WORD_SEARCH_OFFSETS = listOf(0, 1, -1, 2, -2)
 

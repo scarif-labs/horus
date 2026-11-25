@@ -148,9 +148,9 @@ class NativeTerminalViewportTest {
     val engine = NativeTerminalEngine("s-cursor", 4, 20) { _, _ -> }
     try {
       assertTrue(engine.enqueue(1L, lines(0, 20)))
-      awaitFrame(engine) { it.cursorVisible }
+      awaitFrame(engine) { it.cursorVisible && it.totalRows >= 20 }
       engine.setViewport(follow = false, topRow = 0, above = 0, below = 0)
-      val scrolled = awaitFrame(engine) { it.viewportTop == 0 }
+      val scrolled = awaitFrame(engine) { it.viewportTop == 0 && !it.followingActive }
       assertFalse(scrolled.cursorVisible)
       assertEquals(-1, scrolled.cursorRow)
     } finally {

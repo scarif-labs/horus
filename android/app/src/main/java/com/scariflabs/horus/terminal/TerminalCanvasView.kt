@@ -1314,7 +1314,8 @@ class TerminalCanvasView(context: Context) : View(context) {
       val width = line.width[column].toInt()
       if (width <= 0) continue
       while (linkIndex < rowLinks.size && rowLinks[linkIndex + 1] <= column) linkIndex += 2
-      val linked = linkIndex < rowLinks.size && rowLinks[linkIndex] <= column
+      val linked = (linkIndex < rowLinks.size && rowLinks[linkIndex] <= column) ||
+        line.flags[column] and NativeTerminalEngine.FLAG_HYPERLINK != 0
       val cellFlags = if (linked) {
         (line.flags[column] and NATIVE_STYLE_FLAGS) or NativeTerminalEngine.FLAG_UNDERLINE
       } else {

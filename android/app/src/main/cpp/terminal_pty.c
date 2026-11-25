@@ -430,6 +430,8 @@ static void free_strings(char **values) {
 #define HORUS_FLAG_UNDERLINE (1 << 3)
 #define HORUS_FLAG_STRIKETHROUGH (1 << 4)
 #define HORUS_FLAG_INVISIBLE (1 << 5)
+/* An OSC 8 hyperlink covers the cell. 1 << 6 is the Kotlin side's inverse flag, resolved here instead. */
+#define HORUS_FLAG_HYPERLINK (1 << 7)
 
 #define HORUS_DEFAULT_FG 0xFFF2F4F5
 #define HORUS_DEFAULT_BG 0xFF090C0D
@@ -1210,6 +1212,12 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSyncRender(
             if (style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE) cell_flags |= HORUS_FLAG_INVISIBLE;
             if (GHOSTTY_STYLE_UNDERLINE(style) != 0) cell_flags |= HORUS_FLAG_UNDERLINE;
             if (style.flags & GHOSTTY_STYLE_FLAG_INVERSE) inverse = true;
+          }
+        }
+        if (cell_text_len > 0) {
+          bool hyperlink = false;
+          if (ghostty_cell_get(raw_cell, GHOSTTY_CELL_DATA_HAS_HYPERLINK, &hyperlink) == GHOSTTY_SUCCESS && hyperlink) {
+            cell_flags |= HORUS_FLAG_HYPERLINK;
           }
         }
         /* Unstyled blank cells can still carry a background (erase with a colour). */

@@ -107,6 +107,74 @@ class NativeTerminalLinksTest {
   }
 
   @Test
+  fun followsAUrlAnAppWrappedInsideAPaddedPanel() {
+    // OpenCode wraps text inside a panel with a right margin, so the row
+    // ends well before the edge with "http://localhost:" and the port below.
+    val engine = NativeTerminalEngine("s-links-panel", 6, 40) { _, _ -> }
+    try {
+      val output = "  Site is live at http://localhost:   \r\n  8000 (files: index.html).\r\n" +
+        "  See https://example.com.   \r\n  next line\r\n"
+      assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines.any { line -> line.text[2] == "n" } }
+      val first = frame.lines.indexOfFirst { it.text[2] == "S" && it.text[3] == "i" }
+      assertEquals("http://localhost:8000", NativeTerminalLinks.urlAt(frame.lines, first, 20))
+      assertEquals("http://localhost:8000", NativeTerminalLinks.urlAt(frame.lines, first + 1, 3))
+      assertNull(NativeTerminalLinks.urlAt(frame.lines, first + 1, 8))
+      val cache = NativeTerminalLinks.WrappedLinkCache()
+      assertArrayEquals(intArrayOf(18, 35), NativeTerminalLinks.rowLinks(frame.lines, first, cache))
+      assertArrayEquals(intArrayOf(2, 6), NativeTerminalLinks.rowLinks(frame.lines, first + 1, cache))
+      // A finished URL at the end of a row does not swallow the next row.
+      val see = frame.lines.indexOfFirst { it.text[2] == "S" && it.text[3] == "e" }
+      assertEquals("https://example.com", NativeTerminalLinks.urlAt(frame.lines, see, 10))
+      assertSame(NativeTerminalLinks.NONE, NativeTerminalLinks.rowLinks(frame.lines, see + 1, cache))
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun marksOsc8HyperlinkCells() {
+    val engine = NativeTerminalEngine("s-links-osc8", 3, 30) { _, _ -> }
+    try {
+      val output = "see \u001b]8;;https://a.example/x\u001b\\the docs\u001b]8;;\u001b\\ now"
+      assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines.any { line -> line.text[13] == "n" } }
+      val row = frame.lines.first { it.text[0] == "s" }
+      val linked = (0 until 17).filter { row.flags[it] and NativeTerminalEngine.FLAG_HYPERLINK != 0 }
+      assertEquals((4 until 12).toList(), linked)
+      val index = frame.lines.indexOf(row)
+      assertEquals("https://a.example/x", NativeTerminalLinks.urlAt(engine, frame, index, 6))
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun joinsOnlyUrlBreaksThatCannotEndAUrl() {
+    val engine = NativeTerminalEngine("s-links-breaks", 10, 40) { _, _ -> }
+    try {
+      val output = "  https://example.com/docs/   \r\n  Then run it\r\n" +
+        "  https://example.com/a-   \r\n  long-path ok\r\n" +
+        "  https://example.com:   \r\n  - item\r\n" +
+        "  https://example.com/   \r\n  guide/intro done\r\n"
+      assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines.any { line -> line.text[2] == "g" } }
+      fun row(prefix: String) = frame.lines.indexOfFirst { line -> line.text.joinToString("").trim().startsWith(prefix) }
+      // A slash then a capital is a new sentence.
+      assertEquals("https://example.com/docs/", NativeTerminalLinks.urlAt(frame.lines, row("https://example.com/docs/"), 5))
+      // A hyphen break joins.
+      assertEquals("https://example.com/a-long-path", NativeTerminalLinks.urlAt(frame.lines, row("long-path"), 4))
+      // A colon needs a port; a list below is not part of the URL.
+      assertEquals("https://example.com", NativeTerminalLinks.urlAt(frame.lines, row("https://example.com:"), 5))
+      assertNull(NativeTerminalLinks.urlAt(frame.lines, row("- item"), 2))
+      // A slash then lower-case text joins.
+      assertEquals("https://example.com/guide/intro", NativeTerminalLinks.urlAt(frame.lines, row("guide/intro"), 3))
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
   fun followsUrlsAnAppWrappedWithAnIndent() {
     // Claude Code wraps its own text and indents continuation rows by two
     // spaces, so the URL is split by real line breaks.
