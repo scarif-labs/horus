@@ -61,7 +61,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
   const steps = ['Preparing workspace', 'Installing system packages', `Installing ${label}`, `Starting ${label}`];
   if (step === undefined) {
     return (
-      <View style={styles.overlay} testID="terminal-startup-progress">
+      <View collapsable={false} style={styles.overlay} testID="terminal-startup-progress">
         <View style={styles.content}>
           <HarnessMark size={56} toolchain={toolchain} />
           <Text style={styles.title}>Starting {label}</Text>
@@ -71,7 +71,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
     );
   }
   return (
-    <View style={styles.overlay} testID="terminal-install-progress">
+    <View collapsable={false} style={styles.overlay} testID="terminal-install-progress">
       <View style={styles.content}>
         <HarnessMark size={56} toolchain={toolchain} />
         <Text style={styles.title}>Setting up {label}</Text>
@@ -85,7 +85,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
                 <View style={[styles.marker, done && styles.markerDone, active && styles.markerActive]}>
                   {done ? <View style={styles.check} /> : active ? <ActivityIndicator color={uiColors.accent} size="small" /> : null}
                 </View>
-                <View>
+                <View style={styles.stepLabel}>
                   <Text style={[styles.stepText, done && styles.stepTextDone, active && styles.stepTextActive]}>{text}</Text>
                   {active && download !== undefined ? (
                     <Text style={styles.stepDetail} testID="terminal-install-download">{download}</Text>
@@ -101,12 +101,13 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
 }
 
 const styles = StyleSheet.create({
-  overlay: {backgroundColor: uiColors.background, bottom: 0, justifyContent: 'center', left: 0, paddingHorizontal: 28, position: 'absolute', right: 0, top: 0, zIndex: 4},
-  content: {alignItems: 'center'},
+  overlay: {backgroundColor: uiColors.background, bottom: 0, elevation: 4, justifyContent: 'center', left: 0, paddingHorizontal: 28, position: 'absolute', right: 0, top: 0, zIndex: 4},
+  content: {alignItems: 'center', width: '100%'},
   title: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 18, textAlign: 'center'},
   subtitle: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 16, marginTop: 8, maxWidth: 300, textAlign: 'center'},
-  steps: {alignSelf: 'stretch', gap: 14, marginTop: 28, maxWidth: 320, width: '100%', marginHorizontal: 'auto'},
+  steps: {gap: 14, marginTop: 28, maxWidth: 320, width: '100%'},
   stepRow: {alignItems: 'center', flexDirection: 'row', gap: 12},
+  stepLabel: {flexShrink: 1},
   marker: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, height: 24, justifyContent: 'center', width: 24},
   markerDone: {backgroundColor: uiColors.accent, borderColor: uiColors.accent},
   markerActive: {borderColor: uiColors.accent},
