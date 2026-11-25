@@ -692,9 +692,14 @@ class NativeTerminalEngineTest {
       assertTrue(engine.enqueue(++seq, input.toByteArray(StandardCharsets.UTF_8)))
       assertTrue(engine.enqueue(++seq, "\u001b[5n".toByteArray(StandardCharsets.UTF_8)))
       val deadline = System.nanoTime() + 2_000_000_000L
+      var sentinelAt = 0L
       while (System.nanoTime() < deadline) {
         val mark = publishesAtSentinel.get()
         if (mark >= 0 && publishes.get() > mark) return engine.currentFrame()
+        // Output that changes nothing on screen publishes no frame; once the
+        // batch after the sentinel has had time to publish, the frame stands.
+        if (mark >= 0 && sentinelAt == 0L) sentinelAt = System.nanoTime()
+        if (sentinelAt != 0L && System.nanoTime() - sentinelAt > 100_000_000L) return engine.currentFrame()
         Thread.sleep(2L)
       }
       throw AssertionError("native terminal frame was not published before the deadline")

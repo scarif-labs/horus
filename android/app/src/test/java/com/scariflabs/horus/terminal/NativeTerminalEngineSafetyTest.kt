@@ -90,7 +90,7 @@ class NativeTerminalEngineSafetyTest {
   }
 
   @Test
-  fun hyperlinksResolveOnFrameRowsBelowScrollback() {
+  fun hyperlinksResolveOnScreenRowsInScrollback() {
     val engine = NativeTerminalEngine("s-osc8-scrollback", 4, 20) { _, _ -> }
     try {
       val output = StringBuilder()
@@ -98,12 +98,15 @@ class NativeTerminalEngineSafetyTest {
       repeat(10) { output.append("line $it\r\n") }
       output.append("\u001b]8;;https://new.example\u0007new\u001b]8;;\u0007")
       assertTrue(engine.enqueue(1L, output.toString().toByteArray(StandardCharsets.UTF_8)))
-      val frame = awaitFrame(engine) { frame -> frame.lines.lastOrNull { it.hasVisibleContent }?.text?.get(0) == "n" }
-      val newRow = frame.lines.indexOfLast { it.text[0] == "n" }
-      val oldRow = frame.lines.indexOfFirst { it.text[0] == "o" }
-      assertTrue(oldRow in 0 until newRow)
-      assertEquals("https://new.example", NativeTerminalLinks.urlAt(engine, newRow, 1))
-      assertEquals("https://old.example", NativeTerminalLinks.urlAt(engine, oldRow, 1))
+      val live = awaitFrame(engine) { frame -> frame.lines.lastOrNull { it.hasVisibleContent }?.text?.get(0) == "n" }
+      val newRow = live.lines.indexOfLast { it.text[0] == "n" }
+      assertEquals("https://new.example", NativeTerminalLinks.urlAt(engine, live, newRow, 1))
+      // Scroll back to the first row: the old link is resolved by its screen row.
+      engine.setViewport(follow = false, topRow = 0, above = 0, below = 0)
+      val scrolled = awaitFrame(engine) { frame -> frame.lines.any { it.text[0] == "o" } }
+      val oldRow = scrolled.lines.indexOfFirst { it.text[0] == "o" }
+      assertEquals(0, scrolled.screenRow(oldRow))
+      assertEquals("https://old.example", NativeTerminalLinks.urlAt(engine, scrolled, oldRow, 1))
     } finally {
       engine.close()
     }

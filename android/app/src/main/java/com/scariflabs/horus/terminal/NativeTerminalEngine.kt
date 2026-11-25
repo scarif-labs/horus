@@ -9,6 +9,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 import com.scariflabs.horus.terminal.NativeTerminalEngine.Frame
 import com.scariflabs.horus.terminal.NativeTerminalEngine.FrameRow
@@ -51,9 +52,14 @@ internal object NativeTerminalEngineRegistry {
     outputGapListener = listener
   }
 
-  fun writeInput(sessionId: String, bytes: ByteArray): Boolean {
+  /**
+   * Writes to the session's PTY. [userInput] (typed or pasted text, keys)
+   * also brings the view back to the output, like a desktop terminal.
+   */
+  fun writeInput(sessionId: String, bytes: ByteArray, userInput: Boolean = true): Boolean {
     if (sessionId.isEmpty() || bytes.isEmpty()) return false
     val writer = inputWriter ?: return false
+    if (userInput) noteUserInput(sessionId)
     return runCatching {
       writer(sessionId, bytes.copyOf())
       true
@@ -64,6 +70,14 @@ internal object NativeTerminalEngineRegistry {
     val engine = obtain(sessionId, rows, columns)
     engine.resize(rows, columns)
     return engine
+  }
+
+  /** The session's engine, created at [rows] x [columns] if it has none; an existing engine keeps its size. */
+  fun attach(sessionId: String, rows: Int, columns: Int): NativeTerminalEngine = obtain(sessionId, rows, columns)
+
+  /** Input reached the session from outside the engine (for example the key bar). */
+  fun noteUserInput(sessionId: String) {
+    engines[sessionId]?.noteUserInput()
   }
 
   private fun obtain(sessionId: String, rows: Int, columns: Int): NativeTerminalEngine =
@@ -153,23 +167,53 @@ internal class NativeTerminalEngine(
   internal fun <T> withNativeHandle(block: (Long) -> T): T? =
     (delegate as? LibghosttyTerminalBackend)?.withHandle(block)
 
+  private val native: LibghosttyTerminalBackend? get() = delegate as? LibghosttyTerminalBackend
+
   /**
-   * The frame shown while the user selects text. Output keeps parsing, but
-   * the canvas and the copied text use this frame so rows do not shift under
-   * the selection. Null when nothing is selected.
+   * Moves the viewport: follow the active area, or show screen row [topRow]
+   * (0 is the top of the scrollback) first. [above]/[below] rows around the
+   * viewport are captured too, so a canvas can scroll smoothly between
+   * frames. The legacy engine keeps all its rows in every frame instead.
    */
-  @Volatile var selectionFrame: Frame? = null
-    private set
-
-  /** Freezes the current frame for selection and returns it. */
-  fun beginSelection(): Frame = selectionFrame ?: delegate.currentFrame().also { selectionFrame = it }
-
-  fun endSelection() {
-    selectionFrame = null
+  fun setViewport(follow: Boolean, topRow: Int, above: Int, below: Int) {
+    native?.setViewport(follow, topRow, above, below)
   }
 
-  /** The frame to draw: the frozen selection frame, or the live one. */
-  fun displayFrame(): Frame = selectionFrame ?: delegate.currentFrame()
+  /*
+   * Selection lives in the terminal, so it moves with the text as output
+   * arrives or the view scrolls. Cells are (column, screen row). These run
+   * on the caller's thread and republish the frame so the highlight updates.
+   */
+  fun selectWord(column: Int, screenRow: Int): IntArray? = native?.selection { h ->
+    TerminalPtyJni.nativeEngineSelectWord(h, column, screenRow)
+  }
+
+  fun selectRange(startColumn: Int, startRow: Int, endColumn: Int, endRow: Int): Boolean = native?.selection { h ->
+    TerminalPtyJni.nativeEngineSelectRange(h, startColumn, startRow, endColumn, endRow)
+  } == true
+
+  fun selectAll(): Boolean = native?.selection(TerminalPtyJni::nativeEngineSelectAll) == true
+
+  fun clearSelection() {
+    native?.selection(TerminalPtyJni::nativeEngineClearSelection)
+  }
+
+  /** {startColumn, startRow, endColumn, endRow}, inclusive, in screen rows; or null. */
+  fun selectionBounds(): IntArray? = withNativeHandle(TerminalPtyJni::nativeEngineSelectionBounds)
+
+  fun selectionText(): String? = withNativeHandle(TerminalPtyJni::nativeEngineSelectionText)
+
+  /** The frame to draw. */
+  fun displayFrame(): Frame = delegate.currentFrame()
+
+  /** Counts user input, so a canvas can return to the output when the user types. */
+  @Volatile var inputCount = 0L
+    private set
+
+  fun noteUserInput() {
+    inputCount += 1
+    delegate.wakeListeners()
+  }
 
   override val bracketedPaste: Boolean get() = delegate.bracketedPaste
   override val defaultBackground: Int get() = delegate.defaultBackground
@@ -181,6 +225,7 @@ internal class NativeTerminalEngine(
   override fun resize(newRows: Int, newColumns: Int) = delegate.resize(newRows, newColumns)
   override fun close() = delegate.close()
   override fun recoverFromOutputGap() = delegate.recoverFromOutputGap()
+  override fun wakeListeners() = delegate.wakeListeners()
 
   init {
     TerminalDebugLog.record("terminal_engine_init|sessionId=$sessionId|backend=${backend.name}")
@@ -221,7 +266,33 @@ internal class NativeTerminalEngine(
     val lastContentRow: Int,
     val mouseTracking: Boolean,
     val mouseSgr: Boolean,
-  )
+    /** Frame rows before the viewport's first row. */
+    val overscanAbove: Int = (contentRows - rows).coerceAtLeast(0),
+    /** Screen row (0 is the top of the scrollback) of the viewport's first row. */
+    val viewportTop: Int = overscanAbove,
+    /** Rows of scrollback plus the active screen. */
+    val totalRows: Int = viewportTop + rows,
+    /** The viewport follows the active area rather than showing scrollback. */
+    val followingActive: Boolean = true,
+    /** Selected columns per frame row as [start, end) pairs, -1 when unselected; null without a selection. */
+    val selection: IntArray? = null,
+    /** Two longs per frame row identifying it across frames; null when rows have no identity. */
+    val rowIds: LongArray? = null,
+    val cursorStyle: Int = CURSOR_STYLE_BLOCK,
+    val defaultForegroundColor: Int = DEFAULT_FOREGROUND,
+    val defaultBackgroundColor: Int = DEFAULT_BACKGROUND,
+    /** Mode 1007: the wheel sends arrow keys on the alternate screen. */
+    val mouseAlternateScroll: Boolean = false,
+  ) {
+    /** Screen row of frame row [index]. */
+    fun screenRow(index: Int): Int = viewportTop - overscanAbove + index
+
+    /** Frame row of [screenRow], which may be outside the frame. */
+    fun frameRow(screenRow: Int): Int = screenRow - viewportTop + overscanAbove
+
+    /** Screen row of the active area's first row. */
+    val activeTop: Int get() = totalRows - rows
+  }
 
   companion object {
     const val FLAG_BOLD = 1
@@ -231,6 +302,10 @@ internal class NativeTerminalEngine(
     const val FLAG_STRIKETHROUGH = 1 shl 4
     const val FLAG_INVISIBLE = 1 shl 5
     const val FLAG_INVERSE = 1 shl 6
+    const val CURSOR_STYLE_BAR = 0
+    const val CURSOR_STYLE_BLOCK = 1
+    const val CURSOR_STYLE_UNDERLINE = 2
+    const val CURSOR_STYLE_BLOCK_HOLLOW = 3
     const val DEFAULT_FOREGROUND = 0xFFF2F4F5.toInt()
     const val DEFAULT_BACKGROUND = 0xFF090C0D.toInt()
 
@@ -253,12 +328,40 @@ internal class LibghosttyTerminalBackend(
   private val inputWriter: (String, ByteArray) -> Unit,
 ) : ITerminalBackend {
   companion object {
-    private const val DEFAULT_RENDER_BUFFER_SIZE = 2 * 1024 * 1024
+    private const val DEFAULT_RENDER_BUFFER_SIZE = 1024 * 1024
     private val ASCII_CELL_TEXT = Array(0x80) { it.toChar().toString() }
     private const val NATIVE_FRAME_BATCH_NANOS = 16_000_000L
     private const val NATIVE_FRAME_QUIET_NANOS = 3_000_000L
     private const val SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS = 150_000_000L
     private const val MAX_RENDER_BUFFER_GROWTHS = 4
+
+    // Frame layout; must match terminal_pty.c.
+    private const val HEADER_BYTES = 128
+    private const val ROW_BYTES = 40
+    private const val CELL_BYTES = 12
+    private const val NO_CELLS = -1
+    private const val NO_SELECTION = 0xFFFF
+    private const val HDR_COLS = 1
+    private const val HDR_CURSOR_ROW = 2
+    private const val HDR_CURSOR_COL = 3
+    private const val HDR_CURSOR_VISIBLE = 4
+    private const val HDR_ALTERNATE = 5
+    private const val HDR_MOUSE_TRACKING = 6
+    private const val HDR_MOUSE_SGR = 7
+    private const val HDR_BRACKETED_PASTE = 8
+    private const val HDR_OVERSCAN_ABOVE = 9
+    private const val HDR_VIEWPORT_ROWS = 10
+    private const val HDR_DIRTY = 11
+    private const val HDR_SCROLL_TOTAL = 14
+    private const val HDR_SCROLL_OFFSET = 15
+    private const val HDR_VIEWPORT_ACTIVE = 17
+    private const val HDR_HAS_SELECTION = 18
+    private const val HDR_CURSOR_STYLE = 19
+    private const val HDR_DEFAULT_FG = 21
+    private const val HDR_DEFAULT_BG = 22
+    private const val HDR_MOUSE_ALTERNATE_SCROLL = 23
+    private const val HDR_SLOTS = 32
+    private const val DIRTY_FALSE = 0
   }
 
   override val defaultBackground: Int get() = NativeTerminalEngine.DEFAULT_BACKGROUND
@@ -267,9 +370,13 @@ internal class LibghosttyTerminalBackend(
   private sealed interface Command {
     data class Output(val seq: Long, val bytes: ByteArray) : Command
     data class Resize(val rows: Int, val columns: Int) : Command
+    /** Publish a frame now: the viewport or the selection changed. */
+    object Wake : Command
   }
 
   private data class RowKey(val b0: Long, val b1: Long)
+
+  private data class ViewportRequest(val follow: Boolean, val topRow: Int, val above: Int, val below: Int)
 
   /** Guards [nativeHandle]: every native call and the final destroy hold it. */
   private val nativeLock = Any()
@@ -279,6 +386,8 @@ internal class LibghosttyTerminalBackend(
   private val closed = AtomicBoolean(false)
   private val highestQueuedSeq = AtomicLong(0)
   private var lastAppliedSeq = 0L
+  private val pendingViewport = AtomicReference<ViewportRequest?>(null)
+  private val wakeQueued = AtomicBoolean(false)
 
   @Volatile override var bracketedPaste = false
     private set
@@ -293,6 +402,9 @@ internal class LibghosttyTerminalBackend(
 
   private var renderBuffer: ByteBuffer =
     ByteBuffer.allocateDirect(DEFAULT_RENDER_BUFFER_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+  private val header = IntArray(HDR_SLOTS)
+  private val lastHeader = IntArray(HDR_SLOTS)
+  private var lastHeaderValid = false
 
   private var normalRowCache = HashMap<RowKey, FrameRow>()
   private var alternateRowCache = HashMap<RowKey, FrameRow>()
@@ -306,7 +418,7 @@ internal class LibghosttyTerminalBackend(
     check(h != 0L) { "Failed to create libghostty-vt native terminal engine" }
     nativeHandle = h
 
-    publishedFrame = syncRender()
+    publishedFrame = syncRender() ?: createEmptyFrame()
 
     parserThread = Thread({ parseLoop() }, "opencode-native-terminal").apply {
       isDaemon = true
@@ -317,6 +429,10 @@ internal class LibghosttyTerminalBackend(
   override fun currentFrame(): Frame = publishedFrame
 
   override fun hasListeners(): Boolean = listeners.isNotEmpty()
+
+  override fun wakeListeners() {
+    listeners.forEach { listener -> runCatching { listener() } }
+  }
 
   override fun addListener(listener: () -> Unit): AutoCloseable {
     listeners.add(listener)
@@ -346,6 +462,25 @@ internal class LibghosttyTerminalBackend(
     commands.offer(Command.Resize(boundedRows, boundedColumns))
   }
 
+  /** Applied on the parser thread before the next frame, which is published at once. */
+  fun setViewport(follow: Boolean, topRow: Int, above: Int, below: Int) {
+    if (closed.get()) return
+    pendingViewport.set(ViewportRequest(follow, topRow.coerceAtLeast(0), above.coerceIn(0, 1000), below.coerceIn(0, 1000)))
+    wake()
+  }
+
+  /** Runs a selection change under the native lock, then republishes. */
+  fun <T> selection(block: (Long) -> T): T? {
+    val result = withHandle(block)
+    wake()
+    return result
+  }
+
+  private fun wake() {
+    // One queued wake is enough; a full queue means a publish is coming anyway.
+    if (wakeQueued.compareAndSet(false, true) && !commands.offer(Command.Wake)) wakeQueued.set(false)
+  }
+
   override fun close() {
     if (!closed.compareAndSet(false, true)) return
     commands.clear()
@@ -369,22 +504,28 @@ internal class LibghosttyTerminalBackend(
   private fun parseLoop() {
     try {
       while (!closed.get()) {
-        apply(commands.take())
+        val first = commands.take()
+        apply(first)
 
-        val batchStartedAt = System.nanoTime()
-        var lastAppliedAt = batchStartedAt
-        while (!closed.get()) {
-          val now = System.nanoTime()
-          val deadline = if (synchronizedOutput && now - synchronizedOutputStartedAt < SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS) {
-            synchronizedOutputStartedAt + SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS
-          } else {
-            minOf(batchStartedAt + NATIVE_FRAME_BATCH_NANOS, lastAppliedAt + NATIVE_FRAME_QUIET_NANOS)
+        // Output is batched into one frame; a wake (scrolling, selecting)
+        // publishes straight away so touch never waits for a batch.
+        if (first !is Command.Wake) {
+          val batchStartedAt = System.nanoTime()
+          var lastAppliedAt = batchStartedAt
+          while (!closed.get()) {
+            val now = System.nanoTime()
+            val deadline = if (synchronizedOutput && now - synchronizedOutputStartedAt < SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS) {
+              synchronizedOutputStartedAt + SYNCHRONIZED_OUTPUT_TIMEOUT_NANOS
+            } else {
+              minOf(batchStartedAt + NATIVE_FRAME_BATCH_NANOS, lastAppliedAt + NATIVE_FRAME_QUIET_NANOS)
+            }
+            val remaining = deadline - now
+            if (remaining <= 0L) break
+            val next = commands.poll(remaining, TimeUnit.NANOSECONDS) ?: break
+            apply(next)
+            if (next is Command.Wake && !synchronizedOutput) break
+            lastAppliedAt = System.nanoTime()
           }
-          val remaining = deadline - now
-          if (remaining <= 0L) break
-          val next = commands.poll(remaining, TimeUnit.NANOSECONDS) ?: break
-          apply(next)
-          lastAppliedAt = System.nanoTime()
         }
         publish()
       }
@@ -427,6 +568,7 @@ internal class LibghosttyTerminalBackend(
         lastAppliedSeq = command.seq
       }
       is Command.Resize -> resizeNow(command.rows, command.columns)
+      Command.Wake -> wakeQueued.set(false)
     }
   }
 
@@ -458,6 +600,7 @@ internal class LibghosttyTerminalBackend(
     utf8Tail = ByteArray(0)
     normalRowCache.clear()
     alternateRowCache.clear()
+    lastHeaderValid = false
     runCatching { onOutputGap() }
   }
 
@@ -466,12 +609,36 @@ internal class LibghosttyTerminalBackend(
   }
 
   private fun publish() {
-    publishedFrame = syncRender()
+    pendingViewport.getAndSet(null)?.let { request ->
+      withHandle { h ->
+        TerminalPtyJni.nativeEngineSetViewport(h, request.follow, request.topRow.toLong(), request.above, request.below)
+      }
+    }
+    // Nothing on screen changed (output scrolled past a pinned viewport, or
+    // a no-op wake): keep the frame and skip the redraw.
+    val frame = syncRender() ?: return
+    publishedFrame = frame
     listeners.forEach { listener -> runCatching { listener() } }
   }
 
-  private fun syncRender(): Frame {
-    var res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer) }
+  /**
+   * Reads a frame from the native engine, or null when nothing changed since
+   * the last one. Clean rows arrive without cells and come from the row cache;
+   * a clean row missing from the cache forces one full re-read.
+   */
+  private fun syncRender(): Frame? {
+    val first = readFrame(forceCells = false)
+    if (first !== CacheMiss) return first as Frame?
+    val full = readFrame(forceCells = true)
+    return if (full === CacheMiss) null else full as Frame?
+  }
+
+  /** Returned by [readFrame] when a clean row is missing from the row cache. */
+  private object CacheMiss
+
+  /** A [Frame], null when unchanged, or [CacheMiss]. */
+  private fun readFrame(forceCells: Boolean): Any? {
+    var res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer, forceCells) }
       ?: return createEmptyFrame()
     // Long graphemes can outgrow the native size estimate, so allow a few doublings.
     var attempts = 0
@@ -479,35 +646,35 @@ internal class LibghosttyTerminalBackend(
       val needed = res[1]
       val nextCap = maxOf(needed, renderBuffer.capacity() * 2)
       renderBuffer = ByteBuffer.allocateDirect(nextCap).order(ByteOrder.LITTLE_ENDIAN)
-      res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer) }
+      // The failed attempt did not consume the dirty state, so ask for every cell.
+      res = withHandle { h -> TerminalPtyJni.nativeEngineSyncRender(h, renderBuffer, true) }
         ?: return createEmptyFrame()
       attempts += 1
     }
-    if (res[0] != 0) {
-      return runCatching { publishedFrame }.getOrNull() ?: createEmptyFrame()
-    }
+    if (res[0] != 0) return null
 
     val totalRows = res[2]
     val buf = renderBuffer
+    for (slot in 0 until HDR_SLOTS) header[slot] = buf.getInt(slot * 4)
+    val dirty = header[HDR_DIRTY]
+    if (!forceCells && dirty == DIRTY_FALSE && lastHeaderValid && header.contentEqualsIgnoringDirty(lastHeader)) {
+      return null
+    }
+    header.copyInto(lastHeader)
+    lastHeaderValid = true
 
-    val cols = buf.getInt(4)
-    val cursorRowHdr = buf.getInt(8)
-    val cursorColHdr = buf.getInt(12)
-    val cursorVisHdr = buf.getInt(16)
-    val altHdr = buf.getInt(20)
-    val mouseTrackingHdr = buf.getInt(24)
-    val mouseSgrHdr = buf.getInt(28)
-    val bracketedPasteHdr = buf.getInt(32)
-    val scrollbackRowsHdr = buf.getInt(36)
-    val viewportRowsHdr = buf.getInt(40)
+    val cols = header[HDR_COLS]
+    bracketedPaste = header[HDR_BRACKETED_PASTE] != 0
 
-    bracketedPaste = bracketedPasteHdr != 0
-
-    val isAlt = altHdr != 0
+    val isAlt = header[HDR_ALTERNATE] != 0
+    val hasSelection = header[HDR_HAS_SELECTION] != 0
     val activeCache = if (isAlt) alternateRowCache else normalRowCache
     val nextCache = HashMap<RowKey, FrameRow>(totalRows * 2)
-    val lines = Array(totalRows) { r ->
-      val rowEntryOffset = 64 + r * 32
+    val rowIds = LongArray(totalRows * 2)
+    val selection = if (hasSelection) IntArray(totalRows * 2) { -1 } else null
+    val lines = arrayOfNulls<FrameRow>(totalRows)
+    for (r in 0 until totalRows) {
+      val rowEntryOffset = HEADER_BYTES + r * ROW_BYTES
       val b0 = buf.getLong(rowEntryOffset)
       val b1 = buf.getLong(rowEntryOffset + 8)
       val rowCols = buf.getShort(rowEntryOffset + 16).toInt() and 0xFFFF
@@ -516,58 +683,39 @@ internal class LibghosttyTerminalBackend(
       val padByte = buf.get(rowEntryOffset + 20)
       val cellOffset = buf.getInt(rowEntryOffset + 24)
       val textOffset = buf.getInt(rowEntryOffset + 28)
+      rowIds[r * 2] = b0
+      rowIds[r * 2 + 1] = b1
+      if (selection != null) {
+        val selStart = buf.getShort(rowEntryOffset + 32).toInt() and 0xFFFF
+        val selEnd = buf.getShort(rowEntryOffset + 34).toInt() and 0xFFFF
+        if (selStart != NO_SELECTION && selEnd != NO_SELECTION) {
+          selection[r * 2] = selStart
+          selection[r * 2 + 1] = selEnd + 1
+        }
+      }
 
       val key = RowKey(b0, b1)
       val cached = activeCache[key]
+      if (cellOffset == NO_CELLS) {
+        if (cached == null || cached.columns != rowCols) return CacheMiss
+        nextCache[key] = cached
+        lines[r] = cached
+        continue
+      }
       if (cached != null && cached.columns == rowCols) {
         if (dirtyByte.toInt() == 0 || rowMatches(cached, rowCols, wrapByte, padByte, cellOffset, textOffset, buf)) {
           nextCache[key] = cached
-          return@Array cached
+          lines[r] = cached
+          continue
         }
       }
 
-      val rowTexts = Array(rowCols) { "" }
-      val rowWidths = ByteArray(rowCols)
-      val rowFg = IntArray(rowCols)
-      val rowBg = IntArray(rowCols)
-      val rowFlags = IntArray(rowCols)
-
-      var textPos = textOffset
-      for (c in 0 until rowCols) {
-        val cPtr = cellOffset + c * 12
-        rowWidths[c] = buf.get(cPtr)
-        val textLen = buf.get(cPtr + 1).toInt() and 0xFF
-        rowFlags[c] = buf.getShort(cPtr + 2).toInt() and 0xFFFF
-        rowFg[c] = buf.getInt(cPtr + 4)
-        rowBg[c] = buf.getInt(cPtr + 8)
-
-        if (textLen == 0) {
-          rowTexts[c] = ""
-        } else if (textLen == 1) {
-          val b = buf.get(textPos).toInt() and 0xFF
-          rowTexts[c] = if (b < ASCII_CELL_TEXT.size) ASCII_CELL_TEXT[b] else String(byteArrayOf(b.toByte()), StandardCharsets.UTF_8)
-          textPos += 1
-        } else {
-          val strBytes = ByteArray(textLen)
-          buf.position(textPos)
-          buf.get(strBytes, 0, textLen)
-          rowTexts[c] = String(strBytes, StandardCharsets.UTF_8)
-          textPos += textLen
-        }
-      }
-
-      val newRow = FrameRow(
-        text = rowTexts,
-        width = rowWidths,
-        foreground = rowFg,
-        background = rowBg,
-        flags = rowFlags,
-        wrapped = wrapByte.toInt() != 0,
-        wrapPadding = padByte.toInt() != 0,
-      )
+      val newRow = readRow(buf, rowCols, wrapByte, padByte, cellOffset, textOffset)
       nextCache[key] = newRow
-      newRow
+      lines[r] = newRow
     }
+    @Suppress("UNCHECKED_CAST")
+    val frameLines = lines as Array<FrameRow>
 
     if (isAlt) {
       alternateRowCache = nextCache
@@ -575,22 +723,84 @@ internal class LibghosttyTerminalBackend(
       normalRowCache = nextCache
     }
 
-    var lastContentRow = lines.size - 1
-    while (lastContentRow >= 0 && !lines[lastContentRow].hasVisibleContent) lastContentRow -= 1
+    var lastContentRow = frameLines.size - 1
+    while (lastContentRow >= 0 && !frameLines[lastContentRow].hasVisibleContent) lastContentRow -= 1
 
+    val viewportRows = header[HDR_VIEWPORT_ROWS]
+    val overscanAbove = header[HDR_OVERSCAN_ABOVE]
+    val cursorRow = header[HDR_CURSOR_ROW]
     return Frame(
-      rows = viewportRowsHdr,
+      rows = viewportRows,
       columns = cols,
       contentRows = totalRows,
-      lines = lines,
-      cursorRow = cursorRowHdr.coerceIn(0, (totalRows - 1).coerceAtLeast(0)),
-      cursorColumn = cursorColHdr.coerceIn(0, (cols - 1).coerceAtLeast(0)),
-      cursorVisible = cursorVisHdr != 0,
-      alternate = altHdr != 0,
+      lines = frameLines,
+      cursorRow = if (cursorRow in 0 until totalRows) cursorRow else -1,
+      cursorColumn = header[HDR_CURSOR_COL].coerceIn(0, (cols - 1).coerceAtLeast(0)),
+      cursorVisible = header[HDR_CURSOR_VISIBLE] != 0 && cursorRow in 0 until totalRows,
+      alternate = isAlt,
       hasVisibleContent = lastContentRow >= 0,
       lastContentRow = lastContentRow,
-      mouseTracking = mouseTrackingHdr != 0,
-      mouseSgr = mouseSgrHdr != 0,
+      mouseTracking = header[HDR_MOUSE_TRACKING] != 0,
+      mouseSgr = header[HDR_MOUSE_SGR] != 0,
+      overscanAbove = overscanAbove,
+      viewportTop = header[HDR_SCROLL_OFFSET],
+      totalRows = maxOf(header[HDR_SCROLL_TOTAL], header[HDR_SCROLL_OFFSET] + viewportRows),
+      followingActive = header[HDR_VIEWPORT_ACTIVE] != 0,
+      selection = selection,
+      rowIds = rowIds,
+      cursorStyle = header[HDR_CURSOR_STYLE],
+      defaultForegroundColor = header[HDR_DEFAULT_FG],
+      defaultBackgroundColor = header[HDR_DEFAULT_BG],
+      mouseAlternateScroll = header[HDR_MOUSE_ALTERNATE_SCROLL] != 0,
+    )
+  }
+
+  private fun IntArray.contentEqualsIgnoringDirty(other: IntArray): Boolean {
+    for (slot in indices) {
+      if (slot != HDR_DIRTY && this[slot] != other[slot]) return false
+    }
+    return true
+  }
+
+  private fun readRow(buf: ByteBuffer, rowCols: Int, wrapByte: Byte, padByte: Byte, cellOffset: Int, textOffset: Int): FrameRow {
+    val rowTexts = Array(rowCols) { "" }
+    val rowWidths = ByteArray(rowCols)
+    val rowFg = IntArray(rowCols)
+    val rowBg = IntArray(rowCols)
+    val rowFlags = IntArray(rowCols)
+
+    var textPos = textOffset
+    for (c in 0 until rowCols) {
+      val cPtr = cellOffset + c * CELL_BYTES
+      rowWidths[c] = buf.get(cPtr)
+      val textLen = buf.get(cPtr + 1).toInt() and 0xFF
+      rowFlags[c] = buf.getShort(cPtr + 2).toInt() and 0xFFFF
+      rowFg[c] = buf.getInt(cPtr + 4)
+      rowBg[c] = buf.getInt(cPtr + 8)
+
+      if (textLen == 0) {
+        rowTexts[c] = ""
+      } else if (textLen == 1) {
+        val b = buf.get(textPos).toInt() and 0xFF
+        rowTexts[c] = if (b < ASCII_CELL_TEXT.size) ASCII_CELL_TEXT[b] else String(byteArrayOf(b.toByte()), StandardCharsets.UTF_8)
+        textPos += 1
+      } else {
+        val strBytes = ByteArray(textLen)
+        buf.position(textPos)
+        buf.get(strBytes, 0, textLen)
+        rowTexts[c] = String(strBytes, StandardCharsets.UTF_8)
+        textPos += textLen
+      }
+    }
+
+    return FrameRow(
+      text = rowTexts,
+      width = rowWidths,
+      foreground = rowFg,
+      background = rowBg,
+      flags = rowFlags,
+      wrapped = wrapByte.toInt() != 0,
+      wrapPadding = padByte.toInt() != 0,
     )
   }
 
@@ -609,7 +819,7 @@ internal class LibghosttyTerminalBackend(
 
     var textPos = textOffset
     for (c in 0 until cols) {
-      val cPtr = cellOffset + c * 12
+      val cPtr = cellOffset + c * CELL_BYTES
       if (cached.width[c] != buf.get(cPtr)) return false
       val textLen = buf.get(cPtr + 1).toInt() and 0xFF
       if (cached.flags[c] != (buf.getShort(cPtr + 2).toInt() and 0xFFFF)) return false

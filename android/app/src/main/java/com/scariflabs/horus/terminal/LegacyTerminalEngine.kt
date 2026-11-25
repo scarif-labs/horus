@@ -346,6 +346,10 @@ internal class LegacyTerminalEngine(
 
   override fun hasListeners(): Boolean = listeners.isNotEmpty()
 
+  override fun wakeListeners() {
+    listeners.forEach { listener -> runCatching { listener() } }
+  }
+
   override fun addListener(listener: () -> Unit): AutoCloseable {
     listeners.add(listener)
     return AutoCloseable { listeners.remove(listener) }

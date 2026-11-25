@@ -63,10 +63,34 @@ object TerminalPtyJni {
   external fun nativeEngineFeed(handle: Long, bytes: ByteArray, offset: Int, count: Int): ByteArray?
 
   /**
-   * Updates render state and packs viewport + scrollback into outDirectBuffer.
+   * Updates render state and packs the viewport and its overscan rows into
+   * outDirectBuffer. Clean rows are written without cells unless [forceCells].
    * Returns [status, requiredCapacity, totalRows, dirtyMode].
    */
-  external fun nativeEngineSyncRender(handle: Long, outDirectBuffer: java.nio.ByteBuffer): IntArray
+  external fun nativeEngineSyncRender(handle: Long, outDirectBuffer: java.nio.ByteBuffer, forceCells: Boolean): IntArray
+
+  /**
+   * Follows the active area ([toBottom]) or puts screen row [row] at the top
+   * of the viewport, and captures [above]/[below] rows around it.
+   */
+  external fun nativeEngineSetViewport(handle: Long, toBottom: Boolean, row: Long, above: Int, below: Int): Int
+
+  /** Selects the word at a screen cell; returns its {startX, startY, endX, endY} or null. */
+  external fun nativeEngineSelectWord(handle: Long, x: Int, y: Int): IntArray?
+
+  /** Selects between two screen cells, both included. */
+  external fun nativeEngineSelectRange(handle: Long, x0: Int, y0: Int, x1: Int, y1: Int): Boolean
+
+  /** Selects all of the screen and scrollback. */
+  external fun nativeEngineSelectAll(handle: Long): Boolean
+
+  external fun nativeEngineClearSelection(handle: Long)
+
+  /** The selection's {startX, startY, endX, endY} in screen rows, inclusive, or null. */
+  external fun nativeEngineSelectionBounds(handle: Long): IntArray?
+
+  /** The selected text, or null when nothing is selected. */
+  external fun nativeEngineSelectionText(handle: Long): String?
 
   /** Polls any OSC 52 clipboard content written by the program. */
   external fun nativeEnginePollClipboard(handle: Long): String?
@@ -83,7 +107,7 @@ object TerminalPtyJni {
   /** Formats terminal contents as plain text (unwrap, trim). */
   external fun nativeEngineGetFormattedText(handle: Long, unwrap: Boolean, trim: Boolean): String?
 
-  /** Retrieves OSC 8 hyperlink URI for cell at col, row. */
+  /** Retrieves the OSC 8 hyperlink URI at [col] of screen row [row] (0 is the top of the scrollback). */
   external fun nativeEngineGetHyperlink(handle: Long, col: Int, row: Int): String?
 
   /** Unicode codepoint display width (0, 1, or 2). */

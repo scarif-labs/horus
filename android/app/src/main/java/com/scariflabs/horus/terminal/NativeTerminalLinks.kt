@@ -100,11 +100,14 @@ internal object NativeTerminalLinks {
     return cache.rangesFor(lines, first, last)[row - first]
   }
 
-  /** Returns the URL covering ([row], [column]), checking OSC 8 hyperlinks before text detection. */
-  fun urlAt(engine: NativeTerminalEngine, row: Int, column: Int): String? {
-    val link = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineGetHyperlink(h, column, row) }
+  /**
+   * Returns the URL covering frame row [row], [column] of [frame], checking
+   * OSC 8 hyperlinks before text detection.
+   */
+  fun urlAt(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, row: Int, column: Int): String? {
+    val link = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineGetHyperlink(h, column, frame.screenRow(row)) }
     if (!link.isNullOrEmpty()) return link
-    return urlAt(engine.currentFrame().lines, row, column)
+    return urlAt(frame.lines, row, column)
   }
 
   /** Returns the URL covering ([row], [column]), following wrapped rows. */

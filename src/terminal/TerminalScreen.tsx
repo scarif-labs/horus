@@ -1239,7 +1239,6 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
               running={running}
               onNativeScreenChange={setNativeScreen}
               onCellWidth={measureCellWidth}
-              onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
               onSwipe={handleOutputSwipe}
               onMouseWheel={handleOutputMouseWheel}

@@ -526,22 +526,6 @@ export type TerminalTextResponse = Readonly<{
   errorCode?: TerminalRuntimeErrorCode;
 }>;
 
-/** A selected span of a frozen frame; the end column is exclusive. */
-export type TerminalSelectionRange = Readonly<{
-  startRow: number;
-  startColumn: number;
-  endRow: number;
-  endColumn: number;
-}>;
-
-export type TerminalSelectionStart = Readonly<{
-  /** The word under the touch, already selected. */
-  word: TerminalSelectionRange;
-  /** Size of the frozen frame, for Select all. */
-  contentRows: number;
-  columns: number;
-}>;
-
 export type RootfsInstallProgressResponse = Readonly<{
   status: 'idle' | 'working';
   requestId?: string;
@@ -618,17 +602,8 @@ export interface Spec extends TurboModule {
    * native session's current frame, or null. Call only on a tap.
    */
   terminalLinkAt(sessionId: string, row: number, column: number): Promise<string | null>;
-  /** Plain text for the native frame and its normal-buffer scrollback. */
+  /** Plain text for the native screen and its scrollback, bounded to the newest text. */
   getTerminalText(sessionId: string): Promise<TerminalTextResponse>;
-  /**
-   * Freezes the session's displayed frame for selection and returns the word
-   * at a zero-based content row/column, or null when there is no frame.
-   */
-  beginTerminalSelection(sessionId: string, row: number, column: number): Promise<TerminalSelectionStart | null>;
-  /** Copies a range of the frozen frame to the clipboard; resolves the characters copied. */
-  copyTerminalSelection(sessionId: string, startRow: number, startColumn: number, endRow: number, endColumn: number): Promise<number>;
-  /** Unfreezes the session's frame after selection. */
-  endTerminalSelection(sessionId: string): Promise<boolean>;
   /** The text of an exited native session's last screen, once; or null. */
   takeExitScreen(sessionId: string): Promise<string | null>;
   /** The clipboard's text, or null when it holds none (or too much). */

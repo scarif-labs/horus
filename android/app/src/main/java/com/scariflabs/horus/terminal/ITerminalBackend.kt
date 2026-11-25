@@ -14,6 +14,9 @@ internal interface ITerminalBackend : AutoCloseable {
   fun resize(newRows: Int, newColumns: Int)
   override fun close()
   fun recoverFromOutputGap()
+
+  /** Tells frame listeners to redraw without a new frame. */
+  fun wakeListeners()
 }
 
 /**

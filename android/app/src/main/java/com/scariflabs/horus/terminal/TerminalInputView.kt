@@ -291,6 +291,12 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
   // meant for buttons drawn over it.
   override val pointerEvents: PointerEvents = PointerEvents.NONE
 
+  // Android's own touch dispatch ignores that, and this strip sits over the
+  // bottom of the terminal: pass every touch through to the canvas below, so
+  // a tap there neither opens the keyboard nor misses the terminal.
+  @android.annotation.SuppressLint("ClickableViewAccessibility")
+  override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean = false
+
   override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
     super.onFocusChanged(focused, direction, previouslyFocusedRect)
     if (!focused || !wantsAutoFocus || !terminalEnabled || sessionId == null) return

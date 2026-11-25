@@ -1,6 +1,5 @@
 import {requireNativeComponent, type ViewProps} from 'react-native';
 import type {TerminalFrame} from '../terminal/terminalBuffer';
-import type {TerminalSelectionRange} from './NativeTerminalRuntime';
 
 export type NativeTerminalLinkRange = Readonly<{
   row: number;
@@ -33,9 +32,16 @@ export type NativeTerminalCanvasProps = ViewProps & Readonly<{
   fontSize: number;
   links: readonly NativeTerminalLinkRange[];
   running: boolean;
-  /** Selected cells of the frozen native frame, drawn over the text. */
-  selection?: TerminalSelectionRange | null;
+  /** Bump to drop a native session's text selection (for example on Back). */
+  selectionClearRequest?: number;
+  /** Sent when the kind of screen changes (alternate, blank, mouse modes), not per frame. */
   onNativeFrameMeta?: (event: {nativeEvent: NativeTerminalFrameMeta}) => void;
+  /** A tap on a link in a native session. */
+  onTerminalLink?: (event: {nativeEvent: {url: string}}) => void;
+  /** A tap on a native session that was not a link and did not end a selection. */
+  onTerminalTap?: () => void;
+  /** A native session's text selection started or ended. */
+  onTerminalSelection?: (event: {nativeEvent: {active: boolean}}) => void;
 }>;
 
 /** Android's one-view Canvas terminal surface. */

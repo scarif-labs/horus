@@ -856,6 +856,7 @@ class TerminalRuntimeModule(
         promise.resolve(sessionError(requestId, "invalid_request"))
         return
       }
+      NativeTerminalEngineRegistry.noteUserInput(sessionId)
       sessionServiceClient.writeSession(requestId, sessionId, bytes) { response ->
         deliver(promise, sessionWriteResponse(response, requestId))
       }
@@ -1340,12 +1341,13 @@ class TerminalRuntimeModule(
       promise.resolve(null)
       return
     }
-    val frame = NativeTerminalEngineRegistry.get(sessionId)?.currentFrame()
+    val engine = NativeTerminalEngineRegistry.get(sessionId)
+    val frame = engine?.currentFrame()
     val rowIndex = row.toInt()
-    promise.resolve(frame?.let { NativeTerminalLinks.urlAt(it.lines, rowIndex, column.toInt()) })
+    promise.resolve(if (engine != null && frame != null) NativeTerminalLinks.urlAt(engine, frame, rowIndex, column.toInt()) else null)
   }
 
-  /** Reads the current native terminal frame and bounded normal-buffer scrollback as selectable plain text. */
+  /** Reads the native terminal's screen and scrollback as selectable plain text, bounded to the newest text. */
   override fun getTerminalText(sessionId: String, promise: Promise) {
     if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId)) {
       promise.resolve(Arguments.createMap().apply {
@@ -1362,81 +1364,12 @@ class TerminalRuntimeModule(
       })
       return
     }
-    val snapshot = NativeTerminalText.from(engine.currentFrame().lines)
+    val snapshot = NativeTerminalText.from(engine)
     promise.resolve(Arguments.createMap().apply {
       putString("status", "success")
       putString("text", snapshot.text)
       putBoolean("truncated", snapshot.truncated)
     })
-  }
-
-  override fun beginTerminalSelection(sessionId: String, row: Double, column: Double, promise: Promise) {
-    if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId) ||
-      !row.isFinite() || !column.isFinite() || row < 0.0 || column < 0.0
-    ) {
-      promise.resolve(null)
-      return
-    }
-    val engine = NativeTerminalEngineRegistry.get(sessionId)
-    if (engine == null) {
-      promise.resolve(null)
-      return
-    }
-    val frame = engine.beginSelection()
-    val word = NativeTerminalSelection.wordAt(frame.lines, row.toInt(), column.toInt())
-    if (word == null) {
-      engine.endSelection()
-      promise.resolve(null)
-      return
-    }
-    promise.resolve(Arguments.createMap().apply {
-      putMap("word", Arguments.createMap().apply {
-        putInt("startRow", word.startRow)
-        putInt("startColumn", word.startColumn)
-        putInt("endRow", word.endRow)
-        putInt("endColumn", word.endColumn)
-      })
-      putInt("contentRows", frame.lines.size)
-      putInt("columns", frame.columns)
-    })
-  }
-
-  override fun copyTerminalSelection(
-    sessionId: String,
-    startRow: Double,
-    startColumn: Double,
-    endRow: Double,
-    endColumn: Double,
-    promise: Promise,
-  ) {
-    val frame = NativeTerminalEngineRegistry.get(sessionId)?.selectionFrame
-    val values = listOf(startRow, startColumn, endRow, endColumn)
-    if (isInvalidated() || frame == null || values.any { !it.isFinite() || it < 0.0 }) {
-      promise.resolve(0)
-      return
-    }
-    val range = NativeTerminalSelectionRange(startRow.toInt(), startColumn.toInt(), endRow.toInt(), endColumn.toInt())
-    val text = NativeTerminalSelection.text(frame.lines, range).text
-    if (text.isEmpty()) {
-      promise.resolve(0)
-      return
-    }
-    android.os.Handler(android.os.Looper.getMainLooper()).post {
-      val copied = runCatching {
-        val clipboard = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Terminal", text))
-        // Android 13+ shows its own copied-text preview.
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-          android.widget.Toast.makeText(appContext, "Copied", android.widget.Toast.LENGTH_SHORT).show()
-        }
-      }.isSuccess
-      promise.resolve(if (copied) text.length else 0)
-    }
-  }
-
-  override fun endTerminalSelection(sessionId: String, promise: Promise) {
-    NativeTerminalEngineRegistry.get(sessionId)?.endSelection()
-    promise.resolve(true)
   }
 
   /**

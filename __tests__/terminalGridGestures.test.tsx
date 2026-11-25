@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 import {ActivityIndicator, FlatList, Pressable, ScrollView, Text, View} from 'react-native';
-import {nativeKeyboardRestoreOffset, nativeTailOffset, TerminalGrid, TERMINAL_CELL_HEIGHT} from '../src/terminal/TerminalGrid';
+import {TerminalGrid, TERMINAL_CELL_HEIGHT} from '../src/terminal/TerminalGrid';
 import type {TerminalFrame} from '../src/terminal/terminalBuffer';
 
 // react-native exports these through lazy getters, so the first render would
@@ -26,46 +26,6 @@ afterEach(async () => {
   jest.runAllTicks();
   expect(jest.getTimerCount()).toBe(0);
   jest.useRealTimers();
-});
-
-test('preserves alternate-buffer offset and only reveals a hidden prompt after keyboard resize', () => {
-  // A 12-row viewport; offsets are expressed in rows so the cases hold at any cell height.
-  const row = TERMINAL_CELL_HEIGHT;
-  const viewportHeight = 12 * row;
-  const scrolledOffset = 5 * row + 5;
-  expect(nativeKeyboardRestoreOffset({previousOffset: 0, contentRows: 37, viewportHeight, cursorRow: 4})).toBe(0);
-  expect(nativeKeyboardRestoreOffset({previousOffset: 0, contentRows: 37, viewportHeight, cursorRow: 14})).toBe(3 * row);
-  expect(nativeKeyboardRestoreOffset({previousOffset: scrolledOffset, contentRows: 37, viewportHeight, cursorRow: 4})).toBe(4 * row);
-  expect(nativeKeyboardRestoreOffset({previousOffset: scrolledOffset, contentRows: 37, viewportHeight, cursorRow: 8})).toBe(scrolledOffset);
-});
-
-test('anchors the normal-buffer tail on the last written row, not the blank grid bottom', () => {
-  // A 45-row grid behind a 24-row keyboard-open viewport.
-  const row = TERMINAL_CELL_HEIGHT;
-  const viewportHeight = 24 * row;
-  // Output fills rows 0..14: nothing to scroll, the blank rows stay below.
-  expect(nativeTailOffset({contentRows: 45, lastContentRow: 14, cursorRow: 11, viewportHeight})).toBe(0);
-  // Output reaches row 39: scroll just far enough to show it.
-  expect(nativeTailOffset({contentRows: 45, lastContentRow: 39, cursorRow: 36, viewportHeight})).toBe(16 * row);
-  // A cursor below the last text (a fresh blank prompt line) stays visible.
-  expect(nativeTailOffset({contentRows: 45, lastContentRow: 20, cursorRow: 30, viewportHeight})).toBe(7 * row);
-  // A blank screen and a full grid clamp to the grid's own bounds.
-  expect(nativeTailOffset({contentRows: 45, lastContentRow: -1, cursorRow: 0, viewportHeight})).toBe(0);
-  expect(nativeTailOffset({contentRows: 45, lastContentRow: 44, cursorRow: 44, viewportHeight})).toBe(21 * row);
-});
-
-test('shows a cleared screen from its top row instead of pulling scrollback back into view', () => {
-  const row = TERMINAL_CELL_HEIGHT;
-  // 100 rows of scrollback above a 45-row screen; `clear` left the prompt on screen row 0.
-  const cleared = {contentRows: 145, screenRows: 45, lastContentRow: 100, cursorRow: 100};
-  // Keyboard hidden: the whole screen fits, so it starts at the screen's top.
-  expect(nativeTailOffset({...cleared, viewportHeight: 45 * row})).toBe(100 * row);
-  // Keyboard open: the prompt is still on the viewport's first row, not its last.
-  expect(nativeTailOffset({...cleared, viewportHeight: 24 * row})).toBe(100 * row);
-  // Output below the viewport still wins over the screen's top.
-  expect(nativeTailOffset({...cleared, lastContentRow: 140, cursorRow: 140, viewportHeight: 24 * row})).toBe(117 * row);
-  // A viewport taller than the screen clamps to the end of the content.
-  expect(nativeTailOffset({...cleared, viewportHeight: 50 * row})).toBe(95 * row);
 });
 
 async function createGrid(alternate = true, mouseTrackingMode: TerminalFrame['mouseTrackingMode'] = 'none', mouseEncoding: TerminalFrame['mouseEncoding'] = 'default') {

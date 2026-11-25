@@ -1245,10 +1245,16 @@ describe('TerminalScreen', () => {
     expect(showButton.props.accessibilityLabel).toBe('Show keyboard');
     expect(showButton.findByType(Text).props.children).toBe('SHOW');
     expect(focus).not.toHaveBeenCalled();
+    // A tap on the output never opens the keyboard; the SHOW key does.
     await ReactTestRenderer.act(async () => {
       const touchTarget = renderer.root.findByProps({testID: 'terminal-output'});
       touchTarget.props.onTouchStart(terminalTouch(40, 90));
       touchTarget.props.onTouchEnd(terminalTouch(40, 90));
+      await flushAsync();
+    });
+    expect(focus).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      showButton.props.onPress();
       await flushAsync();
     });
     expect(focus).toHaveBeenCalled();
@@ -1779,7 +1785,7 @@ describe('TerminalScreen', () => {
       output().props.onTouchEnd(terminalTouch(41, 91));
       await flushAsync();
     });
-    expect(focus).toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
@@ -1799,9 +1805,7 @@ describe('TerminalScreen', () => {
     const focus = jest.spyOn(input, 'focus').mockClear();
     const blur = jest.spyOn(input, 'blur').mockClear();
     await ReactTestRenderer.act(async () => {
-      const output = renderer.root.findByProps({testID: 'terminal-output'});
-      output.props.onTouchStart(terminalTouch(40, 90));
-      output.props.onTouchEnd(terminalTouch(40, 90));
+      renderer.root.findByProps({testID: 'terminal-keyboard-toggle'}).props.onPress();
       runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('pending\x1b[6n')});
       renderer.unmount();
     });
@@ -1858,7 +1862,7 @@ describe('TerminalScreen', () => {
 
     // Only TerminalGrid (terminal-output) handles onLayout; parent wrapper (<View style={styles.output}>) does not duplicate it.
     const terminalOutput = renderer.root.findByProps({testID: 'terminal-output'});
-    expect(terminalOutput.parent?.parent?.props.onLayout).toBeUndefined();
+    expect(renderer.root.findByType(TerminalGrid).parent?.props.onLayout).toBeUndefined();
 
     // Commit portrait viewport while keyboard is hidden.
     await ReactTestRenderer.act(async () => {
