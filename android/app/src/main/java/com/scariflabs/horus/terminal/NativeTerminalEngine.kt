@@ -184,8 +184,17 @@ internal class NativeTerminalEngine(
    * arrives or the view scrolls. Cells are (column, screen row). These run
    * on the caller's thread and republish the frame so the highlight updates.
    */
+  /**
+   * Selects the word at a cell. A press between words takes the nearest
+   * word within two cells, as Android text fields do; otherwise just the cell.
+   */
   fun selectWord(column: Int, screenRow: Int): IntArray? = native?.selection { h ->
-    TerminalPtyJni.nativeEngineSelectWord(h, column, screenRow)
+    WORD_SEARCH_OFFSETS.firstNotNullOfOrNull { offset ->
+      val near = column + offset
+      if (near < 0) null else TerminalPtyJni.nativeEngineSelectWord(h, near, screenRow)
+    } ?: if (TerminalPtyJni.nativeEngineSelectRange(h, column, screenRow, column, screenRow)) {
+      intArrayOf(column, screenRow, column, screenRow)
+    } else null
   }
 
   fun selectRange(startColumn: Int, startRow: Int, endColumn: Int, endRow: Int): Boolean = native?.selection { h ->
@@ -302,6 +311,9 @@ internal class NativeTerminalEngine(
     const val FLAG_STRIKETHROUGH = 1 shl 4
     const val FLAG_INVISIBLE = 1 shl 5
     const val FLAG_INVERSE = 1 shl 6
+    /** Cells tried, in order, when a long press lands between words. */
+    private val WORD_SEARCH_OFFSETS = listOf(0, 1, -1, 2, -2)
+
     const val CURSOR_STYLE_BAR = 0
     const val CURSOR_STYLE_BLOCK = 1
     const val CURSOR_STYLE_UNDERLINE = 2

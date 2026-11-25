@@ -7,6 +7,8 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.graphics.Rect
 import android.os.Build
+import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.View
 import android.view.KeyEvent
 import com.facebook.react.uimanager.PointerEvents
@@ -282,6 +284,62 @@ class TerminalInputView(context: ThemedReactContext) : EditText(context), ReactP
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     requestAutoFocusIfReady()
+  }
+
+  override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    val action = if (event.repeatCount > 0) TerminalHardwareKeys.ACTION_REPEAT else TerminalHardwareKeys.ACTION_PRESS
+    return sendHardwareKey(event, action) || super.onKeyDown(keyCode, event)
+  }
+
+  override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
+    sendHardwareKey(event, TerminalHardwareKeys.ACTION_RELEASE) || super.onKeyUp(keyCode, event)
+
+  /**
+   * Keys from a physical keyboard skip the editor and go through the
+   * terminal's key encoder, so arrows, Esc, F-keys, Ctrl/Alt combinations
+   * and Shift+Enter reach the app the way it asked for them. Ctrl+Shift+V
+   * pastes. The on-screen keyboard keeps the editor path for swipe typing
+   * and suggestions.
+   */
+  private fun sendHardwareKey(event: KeyEvent, action: Int): Boolean {
+    if (!terminalEnabled || !isHardwareKey(event)) return false
+    val id = sessionId ?: return false
+    val pressed = action != TerminalHardwareKeys.ACTION_RELEASE
+    if (event.keyCode == KeyEvent.KEYCODE_V && event.isCtrlPressed && event.isShiftPressed) {
+      if (pressed) pasteClipboard(id)
+      return true
+    }
+    val typedMeta = event.metaState and (KeyEvent.META_CTRL_MASK or KeyEvent.META_ALT_MASK or KeyEvent.META_META_MASK).inv()
+    val key = TerminalHardwareKeys.key(event.keyCode, event.metaState, event.getUnicodeChar(typedMeta), event.getUnicodeChar(0)) ?: return false
+    val engine = NativeTerminalEngineRegistry.get(id) ?: return false
+    // The key bar's one-shot CTRL/ALT apply to the next physical key too.
+    var mods = key.mods
+    if (pressed && ctrlActive) mods = mods or TerminalHardwareKeys.MOD_CTRL
+    if (pressed && altActive) mods = mods or TerminalHardwareKeys.MOD_ALT
+    val bytes = engine.withNativeHandle { h ->
+      TerminalPtyJni.nativeEngineEncodeKeyEvent(h, key.key, mods, key.consumedMods, key.unshifted, action, key.text)
+    }
+    if (pressed) {
+      if (mods != key.mods) releaseModifiers()
+      // The shell's line no longer matches what the editor last sent.
+      clearSilently()
+    }
+    if (bytes != null && bytes.isNotEmpty()) NativeTerminalEngineRegistry.writeInput(id, bytes, userInput = pressed)
+    return true
+  }
+
+  private fun isHardwareKey(event: KeyEvent): Boolean =
+    event.deviceId != KeyCharacterMap.VIRTUAL_KEYBOARD &&
+      event.flags and KeyEvent.FLAG_SOFT_KEYBOARD == 0 &&
+      event.isFromSource(InputDevice.SOURCE_KEYBOARD)
+
+  private fun pasteClipboard(id: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+    val text = runCatching { clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString() }.getOrNull()
+    if (text.isNullOrEmpty()) return
+    val engine = NativeTerminalEngineRegistry.get(id) ?: return
+    val bytes = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineEncodePaste(h, text) } ?: return
+    if (bytes.isNotEmpty()) NativeTerminalEngineRegistry.writeInput(id, bytes)
   }
 
   // The editor is invisible and only ever focused from code (a tap on the

@@ -75,6 +75,11 @@ class NativeTerminalViewportTest {
       assertEquals(4, selected.selection!![index * 2])
       assertEquals(9, selected.selection!![index * 2 + 1])
 
+      // Between words, the nearest word is taken; on a blank line, the cell.
+      assertEquals(listOf(4, row, 8, row), engine.selectWord(column = 3, screenRow = row)!!.toList())
+      assertEquals(listOf(25, row, 25, row), engine.selectWord(column = 25, screenRow = row)!!.toList())
+      engine.selectWord(column = 6, screenRow = row)
+
       // Extend to "world", then push the text up into scrollback.
       assertTrue(engine.selectRange(4, row, 14, row))
       assertEquals("hello world", engine.selectionText())
@@ -85,6 +90,22 @@ class NativeTerminalViewportTest {
       engine.clearSelection()
       assertNull(engine.selectionText())
       awaitFrame(engine) { it.selection == null }
+    } finally {
+      engine.close()
+    }
+  }
+
+  @Test
+  fun aWordEndsAtAnUnwrittenCell() {
+    val engine = NativeTerminalEngine("s-select-gap", 4, 30) { _, _ -> }
+    try {
+      // Write "Run", skip a cell without writing it, then "/connect".
+      assertTrue(engine.enqueue(1L, "Run\u001b[5G/connect".toByteArray(StandardCharsets.UTF_8)))
+      val frame = awaitFrame(engine) { it.lines.any { row -> row.text[4] == "/" } }
+      val row = frame.screenRow(frame.lines.indexOfFirst { it.text[4] == "/" })
+      assertEquals(listOf(4, row, 11, row), engine.selectWord(column = 6, screenRow = row)!!.toList())
+      assertEquals("/connect", engine.selectionText())
+      assertEquals(listOf(4, row, 11, row), engine.selectWord(column = 3, screenRow = row)!!.toList())
     } finally {
       engine.close()
     }

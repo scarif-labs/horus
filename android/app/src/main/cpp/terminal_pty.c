@@ -1410,6 +1410,58 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKey(
   return result;
 }
 
+/*
+ * Encodes a physical key press for the terminal's current modes (cursor
+ * keys, kitty keyboard protocol, ...). [text] is the key's character
+ * without Ctrl/Alt applied, or null for keys with none; [consumedMods] are
+ * the modifiers that produced it (Shift for "A") and [unshifted] its
+ * unshifted code point (or 0).
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeKeyEvent(
+    JNIEnv *env, jclass clazz, jlong handle, jint key, jint mods, jint consumedMods,
+    jint unshifted, jint action, jstring text) {
+  (void)clazz;
+  SessionEngine *engine = (SessionEngine *)(uintptr_t)handle;
+  if (!engine) return NULL;
+
+  /* Convert before locking: the JNI string calls do not touch the engine. */
+  uint8_t *utf = NULL;
+  size_t utf_len = 0;
+  if (text) utf = jstring_to_utf8(env, text, &utf_len);
+
+  pthread_mutex_lock(&engine->lock);
+  ghostty_key_encoder_set_from_terminal(engine->key_encoder, engine->terminal);
+#if defined(__APPLE__)
+  /* Host unit tests: treat Option as Alt, as Android's Alt always is. */
+  GhosttyOptionAsAlt option_as_alt = GHOSTTY_OPTION_AS_ALT_TRUE;
+  ghostty_key_encoder_set(engine->key_encoder, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &option_as_alt);
+#endif
+  GhosttyKeyEvent event = NULL;
+  jbyteArray result = NULL;
+  if (ghostty_key_event_new(&g_tracking_allocator, &event) == GHOSTTY_SUCCESS) {
+    ghostty_key_event_set_key(event, (GhosttyKey)key);
+    ghostty_key_event_set_mods(event, (GhosttyMods)mods);
+    ghostty_key_event_set_consumed_mods(event, (GhosttyMods)consumedMods);
+    ghostty_key_event_set_action(event, (GhosttyKeyAction)action);
+    if (unshifted > 0) ghostty_key_event_set_unshifted_codepoint(event, (uint32_t)unshifted);
+    if (utf && utf_len > 0) {
+      GhosttyString gstr = { .ptr = utf, .len = utf_len };
+      ghostty_key_event_set_utf8(event, gstr);
+    }
+    uint8_t buf[256];
+    size_t written = 0;
+    if (ghostty_key_encoder_encode(engine->key_encoder, event, buf, sizeof(buf), &written) == GHOSTTY_SUCCESS && written > 0) {
+      result = (*env)->NewByteArray(env, (jsize)written);
+      if (result) (*env)->SetByteArrayRegion(env, result, 0, (jsize)written, (const jbyte *)buf);
+    }
+    ghostty_key_event_free(event);
+  }
+  pthread_mutex_unlock(&engine->lock);
+  free(utf);
+  return result;
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineEncodeMouse(
     JNIEnv *env, jclass clazz, jlong handle, jfloat x, jfloat y,
@@ -1531,6 +1583,18 @@ static bool engine_screen_ref(SessionEngine *engine, jint x, jint y, GhosttyGrid
   return ghostty_terminal_grid_ref(engine->terminal, point, out) == GHOSTTY_SUCCESS;
 }
 
+/* Whether a cell shows nothing: no text, or a space. libghostty selects a run of spaces as a word. */
+static bool engine_cell_is_blank(const GhosttyGridRef *ref) {
+  GhosttyCell cell = 0;
+  if (ghostty_grid_ref_cell(ref, &cell) != GHOSTTY_SUCCESS) return true;
+  bool has_text = false;
+  ghostty_cell_get(cell, GHOSTTY_CELL_DATA_HAS_TEXT, &has_text);
+  if (!has_text) return true;
+  uint32_t codepoint = 0;
+  ghostty_cell_get(cell, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
+  return codepoint == ' ' || codepoint == '\t' || codepoint == 0x00A0;
+}
+
 /* Writes a selection's ends, in reading order, as {startX, startY, endX, endY}; ends are inclusive. */
 static jintArray selection_bounds(JNIEnv *env, SessionEngine *engine, const GhosttySelection *selection) {
   GhosttySelection ordered;
@@ -1551,17 +1615,21 @@ static jintArray selection_bounds(JNIEnv *env, SessionEngine *engine, const Ghos
   return out;
 }
 
-/* Quotes, brackets, pipes and box drawing end a word, besides whitespace. Colons and slashes do not, so paths and URLs select whole. */
+/*
+ * Quotes, brackets, pipes and box drawing end a word, besides whitespace and
+ * empty cells (TUIs such as OpenCode leave gaps unwritten). Colons and
+ * slashes do not, so paths and URLs select whole.
+ */
 static const uint32_t WORD_BOUNDARIES[] = {
-  ' ', '\t', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '<', '>', '|',
+  0, ' ', '\t', 0x00A0, '"', '\'', '`', '(', ')', '[', ']', '{', '}', '<', '>', '|',
   0x2502, 0x2503, 0x2500, 0x2501, 0x256D, 0x256E, 0x2570, 0x256F,
   0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524, 0x252C, 0x2534, 0x253C,
 };
 
 /*
- * Selects the word at a screen cell, or just the cell when it holds no word,
- * and returns its bounds like nativeEngineSelectionBounds. Null when the cell
- * does not exist.
+ * Selects the word at a screen cell and returns its bounds like
+ * nativeEngineSelectionBounds. Null when the cell holds no word (or does not
+ * exist); the selection is then unchanged.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSelectWord(
@@ -1572,7 +1640,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSelectWord(
   pthread_mutex_lock(&engine->lock);
   jintArray result = NULL;
   GhosttyGridRef ref;
-  if (engine_screen_ref(engine, x, y, &ref)) {
+  if (engine_screen_ref(engine, x, y, &ref) && !engine_cell_is_blank(&ref)) {
     GhosttyTerminalSelectWordOptions options;
     ghostty_sized_init(&options, sizeof(options));
     options.ref = ref;
@@ -1580,12 +1648,8 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_nativeEngineSelectWord(
     options.boundary_codepoints_len = sizeof(WORD_BOUNDARIES) / sizeof(WORD_BOUNDARIES[0]);
     GhosttySelection selection;
     memset(&selection, 0, sizeof(selection));
-    if (ghostty_terminal_select_word(engine->terminal, &options, &selection) != GHOSTTY_SUCCESS) {
-      selection.start = ref;
-      selection.end = ref;
-      selection.rectangle = false;
-    }
-    if (ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, &selection) == GHOSTTY_SUCCESS) {
+    if (ghostty_terminal_select_word(engine->terminal, &options, &selection) == GHOSTTY_SUCCESS &&
+        ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, &selection) == GHOSTTY_SUCCESS) {
       GhosttySelection installed;
       memset(&installed, 0, sizeof(installed));
       if (ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_SELECTION, &installed) == GHOSTTY_SUCCESS) {

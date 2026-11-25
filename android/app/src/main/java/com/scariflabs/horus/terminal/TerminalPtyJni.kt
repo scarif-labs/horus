@@ -75,7 +75,7 @@ object TerminalPtyJni {
    */
   external fun nativeEngineSetViewport(handle: Long, toBottom: Boolean, row: Long, above: Int, below: Int): Int
 
-  /** Selects the word at a screen cell; returns its {startX, startY, endX, endY} or null. */
+  /** Selects the word at a screen cell; returns its {startX, startY, endX, endY}, or null when there is no word. */
   external fun nativeEngineSelectWord(handle: Long, x: Int, y: Int): IntArray?
 
   /** Selects between two screen cells, both included. */
@@ -97,6 +97,21 @@ object TerminalPtyJni {
 
   /** Encodes key event per terminal modes; returns escape bytes. */
   external fun nativeEngineEncodeKey(handle: Long, key: Int, mods: Int, action: Int, text: String?): ByteArray?
+
+  /**
+   * Encodes a physical key press per terminal modes: [text] is its character
+   * without Ctrl/Alt (null for none), [consumedMods] the modifiers that made
+   * it, [unshifted] its unshifted code point or 0. Returns the bytes to send.
+   */
+  external fun nativeEngineEncodeKeyEvent(
+    handle: Long,
+    key: Int,
+    mods: Int,
+    consumedMods: Int,
+    unshifted: Int,
+    action: Int,
+    text: String?,
+  ): ByteArray?
 
   /** Encodes mouse event per terminal modes; returns escape bytes. */
   external fun nativeEngineEncodeMouse(handle: Long, x: Float, y: Float, button: Int, action: Int, mods: Int): ByteArray?
