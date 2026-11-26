@@ -64,11 +64,16 @@ class TerminalSessionService : Service() {
   }
   private val specFactory by lazy { TerminalSessionSpecFactory(applicationContext) }
   private val resolverCallback = object : ConnectivityManager.NetworkCallback() {
+    override fun onAvailable(network: Network) {
+      // Before Android 8 a new default network isn't followed by
+      // onLinkPropertiesChanged, so read its DNS servers here.
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) return
+      runCatching { getSystemService(ConnectivityManager::class.java)?.getLinkProperties(network) }
+        .getOrNull()?.let(::refreshGuestResolver)
+    }
+
     override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-      val servers = linkProperties.dnsServers.mapNotNull { it.hostAddress?.trim()?.takeIf(String::isNotEmpty) }
-      runCatching { specFactory.refreshResolver(servers) }.onFailure { error ->
-        TerminalDebugLog.record(this@TerminalSessionService, "resolver_refresh_failed type=${error::class.java.simpleName}")
-      }
+      refreshGuestResolver(linkProperties)
     }
   }
   private val sessionRecords = ConcurrentHashMap<String, TerminalSessionJournal.Record>()
@@ -251,7 +256,7 @@ class TerminalSessionService : Service() {
     // network afterwards so a Wi-Fi to mobile data switch keeps DNS working.
     runCatching {
       getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(resolverCallback)
-    }
+    }.onFailure { error -> TerminalDebugLog.record(this, "resolver_callback_failed type=${error::class.java.simpleName}") }
     // Creation alone (including a bound-only client or an idle sticky restart)
     // does not justify foreground work. Promotion follows an explicit start
     // or a request that actually owns work.
@@ -1169,6 +1174,12 @@ class TerminalSessionService : Service() {
       stopForeground(true)
     }
     stopSelf()
+  }
+
+  private fun refreshGuestResolver(linkProperties: LinkProperties) {
+    runCatching { specFactory.refreshResolver(linkProperties) }.onFailure { error ->
+      TerminalDebugLog.record(this, "resolver_refresh_failed type=${error::class.java.simpleName}")
+    }
   }
 
   private fun enqueueWorker(task: () -> Unit) {

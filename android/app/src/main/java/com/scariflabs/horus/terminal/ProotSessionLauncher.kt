@@ -550,7 +550,10 @@ class ProotSessionLauncher(
    * for JVM/unit-test launchers that do not model Android networking.
    */
   private fun prepareResolverFile(rootfsDir: File) {
-    writeResolverFile(rootfsDir, dnsServersProvider())
+    // Read the servers under the writer's lock: a network change that lands
+    // between the read and the write would otherwise be overwritten with the
+    // old network's servers.
+    synchronized(resolverLock) { writeResolverFile(rootfsDir, dnsServersProvider()) }
   }
 
   /**
@@ -2444,13 +2447,16 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       exec setpriv --reuid="${'$'}uid" --regid="${'$'}gid" --clear-groups -- env HOME="${'$'}home" USER="${'$'}user" LOGNAME="${'$'}user" SHELL=/bin/sh /bin/sh -c "${'$'}dropbear_script"
     """.trimIndent()
 
+    private val resolverLock = Any()
+
     /**
      * Writes [dnsServers] as the guest `/etc/resolv.conf` of [rootfsDir].
-     * Running sessions pick the change up on their next lookup: musl reads
-     * the file on every query and glibc reloads it when it changes. An empty
-     * list leaves the file untouched.
+     * Programs that look names up through libc pick the change up on their
+     * next lookup (musl reads the file on every query, glibc reloads it when
+     * it changes); ones that cache DNS themselves keep the old servers until
+     * they restart. An empty list leaves the file untouched.
      */
-    fun writeResolverFile(rootfsDir: File, dnsServers: List<String>) {
+    fun writeResolverFile(rootfsDir: File, dnsServers: List<String>): Unit = synchronized(resolverLock) {
       val addresses = dnsServers
         .asSequence()
         .map(String::trim)
@@ -2458,7 +2464,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         .distinct()
         .take(MAX_DNS_SERVERS)
         .toList()
-      if (addresses.isEmpty()) return
+      if (addresses.isEmpty()) return@synchronized
       val directory = File(rootfsDir, RESOLV_CONF_DIRECTORY)
       if (!directory.isDirectory) {
         throw IllegalStateException("guest resolver directory is missing")
