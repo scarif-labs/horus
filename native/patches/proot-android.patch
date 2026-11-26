@@ -684,3 +684,359 @@ index 0000000..b19d8f9
 +    return state->initial_guest >= 0 ? state->initial_guest : state->last_child;
 +}
 +#endif
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+index 5ade279..b005096 100644
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@ -83,6 +83,7 @@ OBJECTS += \
+ 	extension/hidden_files/hidden_files.o \
+ 	extension/mountinfo/mountinfo.o \
+ 	extension/port_switch/port_switch.o \
++	extension/dns_redirect/dns_redirect.o \
+ 	extension/sysvipc/sysvipc.o \
+ 	extension/sysvipc/sysvipc_msg.o \
+ 	extension/sysvipc/sysvipc_sem.o \
+diff --git a/src/cli/proot.c b/src/cli/proot.c
+index eb92071..f143b96 100644
+--- a/src/cli/proot.c
++++ b/src/cli/proot.c
+@@ -337,6 +337,12 @@ static int handle_option_p(Tracee *tracee, const Cli *cli UNUSED, const char *va
+         return 0;
+ }
+ 
++static int handle_option_dns_redirect(Tracee *tracee, const Cli *cli UNUSED, const char *value)
++{
++	(void) initialize_extension(tracee, dns_redirect_callback, value);
++	return 0;
++}
++
+ /**
+  * Initialize @tracee->qemu.
+  */
+diff --git a/src/cli/proot.h b/src/cli/proot.h
+index 6ec5036..aaec727 100644
+--- a/src/cli/proot.h
++++ b/src/cli/proot.h
+@@ -69,6 +69,7 @@ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli, const char
+ static int handle_option_L(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_H(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
++static int handle_option_dns_redirect(Tracee *tracee, const Cli *cli, const char *value);
+ 
+ static int pre_initialize_bindings(Tracee *, const Cli *, size_t, char *const *, size_t);
+ static int post_initialize_exe(Tracee *, const Cli *, size_t, char *const *, size_t);
+@@ -280,6 +281,15 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
+           .description = "Modify bindings to protected ports to use a higher port number.",
+           .detail = "",
+         },
++	{ .class = "Extension options",
++	  .arguments = {
++		{ .name = "--dns-redirect", .separator = '=', .value = "port" },
++		{ .name = NULL, .separator = '\0', .value = NULL } },
++	  .handler = handle_option_dns_redirect,
++	  .description = "Send DNS queries for 127.0.0.1:53 to 127.0.0.1:*port*.",
++	  .detail = "\tReplies keep port 53 as their source, so resolvers that check\n\
++\twhere an answer came from accept them.",
++	},
+         { .class = "Extension options",
+           .arguments = {
+                 { .name = "-L", .separator = '\0', .value = NULL },
+diff --git a/src/extension/dns_redirect/dns_redirect.c b/src/extension/dns_redirect/dns_redirect.c
+new file mode 100644
+index 0000000..924a9ac
+--- /dev/null
++++ b/src/extension/dns_redirect/dns_redirect.c
+@@ -0,0 +1,281 @@
++/* Sends the guest's DNS queries for 127.0.0.1:53 to a resolver that
++ * listens on an unprivileged loopback port instead (Horus answers
++ * them through Android's resolver, which applies Private DNS and VPN
++ * DNS), and makes the replies look like they came from port 53 again:
++ * musl (through recvmsg) and glibc (through recvfrom) both drop answers
++ * whose source isn't the nameserver they asked.  The guest's own buffers are never changed on the way
++ * out; the redirected address is a copy on the tracee's stack.  */
++
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
++#include <sys/ptrace.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <talloc.h>
++
++#include "extension/extension.h"
++#include "syscall/syscall.h"
++#include "syscall/sysnum.h"
++#include "tracee/tracee.h"
++#include "tracee/reg.h"
++#include "tracee/mem.h"
++#include "tracee/abi.h"
++
++#define DNS_PORT 53
++
++typedef struct {
++	/* Network byte order.  */
++	uint16_t port;
++} Config;
++
++/* 127.0.0.1, or ::ffff:127.0.0.1 on a dual-stack socket.  The resolver
++ * only listens on IPv4, so plain ::1 is left alone.  */
++static bool is_resolver_address(const struct sockaddr_storage *address)
++{
++	if (address->ss_family == AF_INET) {
++		const struct sockaddr_in *in = (const struct sockaddr_in *) address;
++		return in->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
++	}
++	if (address->ss_family == AF_INET6) {
++		static const uint8_t mapped_loopback[16] =
++			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1 };
++		const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *) address;
++		return memcmp(in6->sin6_addr.s6_addr, mapped_loopback, sizeof(mapped_loopback)) == 0;
++	}
++	return false;
++}
++
++/* sin_port and sin6_port sit at the same offset.  */
++static uint16_t port_of(const struct sockaddr_storage *address)
++{
++	return ((const struct sockaddr_in *) address)->sin_port;
++}
++
++static int read_address(const Tracee *tracee, struct sockaddr_storage *address,
++			word_t pointer, word_t length)
++{
++	if (pointer == 0 || length < sizeof(struct sockaddr_in) || length > sizeof(*address))
++		return -1;
++	memset(address, 0, sizeof(*address));
++	return read_data(tracee, address, pointer, length);
++}
++
++/* Points the address argument of connect(2) or sendto(2) at a copy
++ * that names the resolver's port, when it names 127.0.0.1:53.  */
++static void redirect_query(Tracee *tracee, const Config *config, Reg address_reg, Reg length_reg)
++{
++	struct sockaddr_storage address;
++	word_t length = peek_reg(tracee, CURRENT, length_reg);
++
++	if (read_address(tracee, &address, peek_reg(tracee, CURRENT, address_reg), length) < 0)
++		return;
++	if (!is_resolver_address(&address) || port_of(&address) != htons(DNS_PORT))
++		return;
++
++	((struct sockaddr_in *) &address)->sin_port = config->port;
++	(void) set_sysarg_data(tracee, &address, length, address_reg);
++}
++
++/* Size of the tracee's struct msghdr: seven words on both ABIs once
++ * padding is counted.  */
++#define MSGHDR_WORDS 7
++
++/* sendmsg(2) with a destination, as musl's TCP fast-open retry does:
++ * point the argument at a copy of the struct msghdr whose msg_name is
++ * a copy of the address with the resolver's port.  */
++static void redirect_message(Tracee *tracee, const Config *config)
++{
++	uint8_t header[MSGHDR_WORDS * sizeof(uint64_t)];
++	struct sockaddr_storage address;
++	word_t message = peek_reg(tracee, CURRENT, SYSARG_2);
++	size_t word = sizeof_word(tracee);
++	uint64_t name = 0;
++	uint32_t length;
++	word_t copy;
++
++	if (message == 0 || word > sizeof(uint64_t))
++		return;
++	if (read_data(tracee, header, message, MSGHDR_WORDS * word) < 0)
++		return;
++	memcpy(&name, header, word);
++	memcpy(&length, header + word, sizeof(length));
++	if (read_address(tracee, &address, name, length) < 0)
++		return;
++	if (!is_resolver_address(&address) || port_of(&address) != htons(DNS_PORT))
++		return;
++
++	((struct sockaddr_in *) &address)->sin_port = config->port;
++	copy = alloc_mem(tracee, length);
++	if (copy == 0 || write_data(tracee, copy, &address, length) < 0)
++		return;
++	name = copy;
++	memcpy(header, &name, word);
++	(void) set_sysarg_data(tracee, header, MSGHDR_WORDS * word, SYSARG_2);
++}
++
++/* Rewrites the source address at @pointer (@length bytes, as the
++ * kernel reported it) back to port 53 when it is the resolver's.  */
++static void restore_source(Tracee *tracee, const Config *config, word_t pointer, uint32_t length)
++{
++	struct sockaddr_storage address;
++	uint16_t dns_port = htons(DNS_PORT);
++
++	if (length > sizeof(struct sockaddr_in6))
++		length = sizeof(struct sockaddr_in6);
++	if (read_address(tracee, &address, pointer, length) < 0)
++		return;
++	if (!is_resolver_address(&address) || port_of(&address) != config->port)
++		return;
++
++	(void) write_data(tracee, pointer + offsetof(struct sockaddr_in, sin_port),
++			&dns_port, sizeof(dns_port));
++}
++
++/* The msg_name of the struct msghdr recvmsg(2) got, or 0.  */
++static word_t message_name(const Tracee *tracee, word_t message)
++{
++	word_t name;
++
++	if (message == 0)
++		return 0;
++	errno = 0;
++	name = peek_word(tracee, message);
++	if (errno != 0) {
++		errno = 0;
++		return 0;
++	}
++	return name;
++}
++
++/* recvfrom(2) reports the source through its 5th and 6th arguments;
++ * recvmsg(2), which musl's resolver uses, through msg_name and
++ * msg_namelen.  */
++static void restore_reply_source(Tracee *tracee, const Config *config)
++{
++	word_t pointer;
++	uint32_t length;
++
++	if ((int64_t) peek_reg(tracee, CURRENT, SYSARG_RESULT) < 0)
++		return;
++
++	if (get_sysnum(tracee, ORIGINAL) == PR_recvfrom) {
++		word_t length_pointer = peek_reg(tracee, ORIGINAL, SYSARG_6);
++
++		pointer = peek_reg(tracee, ORIGINAL, SYSARG_5);
++		if (pointer == 0 || length_pointer == 0)
++			return;
++		if (read_data(tracee, &length, length_pointer, sizeof(length)) < 0)
++			return;
++	}
++	else {
++		word_t message = peek_reg(tracee, ORIGINAL, SYSARG_2);
++
++		pointer = message_name(tracee, message);
++		if (pointer == 0)
++			return;
++		errno = 0;
++		length = peek_uint32(tracee, message + sizeof_word(tracee));
++		if (errno != 0) {
++			errno = 0;
++			return;
++		}
++	}
++
++	restore_source(tracee, config, pointer, length);
++}
++
++int dns_redirect_callback(Extension *extension, ExtensionEvent event,
++			intptr_t data1, intptr_t data2 UNUSED)
++{
++	switch (event) {
++	case INITIALIZATION: {
++		static FilteredSysnum filtered_sysnums[] = {
++			{ PR_connect,	0 },
++			{ PR_sendto,	0 },
++			{ PR_sendmsg,	0 },
++			{ PR_recvfrom,	0 },
++			{ PR_recvmsg,	0 },
++			FILTERED_SYSNUM_END,
++		};
++		const char *value = (const char *) data1;
++		Config *config;
++		char *end;
++		long port;
++
++		port = value != NULL ? strtol(value, &end, 10) : 0;
++		if (value == NULL || *end != '\0' || port <= 0 || port > 65535)
++			return -1;
++
++		config = talloc_zero(extension, Config);
++		if (config == NULL)
++			return -1;
++		config->port = htons((uint16_t) port);
++
++		extension->config = config;
++		extension->filtered_sysnums = filtered_sysnums;
++		return 0;
++	}
++
++	case INHERIT_PARENT:
++		/* Children share the parent's config.  */
++		return 0;
++
++	case SYSCALL_ENTER_END: {
++		Tracee *tracee = TRACEE(extension);
++		const Config *config = extension->config;
++
++		switch (get_sysnum(tracee, ORIGINAL)) {
++		case PR_connect:
++			redirect_query(tracee, config, SYSARG_2, SYSARG_3);
++			return 0;
++
++		case PR_sendto:
++			redirect_query(tracee, config, SYSARG_5, SYSARG_6);
++			return 0;
++
++		case PR_sendmsg:
++			redirect_message(tracee, config);
++			return 0;
++
++		case PR_recvfrom:
++		case PR_recvmsg: {
++			bool wants_source = get_sysnum(tracee, ORIGINAL) == PR_recvfrom
++				? peek_reg(tracee, CURRENT, SYSARG_5) != 0
++				: message_name(tracee, peek_reg(tracee, CURRENT, SYSARG_2)) != 0;
++
++			/* The source is only known at the exit stage,
++			 * which seccomp lets PRoot skip by default.  */
++			if (wants_source) {
++				tracee->sysexit_pending = true;
++				tracee->restart_how = PTRACE_SYSCALL;
++			}
++			return 0;
++		}
++
++		default:
++			return 0;
++		}
++	}
++
++	case SYSCALL_EXIT_END: {
++		Tracee *tracee = TRACEE(extension);
++
++		switch (get_sysnum(tracee, ORIGINAL)) {
++		case PR_recvfrom:
++		case PR_recvmsg:
++			restore_reply_source(tracee, extension->config);
++			return 0;
++		default:
++			return 0;
++		}
++	}
++
++	default:
++		return 0;
++	}
++}
+diff --git a/src/extension/extension.h b/src/extension/extension.h
+index 827d9cf..0b0693e 100644
+--- a/src/extension/extension.h
++++ b/src/extension/extension.h
+@@ -212,6 +212,7 @@ extern int kompat_callback(Extension *extension, ExtensionEvent event, intptr_t
+ extern int fake_id0_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int hidden_files_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int port_switch_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
++extern int dns_redirect_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int link2symlink_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int fix_symlink_size_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ #if defined(__ANDROID__) || defined(__BIONIC__)

@@ -1869,6 +1869,37 @@ class ProotSessionLauncherTest {
         "nameserver 192.0.2.53\nnameserver 2001:db8::53\n",
         File(rootfs, "etc/resolv.conf").readText(),
       )
+      assertFalse(launch.argv.any { it.startsWith("--dns-redirect") })
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun dnsForwarderPointsTheGuestAtLoopbackAndRedirectsPort53() {
+    val base = Files.createTempDirectory("horus-launcher-dns-forwarder").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      val launch = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        dnsServersProvider = { listOf("192.0.2.53") },
+        dnsRedirectPort = 40053,
+      ).interactiveShellLaunchSpec(rootfs, home)
+
+      assertTrue(launch.argv.contains("--dns-redirect=40053"))
+      assertEquals("nameserver 127.0.0.1\n", File(rootfs, "etc/resolv.conf").readText())
     } finally {
       base.deleteRecursively()
     }

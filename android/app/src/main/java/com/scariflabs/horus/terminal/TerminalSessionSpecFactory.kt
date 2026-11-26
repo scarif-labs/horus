@@ -97,6 +97,7 @@ class TerminalSessionSpecFactory(
         scratchDir = paths.guestTmp,
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
+        dnsRedirectPort = guestDnsPort(),
         downloadSources = downloadSourceSettings.read(),
       )
       val launch = if (toolchainTarget == null) {
@@ -179,6 +180,7 @@ class TerminalSessionSpecFactory(
         scratchDir = paths.guestTmp,
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
+        dnsRedirectPort = guestDnsPort(),
         downloadSources = downloadSourceSettings.read(),
       )
       if (launcher.hasProvisionedToolchain(rootfsDir, guestHomeDir, target)) {
@@ -225,6 +227,7 @@ class TerminalSessionSpecFactory(
         scratchDir = paths.guestTmp,
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
+        dnsRedirectPort = guestDnsPort(),
         downloadSources = downloadSourceSettings.read(),
       )
       val guestHomeDir = activeGuestHome(null)
@@ -299,6 +302,8 @@ class TerminalSessionSpecFactory(
    * the default, so sessions started on Wi-Fi keep resolving on mobile data.
    */
   fun refreshResolver(linkProperties: LinkProperties) {
+    // The forwarder follows the default network itself.
+    if (GuestDns.isActive()) return
     val rootfsDir = try {
       store.activeRootfsDir()
     } catch (_: Exception) {
@@ -314,6 +319,10 @@ class TerminalSessionSpecFactory(
     connectivity.getLinkProperties(network)?.dnsAddresses().orEmpty()
   } catch (_: RuntimeException) {
     emptyList()
+  }
+
+  private fun guestDnsPort(): Int? = GuestDns.port { error ->
+    TerminalDebugLog.record(context, "guest_dns_unavailable type=${error::class.java.simpleName}")
   }
 
   private fun LinkProperties.dnsAddresses(): List<String> =
