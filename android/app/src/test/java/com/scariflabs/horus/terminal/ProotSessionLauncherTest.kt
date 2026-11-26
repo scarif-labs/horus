@@ -3,7 +3,10 @@ package com.scariflabs.horus.terminal
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.FileTime
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -1866,6 +1869,71 @@ class ProotSessionLauncherTest {
         "nameserver 192.0.2.53\nnameserver 2001:db8::53\n",
         File(rootfs, "etc/resolv.conf").readText(),
       )
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun networkChangeRewritesResolverAndEmptyListKeepsIt() {
+    val base = Files.createTempDirectory("horus-resolver-refresh").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      val resolver = File(rootfs, "etc/resolv.conf")
+      File(rootfs, "etc").mkdirs()
+      resolver.writeText("nameserver 192.168.1.1\n")
+
+      ProotSessionLauncher.writeResolverFile(rootfs, listOf("2001:db8::53", " 192.0.2.53 "))
+      assertEquals("nameserver 2001:db8::53\nnameserver 192.0.2.53\n", resolver.readText())
+
+      ProotSessionLauncher.writeResolverFile(rootfs, emptyList())
+      assertEquals("nameserver 2001:db8::53\nnameserver 192.0.2.53\n", resolver.readText())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun launchReadingTheOldNetworkCannotOverwriteANetworkChange() {
+    val base = Files.createTempDirectory("horus-resolver-race").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      val reading = CountDownLatch(1)
+      val release = CountDownLatch(1)
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        // The launch reads the Wi-Fi resolver, then the switch to mobile data
+        // lands before the launch writes it.
+        dnsServersProvider = {
+          reading.countDown()
+          release.await(5, TimeUnit.SECONDS)
+          listOf("192.168.1.1")
+        },
+      )
+      val failure = AtomicReference<Throwable?>()
+      val launch = thread { runCatching { launcher.interactiveShellLaunchSpec(rootfs, home) }.onFailure(failure::set) }
+      assertTrue(reading.await(5, TimeUnit.SECONDS))
+      val change = thread { ProotSessionLauncher.writeResolverFile(rootfs, listOf("192.0.2.53")) }
+      val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+      while (change.isAlive && change.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.sleep(5)
+      release.countDown()
+      launch.join(5_000)
+      change.join(5_000)
+
+      failure.get()?.let { throw it }
+      assertEquals("nameserver 192.0.2.53\n", File(rootfs, "etc/resolv.conf").readText())
     } finally {
       base.deleteRecursively()
     }

@@ -2,6 +2,7 @@ package com.scariflabs.horus.terminal
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import java.io.File
 
 /**
@@ -293,15 +294,30 @@ class TerminalSessionSpecFactory(
     ProotRuntimeLocator.Location.Unavailable("proot_locate_failed", "cannot locate the packaged runtime")
   }
 
+  /**
+   * Rewrites the active rootfs's resolver for the network that just became
+   * the default, so sessions started on Wi-Fi keep resolving on mobile data.
+   */
+  fun refreshResolver(linkProperties: LinkProperties) {
+    val rootfsDir = try {
+      store.activeRootfsDir()
+    } catch (_: Exception) {
+      null
+    }
+    if (rootfsDir == null || !rootfsDir.isDirectory) return
+    ProotSessionLauncher.writeResolverFile(rootfsDir, linkProperties.dnsAddresses())
+  }
+
   private fun activeDnsServers(): List<String> = try {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val network = connectivity.activeNetwork ?: return emptyList()
-    connectivity.getLinkProperties(network)?.dnsServers
-      ?.mapNotNull { it.hostAddress?.trim()?.takeIf(String::isNotEmpty) }
-      .orEmpty()
+    connectivity.getLinkProperties(network)?.dnsAddresses().orEmpty()
   } catch (_: RuntimeException) {
     emptyList()
   }
+
+  private fun LinkProperties.dnsAddresses(): List<String> =
+    dnsServers.mapNotNull { it.hostAddress?.trim()?.takeIf(String::isNotEmpty) }
 
   private object UnusedGuestProber : GuestProber {
     override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult =
