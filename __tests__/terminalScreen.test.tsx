@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, Alert, AppState, type AppStateStatus, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
+import {ActivityIndicator, Alert, AppState, type AppStateStatus, Image, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
@@ -1209,7 +1209,7 @@ describe('TerminalScreen', () => {
     expect(renderer.root.findByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(0);
     const initialKeyboardToggle = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(initialKeyboardToggle.props.accessibilityLabel).toBe('Show keyboard');
-    expect(initialKeyboardToggle.findByType(Text).props.children).toBe('SHOW');
+    expect(initialKeyboardToggle.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard.png'));
     const inputElement = renderer.root.findByProps({testID: 'terminal-input'});
     const input = renderer.root.findByType(TextInput).instance;
     await ReactTestRenderer.act(async () => { inputElement.props.onLayout(); });
@@ -1229,7 +1229,7 @@ describe('TerminalScreen', () => {
     expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 5, columns: 50}));
     const hideButton = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(hideButton.props.accessibilityLabel).toBe('Hide keyboard');
-    expect(hideButton.findByType(Text).props.children).toBe('HIDE');
+    expect(hideButton.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard-hide.png'));
     const blur = jest.spyOn(input, 'blur').mockClear();
     await ReactTestRenderer.act(async () => { hideButton.props.onPress(); });
     expect(dismiss).toHaveBeenCalledTimes(1);
@@ -1243,9 +1243,9 @@ describe('TerminalScreen', () => {
     expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 10, columns: 50}));
     const showButton = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(showButton.props.accessibilityLabel).toBe('Show keyboard');
-    expect(showButton.findByType(Text).props.children).toBe('SHOW');
+    expect(showButton.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard.png'));
     expect(focus).not.toHaveBeenCalled();
-    // A tap on the output never opens the keyboard; the SHOW key does.
+    // A tap on the output never opens the keyboard; the keyboard key does.
     await ReactTestRenderer.act(async () => {
       const touchTarget = renderer.root.findByProps({testID: 'terminal-output'});
       touchTarget.props.onTouchStart(terminalTouch(40, 90));
