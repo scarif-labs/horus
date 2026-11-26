@@ -29,15 +29,23 @@ const RULES: ReadonlyArray<readonly [string, string]> = [
     "Permission denied while installing packages."
   ],
   [
-    "could not resolve|ENOTFOUND|EAI_AGAIN",
+    "failed to (extract|commit)|operation not permitted|too many links|function not implemented|read-only file system|cross-device link|I/O error|EPERM|EMLINK|EXDEV|EROFS",
+    "Writing package files to the phone's storage failed."
+  ],
+  [
+    "could not resolve|ENOTFOUND|EAI_AGAIN|DNS:",
     "Could not resolve a download host."
+  ],
+  [
+    "TLS:|SSL certificate|certificate verify failed|certificate not trusted",
+    "The secure download connection failed (TLS)."
   ],
   [
     "timed out|ETIMEDOUT",
     "A download connection timed out."
   ],
   [
-    "ENETUNREACH|ECONN|failed to fetch|unable to fetch|fetch failed|network is unreachable",
+    "ENETUNREACH|ECONN|EHOSTUNREACH|failed to fetch|unable to fetch|fetch failed|network is unreachable|network unreachable|host is unreachable|connection refused|connection reset",
     "Network is unreachable while downloading packages."
   ],
   [
@@ -53,8 +61,16 @@ const RULES: ReadonlyArray<readonly [string, string]> = [
     "The download returned a web page instead of an installer."
   ],
   [
-    "curl: \\(22\\)|HTTP[^\\n]*(401|403|404|429|500|502|503)",
+    "curl: \\(22\\)|HTTP[^\\n]*(401|403|404|407|429|500|502|503|504)",
     "The download server returned an HTTP error."
+  ],
+  [
+    "BAD signature|UNTRUSTED signature|integrity error|BAD archive|BAD checksum|format is invalid|unexpected end of file",
+    "A downloaded package was damaged or failed its signature check."
+  ],
+  [
+    "unable to select packages|could not find a repo|no such package|index not found",
+    "A required package is missing from the package list."
   ],
   [
     "command not found|no such file or directory",

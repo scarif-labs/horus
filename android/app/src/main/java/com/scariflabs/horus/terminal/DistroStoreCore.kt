@@ -111,6 +111,7 @@ class DistroStoreCore(
     source: ArchiveDownloader = downloader,
     /** False installs the version beside the active one, e.g. a second user's distribution, without switching to it. */
     makeActive: Boolean = true,
+    onStage: (String) -> Unit = {},
   ): InstallOutcome {
     if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) {
       return InstallOutcome.Failure(rootfsId, "validate", "invalid_rootfs_id", "id does not match the catalog pattern")
@@ -135,12 +136,14 @@ class DistroStoreCore(
     val archiveToUse: File
     val reusedCache: Boolean
     try {
+      onStage("checking")
       if (cachedArchive.isFile && sha256OfFile(cachedArchive) == expectedSha256 && cachedArchive.length() == expectedBytes) {
         archiveToUse = cachedArchive
         reusedCache = true
       } else {
         reusedCache = false
         incoming.delete()
+        onStage("download")
         val downloaded = try {
           source.download(url, expectedBytes, incoming, downloadTimeoutMs)
         } catch (error: IOException) {
@@ -151,6 +154,7 @@ class DistroStoreCore(
           incoming.delete()
           return InstallOutcome.Failure(rootfsId, "download", "size_mismatch", "downloaded $downloaded bytes, expected $expectedBytes")
         }
+        onStage("verify")
         val digest = sha256OfFile(incoming)
         if (digest != expectedSha256) {
           incoming.delete()
@@ -169,6 +173,7 @@ class DistroStoreCore(
     }
 
     // Extract into a staging directory; never into the active rootfs path.
+    onStage("extract")
     val staging = paths.versionStaging(rootfsId)
     try {
       deleteTreeIfPresent(staging)
@@ -191,6 +196,7 @@ class DistroStoreCore(
     // The guest must prove itself before promotion.
     // The markers to require come from the catalog entry, never from the
     // prober's result, so another distribution's probe output cannot pass.
+    onStage("probe")
     val probe = try {
       val probeHome = paths.homeFor(entry.distro)
       if (!probeHome.isDirectory && !probeHome.mkdirs()) throw IOException("cannot create ${entry.distro} home")
@@ -208,6 +214,7 @@ class DistroStoreCore(
       return InstallOutcome.Failure(rootfsId, "probe", "probe_host_path_leak", "guest output exposed an app-private host path")
     }
 
+    onStage("promote")
     val record = ActiveRecord(
       schemaVersion = recordSchemaFor(entry.distro),
       distro = entry.distro,

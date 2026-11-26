@@ -140,7 +140,7 @@ class TerminalSessionServiceClient(
       requestId,
       Bundle().apply { putString(TerminalSessionServiceProtocol.KEY_TARGET, target) },
       callback,
-      PROVISION_REQUEST_TIMEOUT_MS,
+      ProvisionGate.REPLY_TIMEOUT_MS,
     )
   }
 
@@ -508,7 +508,6 @@ class TerminalSessionServiceClient(
   private companion object {
     const val REQUEST_TIMEOUT_MS = 10_000L
     const val STOP_ALL_REQUEST_TIMEOUT_MS = 20_000L
-    const val PROVISION_REQUEST_TIMEOUT_MS = 310_000L
     const val MAX_QUEUED_REQUESTS = 64
     const val INVALID_REQUEST_ID = "invalid-request"
     const val LOG_TAG = "HorusTerminal"

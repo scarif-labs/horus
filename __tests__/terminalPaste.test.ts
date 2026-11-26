@@ -35,4 +35,11 @@ describe('terminal paste', () => {
     await expect(readTerminalPaste('s-1', false, pasteRuntime(''))).resolves.toBeUndefined();
     await expect(readTerminalPaste('s-1', false, null)).resolves.toBeUndefined();
   });
+
+  test('preserves an oversized clipboard error for the screen to show', async () => {
+    const runtime = pasteRuntime(null);
+    const error = Object.assign(new Error('too large'), {code: 'clipboard_too_large'});
+    (runtime.readClipboardText as jest.Mock).mockRejectedValue(error);
+    await expect(readTerminalPaste('s-1', false, runtime)).rejects.toBe(error);
+  });
 });

@@ -27,7 +27,10 @@ export async function readTerminalPaste(
   runtime: TerminalPasteRuntime | null = nativeTerminalRuntime,
 ): Promise<string | undefined> {
   if (runtime === null) return undefined;
-  const text = await runtime.readClipboardText().catch(() => null);
+  const text = await runtime.readClipboardText().catch((error: unknown) => {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'clipboard_too_large') throw error;
+    return null;
+  });
   if (text === null || text.length === 0) return undefined;
   const bracketed = nativeSessionId === undefined
     ? localBracketed

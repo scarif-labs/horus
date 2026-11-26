@@ -17,6 +17,16 @@ async function render(element: React.ReactElement) {
 }
 
 describe('UserAccountScreen', () => {
+  test('rejects a name used by the other distribution', async () => {
+    const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+    await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
+    await ReactTestRenderer.act(async () => { find('user-account-username')[0].props.onChangeText('deb'); });
+    await ReactTestRenderer.act(async () => { find('user-account-edit-save')[0].props.onPress(); });
+    expect(onUpdateUser).not.toHaveBeenCalled();
+    expect(find('user-account-edit-error')[0].props.children).toBe('That username is already in use.');
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
   test('shows the existing username count and updates it while editing', async () => {
     const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
     const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE]} />);

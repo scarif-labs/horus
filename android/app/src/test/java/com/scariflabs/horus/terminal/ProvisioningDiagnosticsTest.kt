@@ -88,6 +88,11 @@ class ProvisioningDiagnosticsTest {
     assertEquals("No space left on device.", result.log)
     assertEquals("No space left on device.", result.fields()["log"])
   }
+  @Test fun apkTlsFailureIsANetworkError() {
+    val result = run("echo 'WARNING: fetching https://private.invalid/main: TLS: server certificate not trusted'; exit 21")
+    assertEquals("The secure download connection failed (TLS).", result.log)
+    assertEquals("toolchain_network", result.errorCode())
+  }
   @Test fun sharedSanitizationCasesMatchNativeBoundary() {
     val cases = JSONArray(javaClass.getResource("/provisioning-diagnostics.json")!!.readText())
     for (index in 0 until cases.length()) {

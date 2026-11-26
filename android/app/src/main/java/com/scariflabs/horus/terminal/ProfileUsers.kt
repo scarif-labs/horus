@@ -41,8 +41,8 @@ class ProfileUsersCore(
     data object Unavailable : Check
   }
 
-  enum class CreateResult { CREATED, EXISTS, INVALID_DISTRO, INVALID_USERNAME, INVALID_AVATAR, INVALID_PASSWORD }
-  enum class UpdateResult { UPDATED, NOT_FOUND, INVALID_USERNAME, INVALID_AVATAR }
+  enum class CreateResult { CREATED, EXISTS, INVALID_DISTRO, INVALID_USERNAME, DUPLICATE_USERNAME, INVALID_AVATAR, INVALID_PASSWORD }
+  enum class UpdateResult { UPDATED, NOT_FOUND, INVALID_USERNAME, DUPLICATE_USERNAME, INVALID_AVATAR }
 
   fun user(distro: String): ProfileUser? {
     if (distro !in DISTROS || !hasVerifier(distro)) return null
@@ -74,6 +74,7 @@ class ProfileUsersCore(
     if (distro !in DISTROS) return CreateResult.INVALID_DISTRO
     if (hasVerifier(distro)) return CreateResult.EXISTS
     if (!isValidUsername(username)) return CreateResult.INVALID_USERNAME
+    if (users().any { it.username == username }) return CreateResult.DUPLICATE_USERNAME
     if (avatar !in AVATARS) return CreateResult.INVALID_AVATAR
     if (!isValidPassword(password)) return CreateResult.INVALID_PASSWORD
     val salt = ByteArray(PASSWORD_SALT_BYTES).also(SecureRandom()::nextBytes)
@@ -100,9 +101,11 @@ class ProfileUsersCore(
    * it belongs to the distribution, not the name. The guest account follows
    * on its next launch, which renames the profile uid's row.
    */
+  @Synchronized
   fun update(distro: String, username: String, avatar: String): UpdateResult {
     if (distro !in DISTROS || !hasVerifier(distro)) return UpdateResult.NOT_FOUND
     if (!isValidUsername(username)) return UpdateResult.INVALID_USERNAME
+    if (user(distro)?.username != username && users().any { it.distro != distro && it.username == username }) return UpdateResult.DUPLICATE_USERNAME
     if (avatar !in AVATARS) return UpdateResult.INVALID_AVATAR
     val changes = mutableMapOf<String, Any?>(usernameKey(distro) to username, avatarKey(distro) to avatar)
     if (distro == RootfsCatalog.DISTRO_ALPINE) {

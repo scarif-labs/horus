@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -54,6 +56,26 @@ static void reset_signal_dispositions(void) {
     if (signal_number == SIGKILL || signal_number == SIGSTOP) continue;
     (void)sigaction(signal_number, &action, NULL);
   }
+}
+
+/*
+ * Closes every descriptor above stderr in the forked child.
+ *
+ * This bypasses bionic's close(): on Android 13, fdsan's lookup for a
+ * descriptor exactly one past its overflow table writes past the table's
+ * last page. When the next mapping is read-only the child dies with
+ * SIGSEGV before execve, so the shell never starts (#89, #205 and other
+ * Android 13 reports). The raw syscall never touches fdsan, and no
+ * descriptor can exceed the hard RLIMIT_NOFILE, so the loop stops there.
+ */
+static void close_inherited_descriptors(void) {
+  int limit = 65536;
+  struct rlimit files;
+  if (getrlimit(RLIMIT_NOFILE, &files) == 0 && files.rlim_max != RLIM_INFINITY &&
+      files.rlim_max < (rlim_t)limit) {
+    limit = (int)files.rlim_max;
+  }
+  for (int fd = STDERR_FILENO + 1; fd < limit; fd++) (void)syscall(__NR_close, fd);
 }
 
 /*
@@ -153,7 +175,7 @@ Java_com_scariflabs_horus_terminal_TerminalPtyJni_createSubprocess(
          * writer can keep the master readable after the shell exits and a
          * leaked app descriptor can keep unrelated resources alive. The
          * launcher only needs stdio after the dup2 calls above. */
-        for (int fd = STDERR_FILENO + 1; fd < 65536; fd++) close(fd);
+        close_inherited_descriptors();
         execve(child_argv[0], child_argv, child_envp);
         _exit(127);
       } else {

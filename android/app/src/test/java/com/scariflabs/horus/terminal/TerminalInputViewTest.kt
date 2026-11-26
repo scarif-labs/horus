@@ -32,6 +32,8 @@ class TerminalInputViewTest {
   fun `one-shot modifiers apply to the first key of a commit only`() {
     assertEquals("\u0003", applyOneShotTerminalModifiers("c", ctrlActive = true, altActive = false))
     assertEquals("\u000cs", applyOneShotTerminalModifiers("ls", ctrlActive = true, altActive = false))
+    assertEquals("\u000c\u0013", applyOneShotTerminalModifiers("ls", ctrlActive = true, altActive = false, ctrlLocked = true))
+    assertEquals("\u001b\u000c\u001bs", applyOneShotTerminalModifiers("ls", ctrlActive = true, altActive = true, altLocked = true))
     assertEquals("\u001bb.", applyOneShotTerminalModifiers("b.", ctrlActive = false, altActive = true))
     assertEquals("🙂x", applyOneShotTerminalModifiers("🙂x", ctrlActive = true, altActive = false))
     assertEquals("ls", applyOneShotTerminalModifiers("ls", ctrlActive = false, altActive = false))

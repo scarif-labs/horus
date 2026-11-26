@@ -70,6 +70,8 @@ class TerminalRuntimeModule(
     Thread(runnable, "alpine-distro-install").apply { isDaemon = true }
   }
   private val installInProgress = AtomicBoolean(false)
+  private data class RootfsProgress(val requestId: String, val entry: RootfsCatalogEntry, val stage: String)
+  @Volatile private var rootfsProgress: RootfsProgress? = null
   private val invalidated = AtomicBoolean(false)
   // Packaged native libraries cannot change while this APK process is alive.
   private val packagedProotRuntime: ProotRuntimeLocator.Location by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -613,14 +615,16 @@ class TerminalRuntimeModule(
     imported: Uri?,
     makeActive: Boolean,
   ) {
+    rootfsProgress = RootfsProgress(responseRequestId, entry, "checking")
     installExecutor.execute {
       val response = try {
+        val onStage: (String) -> Unit = { stage -> rootfsProgress = RootfsProgress(responseRequestId, entry, stage) }
         val outcome = if (imported == null) {
           // The download-source mirror setting only covers Alpine.
           val url = if (entry == RootfsCatalog.ALPINE) downloadSourceSettings.read().rootfsUrl else entry.url
-          store.install(entry, url = url, makeActive = makeActive)
+          store.install(entry, url = url, makeActive = makeActive, onStage = onStage)
         } else {
-          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported), makeActive = makeActive)
+          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported), makeActive = makeActive, onStage = onStage)
         }
         when (outcome) {
           is DistroStoreCore.InstallOutcome.Success -> {
@@ -651,12 +655,30 @@ class TerminalRuntimeModule(
         TerminalDebugLog.record(appContext, "module_rootfs_install_exception request=$responseRequestId type=${error::class.java.simpleName}")
         installError(responseRequestId, "internal_error")
       } finally {
+        rootfsProgress = null
         installInProgress.set(false)
       }
       // The when/try above must resolve exactly once; keep the promise
       // resolution outside the catch so a late failure cannot double-resolve.
       deliverInstallResponse(promise, response)
     }
+  }
+
+  override fun readRootfsInstallProgress(promise: Promise) {
+    val progress = rootfsProgress
+    promise.resolve(Arguments.createMap().apply {
+      if (progress == null || isInvalidated()) {
+        putString("status", "idle")
+      } else {
+        putString("status", "working")
+        putString("requestId", progress.requestId)
+        putString("stage", progress.stage)
+        if (progress.stage == "download") {
+          putDouble("downloadedBytes", paths.archiveInIncoming(progress.entry.rootfsId).length().coerceAtMost(progress.entry.sizeBytes).toDouble())
+          putDouble("totalBytes", progress.entry.sizeBytes.toDouble())
+        }
+      }
+    })
   }
 
   private fun deliverInstallResponse(promise: Promise, response: WritableMap) {
@@ -1322,6 +1344,31 @@ class TerminalRuntimeModule(
     promise.resolve(frame?.let { NativeTerminalLinks.urlAt(it.lines, rowIndex, column.toInt()) })
   }
 
+  /** Reads the current native terminal frame and bounded normal-buffer scrollback as selectable plain text. */
+  override fun getTerminalText(sessionId: String, promise: Promise) {
+    if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId)) {
+      promise.resolve(Arguments.createMap().apply {
+        putString("status", "error")
+        putString("errorCode", "invalid_request")
+      })
+      return
+    }
+    val engine = NativeTerminalEngineRegistry.get(sessionId)
+    if (engine == null) {
+      promise.resolve(Arguments.createMap().apply {
+        putString("status", "error")
+        putString("errorCode", "session_not_found")
+      })
+      return
+    }
+    val snapshot = NativeTerminalText.from(engine.currentFrame().lines)
+    promise.resolve(Arguments.createMap().apply {
+      putString("status", "success")
+      putString("text", snapshot.text)
+      putBoolean("truncated", snapshot.truncated)
+    })
+  }
+
   /**
    * Keeps the text of a native session's last screen once it exits, so the
    * app can show why it quit. Held in memory only, for a few sessions, until
@@ -1355,7 +1402,11 @@ class TerminalRuntimeModule(
         val clipboard = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(appContext)?.toString()
       }.getOrNull()
-      promise.resolve(text?.takeIf { it.isNotEmpty() && it.length <= MAX_PASTE_CHARS })
+      if (text != null && text.length > MAX_PASTE_CHARS) {
+        promise.reject("clipboard_too_large", "Clipboard text exceeds $MAX_PASTE_CHARS characters.")
+      } else {
+        promise.resolve(text?.takeIf { it.isNotEmpty() })
+      }
     }
   }
 

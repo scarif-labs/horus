@@ -1,0 +1,2 @@
+- Fix tools installs failing with "install in progress" after a slow install or when Android restarts the app during setup
+- Say which kind of problem stopped a package install, like network, storage or a damaged download

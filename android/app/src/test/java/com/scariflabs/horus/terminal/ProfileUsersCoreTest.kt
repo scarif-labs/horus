@@ -70,6 +70,15 @@ class ProfileUsersCoreTest {
   }
 
   @Test
+  fun `create and rename reject another distribution username`() {
+    assertEquals(ProfileUsersCore.CreateResult.CREATED, users.create(alpine, "ra", "falcon", "secret"))
+    assertEquals(ProfileUsersCore.CreateResult.DUPLICATE_USERNAME, users.create(debian, "ra", "ibis", "secret"))
+    assertEquals(ProfileUsersCore.CreateResult.CREATED, users.create(debian, "deb", "ibis", "secret"))
+    assertEquals(ProfileUsersCore.UpdateResult.DUPLICATE_USERNAME, users.update(debian, "ra", "scarab"))
+    assertEquals("deb", users.user(debian)?.username)
+  }
+
+  @Test
   fun `only an upgrade from before users is pointed at account, once`() {
     assertFalse(users.needsAccountIntro())
     // What 1.0.4 left: an Alpine password and no username.

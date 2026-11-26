@@ -5,6 +5,27 @@ const {parseArgs} = require('../lib/args');
 const {hostKeyAlias, parseRemotePath, shellQuote, sshConfigBlock, sshOptions} = require('../lib/ssh');
 const {fingerprintOf, isValidName, slugify, uniqueName} = require('../lib/state');
 
+test('unpair removes a connected phone whose authorization was already revoked', async () => {
+  const adb = require('../lib/adb');
+  const state = require('../lib/state');
+  const {COMMANDS} = require('../lib/commands');
+  const devices = {serial1: {name: 'phone'}};
+  const spies = [
+    jest.spyOn(state, 'ensureKey').mockReturnValue({fingerprint: 'fingerprint'}),
+    jest.spyOn(state, 'readDevices').mockImplementation(() => ({...devices})),
+    jest.spyOn(state, 'writeDevices').mockImplementation(() => {}),
+    jest.spyOn(adb, 'listDevices').mockResolvedValue([{serial: 'serial1', state: 'device', model: 'phone'}]),
+    jest.spyOn(adb, 'callHorus').mockImplementation(async (_serial, method) => method === 'status' ? {authorized: false} : {status: 'not_found'}),
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true),
+  ];
+  try {
+    expect(await COMMANDS.unpair({positional: ['phone']})).toBe(0);
+    expect(state.writeDevices).toHaveBeenCalledWith({});
+  } finally {
+    spies.forEach(spy => spy.mockRestore());
+  }
+});
+
 describe('adb output parsing', () => {
   test('reads connected devices and their models', () => {
     const output = [

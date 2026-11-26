@@ -98,7 +98,7 @@ type TerminalTouch = Pick<NativeTouchEvent, 'identifier' | 'pageX' | 'pageY'> & 
   mouseEncoding: TerminalFrame['mouseEncoding'];
 };
 
-export type NativeScreenState = Readonly<{hasContent: boolean; alternate: boolean}>;
+export type NativeScreenState = Readonly<{hasContent: boolean; alternate: boolean; mouseTracking: boolean}>;
 
 type Props = Readonly<{
   frame: TerminalFrame | undefined;
@@ -325,7 +325,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   const [displayFrame, setDisplayFrame] = React.useState(frame);
   const [nativeFrameMeta, setNativeFrameMeta] = React.useState<NativeTerminalFrameMeta>({alternate: false, contentRows: nativeRows, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
   const nativeFrameMetaRef = React.useRef(nativeFrameMeta);
-  const nativeScreen = React.useRef<NativeScreenState>({hasContent: false, alternate: false});
+  const nativeScreen = React.useRef<NativeScreenState>({hasContent: false, alternate: false, mouseTracking: false});
   nativeFrameMetaRef.current = nativeFrameMeta;
   const touchStart = React.useRef<TerminalTouch | null>(null);
   const nativeScrollOffset = React.useRef(0);
@@ -388,7 +388,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
   // full-screen app matching the old one is never reported, the screen keeps
   // the PTY at full height under the keyboard, and the app's top is hidden.
   React.useEffect(() => {
-    nativeScreen.current = {hasContent: false, alternate: false};
+    nativeScreen.current = {hasContent: false, alternate: false, mouseTracking: false};
     nativeScrollOffset.current = 0;
     nativeExpandedScrollOffset.current = 0;
     followTail.current = true;
@@ -515,8 +515,8 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
       }
     }
     const hasContent = lastContentRow >= 0;
-    if (hasContent !== nativeScreen.current.hasContent || nextAlternate !== nativeScreen.current.alternate) {
-      nativeScreen.current = {hasContent, alternate: nextAlternate};
+    if (hasContent !== nativeScreen.current.hasContent || nextAlternate !== nativeScreen.current.alternate || mouseTracking !== nativeScreen.current.mouseTracking) {
+      nativeScreen.current = {hasContent, alternate: nextAlternate, mouseTracking};
       onNativeScreenChange?.(nativeScreen.current);
     }
     setNativeFrameMeta(current => current.alternate === nextAlternate && current.contentRows === contentRows && current.rows === rows &&
