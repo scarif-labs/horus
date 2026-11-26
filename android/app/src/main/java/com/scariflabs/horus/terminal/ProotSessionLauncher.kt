@@ -27,6 +27,12 @@ class ProotSessionLauncher(
   private val hostProcDir: File = File(HOST_PROC),
   private val hostDevDir: File = File(HOST_DEV),
   private val dnsServersProvider: () -> List<String> = { emptyList() },
+  /**
+   * Port of the app's DNS forwarder ([GuestDns]). When set, the guest asks
+   * 127.0.0.1 and PRoot sends those queries here instead of the guest using
+   * the network's servers directly.
+   */
+  private val dnsRedirectPort: Int? = null,
   /** Boot time in Unix seconds, for the `btime` line of the stand-in /proc/stat. */
   private val bootTimeSeconds: () -> Long = { DEVICE_BOOT_TIME_SECONDS },
   /**
@@ -335,6 +341,7 @@ class ProotSessionLauncher(
       // Android's SELinux policy denies link(2) on app data, so emulate guest
       // hard links (apk installs e.g. zsh as one) with PRoot's symlink scheme.
       add("--link2symlink")
+      dnsRedirectPort?.let { add("--dns-redirect=$it") }
       if (!launchAsRoot) {
         add("-i")
         add("$guestUid:$guestGid")
@@ -546,14 +553,17 @@ class ProotSessionLauncher(
    * Alpine minirootfs does not ship a resolver file. Android's resolver is
    * exposed through ConnectivityManager rather than a host `/etc/resolv.conf`,
    * so materialize only the current DNS addresses into the app-owned guest
-   * rootfs. An empty provider deliberately leaves the guest file untouched
-   * for JVM/unit-test launchers that do not model Android networking.
+   * rootfs. With the app's DNS forwarder the guest asks 127.0.0.1 instead.
+   * An empty provider deliberately leaves the guest file untouched for
+   * JVM/unit-test launchers that do not model Android networking.
    */
   private fun prepareResolverFile(rootfsDir: File) {
     // Read the servers under the writer's lock: a network change that lands
     // between the read and the write would otherwise be overwritten with the
     // old network's servers.
-    synchronized(resolverLock) { writeResolverFile(rootfsDir, dnsServersProvider()) }
+    synchronized(resolverLock) {
+      writeResolverFile(rootfsDir, if (dnsRedirectPort != null) listOf(GUEST_DNS_ADDRESS) else dnsServersProvider())
+    }
   }
 
   /**
@@ -2491,6 +2501,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       }
     }
 
+    /** The guest's nameserver when the app forwards its DNS; PRoot redirects port 53 on it. */
+    const val GUEST_DNS_ADDRESS = "127.0.0.1"
     private const val RESOLV_CONF_DIRECTORY = "etc"
     private const val RESOLV_CONF_NAME = "resolv.conf"
     private const val MAX_DNS_SERVERS = 4
