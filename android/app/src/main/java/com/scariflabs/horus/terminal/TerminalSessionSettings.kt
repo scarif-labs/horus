@@ -6,9 +6,10 @@ import org.json.JSONObject
 
 /**
  * Small cross-process setting store for the user-facing concurrent-session
- * limit. The service and the React Native process do not share a reliable
- * SharedPreferences cache, so reads are fresh and writes replace the file
- * atomically. The file contains no credentials or terminal data.
+ * limit, terminal engine, and guest zsh theme. The service and the React
+ * Native process do not share a reliable SharedPreferences cache, so reads
+ * are fresh and writes replace the file atomically. The file contains no
+ * credentials or terminal data.
  */
 class TerminalSessionSettings(
   private val file: File,
@@ -31,8 +32,38 @@ class TerminalSessionSettings(
   }
 
   @Synchronized
+  fun readEngineBackend(): TerminalEngineBackend {
+    if (Files.isSymbolicLink(file.toPath()) || !file.isFile || file.length() > MAX_FILE_BYTES) {
+      return TerminalEngineBackend.LIBGHOSTTY
+    }
+    val value = runCatching {
+      val json = JSONObject(file.readText(Charsets.UTF_8))
+      if (json.has(KEY_ENGINE_BACKEND)) json.getString(KEY_ENGINE_BACKEND) else null
+    }.getOrNull()
+    return TerminalEngineBackend.fromName(value)
+  }
+
+  @Synchronized
+  fun writeEngineBackend(backend: TerminalEngineBackend): Boolean = update { it.put(KEY_ENGINE_BACKEND, backend.name) }
+
+  @Synchronized
   fun writeLimit(limit: Int): Boolean {
     if (!TerminalSessionContract.isValidActiveSessionLimit(limit)) return false
+    return update { it.put(KEY_LIMIT, limit) }
+  }
+
+  @Synchronized
+  fun readZshTheme(): ZshTheme {
+    if (Files.isSymbolicLink(file.toPath()) || !file.isFile || file.length() > MAX_FILE_BYTES) return ZshTheme.DEFAULT
+    val value = runCatching { JSONObject(file.readText(Charsets.UTF_8)).optString(KEY_ZSH_THEME) }.getOrNull()
+    return ZshTheme.fromId(value) ?: ZshTheme.DEFAULT
+  }
+
+  @Synchronized
+  fun writeZshTheme(theme: ZshTheme): Boolean = update { it.put(KEY_ZSH_THEME, theme.id) }
+
+  /** Rewrites the file atomically, keeping the keys [change] leaves alone. */
+  private fun update(change: (JSONObject) -> Unit): Boolean {
     val parent = file.parentFile ?: return false
     if (Files.isSymbolicLink(parent.toPath())) return false
     if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return false
@@ -40,7 +71,13 @@ class TerminalSessionSettings(
     val temporary = File(parent, ".${file.name}.tmp")
     if (Files.isSymbolicLink(temporary.toPath())) return false
     return runCatching {
-      temporary.writeText(JSONObject().put(KEY_LIMIT, limit).toString(), Charsets.UTF_8)
+      val json = if (file.isFile) {
+        runCatching { JSONObject(file.readText(Charsets.UTF_8)) }.getOrDefault(JSONObject())
+      } else {
+        JSONObject()
+      }
+      change(json)
+      temporary.writeText(json.toString(), Charsets.UTF_8)
       if (!temporary.renameTo(file)) {
         temporary.delete()
         false
@@ -55,6 +92,8 @@ class TerminalSessionSettings(
 
   private companion object {
     const val KEY_LIMIT = "maxConcurrentSessions"
+    const val KEY_ENGINE_BACKEND = "vtEngineBackend"
+    const val KEY_ZSH_THEME = "zshTheme"
     const val MAX_FILE_BYTES = 1024L
   }
 }

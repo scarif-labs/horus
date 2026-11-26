@@ -9,13 +9,16 @@ import {RemoteAccessPanel} from './RemoteAccessPanel';
 import {SettingsAction, SettingsExternalMark, SettingsRow, SettingsSection} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
+import {ZshThemePicker} from './ZshThemePicker';
 import {
   readSessionSettings,
   TERMINAL_SESSION_LIMIT_MAX,
   TERMINAL_SESSION_LIMIT_MIN,
   writeSessionLimit,
+  writeZshTheme,
   type SessionSettings,
   type SessionSettingsResult,
+  type ZshThemeId,
 } from '../terminal/session/sessionSettings';
 
 export const HORUS_DOCS_URL = 'https://www.scariflabs.com/horus/docs';
@@ -25,6 +28,7 @@ type SessionSettingsScreenProps = Readonly<{
   openUrl?: (url: string) => Promise<unknown>;
   readSettings?: () => Promise<SessionSettingsResult>;
   saveLimit?: (limit: number) => Promise<SessionSettingsResult>;
+  saveZshTheme?: (theme: ZshThemeId) => Promise<SessionSettingsResult>;
 }>;
 
 function errorLabel(errorCode: string): string {
@@ -38,7 +42,7 @@ function limitLabel(limit: number): string {
 }
 
 /** Device-wide settings. Users, switching, and log out live on the user card's screen. */
-export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
+export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit, saveZshTheme = writeZshTheme}: SessionSettingsScreenProps): React.JSX.Element {
   const [settings, setSettings] = React.useState<SessionSettings | undefined>();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -68,11 +72,10 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
 
   useHardwareBack(true, onBack);
 
-  const chooseLimit = React.useCallback(async (limit: number) => {
-    if (settings === undefined || saving || limit === settings.maxConcurrentSessions) return;
+  const save = React.useCallback(async (write: () => Promise<SessionSettingsResult>) => {
     setSaving(true);
     setError(undefined);
-    const result = await saveLimit(limit);
+    const result = await write();
     if (!mountedRef.current) return;
     if (result.kind === 'success') {
       setSettings(result.settings);
@@ -80,7 +83,17 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
       setError(errorLabel(result.errorCode));
     }
     setSaving(false);
-  }, [saveLimit, saving, settings]);
+  }, []);
+
+  const chooseLimit = React.useCallback(async (limit: number) => {
+    if (settings === undefined || saving || limit === settings.maxConcurrentSessions) return;
+    await save(() => saveLimit(limit));
+  }, [save, saveLimit, saving, settings]);
+
+  const chooseZshTheme = React.useCallback(async (theme: ZshThemeId) => {
+    if (settings === undefined || saving || theme === settings.zshTheme) return;
+    await save(() => saveZshTheme(theme));
+  }, [save, saveZshTheme, saving, settings]);
 
   return (
     <ScreenShell testID="session-settings-screen">
@@ -130,6 +143,10 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
               </View>
             )}
           />
+        </SettingsSection>
+
+        <SettingsSection footer="Applies to shells you open after changing it." testID="settings-zsh-theme" title="SHELL THEME">
+          <ZshThemePicker disabled={loading || saving || settings === undefined} onSelect={theme => { void chooseZshTheme(theme); }} value={settings?.zshTheme} />
         </SettingsSection>
 
         <BackgroundPermissionsPanel />

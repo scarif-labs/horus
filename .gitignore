@@ -73,6 +73,10 @@ yarn-error.log
 !.env.example
 *.credentials
 
+# Native build cache
+native/cache/
+native/libghostty-vt/build/
+
 # Metro caches
 .metro-cache/
 

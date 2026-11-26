@@ -132,6 +132,7 @@ export type SessionSettingsResponse = {
   maxConcurrentSessions?: number;
   minConcurrentSessions?: number;
   maxSupportedConcurrentSessions?: number;
+  zshTheme?: string;
   errorCode?: TerminalRuntimeErrorCode;
 };
 
@@ -150,6 +151,10 @@ export type SetDownloadSourcesRequest = {
 
 export type SetSessionLimitRequest = {
   maxConcurrentSessions: number;
+};
+
+export type SetZshThemeRequest = {
+  zshTheme: string;
 };
 
 export type TerminalDebugLogResponse = {
@@ -563,6 +568,8 @@ export interface Spec extends TurboModule {
   getRuntimeStatus(): Promise<TerminalRuntimeStatusResponse>;
   getSessionSettings(): Promise<SessionSettingsResponse>;
   setSessionLimit(request: SetSessionLimitRequest): Promise<SessionSettingsResponse>;
+  /** The guest zsh prompt, for shells started from now on. */
+  setZshTheme(request: SetZshThemeRequest): Promise<SessionSettingsResponse>;
   /** The Alpine mirror and npm registry used for downloads. */
   getDownloadSources(): Promise<DownloadSourcesResponse>;
   setDownloadSources(request: SetDownloadSourcesRequest): Promise<DownloadSourcesResponse>;
@@ -602,7 +609,7 @@ export interface Spec extends TurboModule {
    * native session's current frame, or null. Call only on a tap.
    */
   terminalLinkAt(sessionId: string, row: number, column: number): Promise<string | null>;
-  /** Plain text for the native frame and its normal-buffer scrollback. */
+  /** Plain text for the native screen and its scrollback, bounded to the newest text. */
   getTerminalText(sessionId: string): Promise<TerminalTextResponse>;
   /** The text of an exited native session's last screen, once; or null. */
   takeExitScreen(sessionId: string): Promise<string | null>;

@@ -39,6 +39,112 @@ object TerminalPtyJni {
 
   /** Polling write; 0 not-ready, >0 accepted byte count, -(errno) on failure. */
   external fun writeMaster(masterFd: Int, buffer: ByteArray, offset: Int, count: Int): Int
+
+  /* ========================================================================= */
+  /* libghostty-vt Native Terminal Engine Integration                          */
+  /* ========================================================================= */
+
+  /** Creates a native terminal engine instance; returns pointer as Long (0 on failure). */
+  external fun nativeEngineCreate(cols: Int, rows: Int, masterFd: Int): Long
+
+  /** Destroys the native terminal engine instance. */
+  external fun nativeEngineDestroy(handle: Long)
+
+  /** Resizes the native terminal engine and updates masterFd if >= 0. */
+  external fun nativeEngineResize(handle: Long, cols: Int, rows: Int, cellWidthPx: Int, cellHeightPx: Int): Int
+
+  /** Full reset of the native terminal engine (RIS). */
+  external fun nativeEngineReset(handle: Long): Int
+
+  /** Returns true if synchronized output (mode 2026) is active. */
+  external fun nativeEngineIsSynchronizedOutput(handle: Long): Boolean
+
+  /** Feeds VT bytes into the engine; returns any auto-replies generated. */
+  external fun nativeEngineFeed(handle: Long, bytes: ByteArray, offset: Int, count: Int): ByteArray?
+
+  /**
+   * Updates render state and packs the viewport and its overscan rows into
+   * outDirectBuffer. Clean rows are written without cells unless [forceCells].
+   * Returns [status, requiredCapacity, totalRows, dirtyMode].
+   */
+  external fun nativeEngineSyncRender(handle: Long, outDirectBuffer: java.nio.ByteBuffer, forceCells: Boolean): IntArray
+
+  /**
+   * Follows the active area ([toBottom]) or puts screen row [row] at the top
+   * of the viewport, and captures [above]/[below] rows around it.
+   */
+  external fun nativeEngineSetViewport(handle: Long, toBottom: Boolean, row: Long, above: Int, below: Int): Int
+
+  /** Selects the word at a screen cell; returns its {startX, startY, endX, endY}, or null when there is no word. */
+  external fun nativeEngineSelectWord(handle: Long, x: Int, y: Int): IntArray?
+
+  /** Selects between two screen cells, both included. */
+  external fun nativeEngineSelectRange(handle: Long, x0: Int, y0: Int, x1: Int, y1: Int): Boolean
+
+  /** Selects all of the screen and scrollback. */
+  external fun nativeEngineSelectAll(handle: Long): Boolean
+
+  external fun nativeEngineClearSelection(handle: Long)
+
+  /** The selection's {startX, startY, endX, endY} in screen rows, inclusive, or null. */
+  external fun nativeEngineSelectionBounds(handle: Long): IntArray?
+
+  /** The selected text, or null when nothing is selected. */
+  external fun nativeEngineSelectionText(handle: Long): String?
+
+  /** Polls any OSC 52 clipboard content written by the program. */
+  external fun nativeEnginePollClipboard(handle: Long): String?
+
+  /** Encodes key event per terminal modes; returns escape bytes. */
+  external fun nativeEngineEncodeKey(handle: Long, key: Int, mods: Int, action: Int, text: String?): ByteArray?
+
+  /**
+   * Encodes a physical key press per terminal modes: [text] is its character
+   * without Ctrl/Alt (null for none), [consumedMods] the modifiers that made
+   * it, [unshifted] its unshifted code point or 0. Returns the bytes to send.
+   */
+  external fun nativeEngineEncodeKeyEvent(
+    handle: Long,
+    key: Int,
+    mods: Int,
+    consumedMods: Int,
+    unshifted: Int,
+    action: Int,
+    text: String?,
+  ): ByteArray?
+
+  /** Encodes mouse event per terminal modes; returns escape bytes. */
+  external fun nativeEngineEncodeMouse(handle: Long, x: Float, y: Float, button: Int, action: Int, mods: Int): ByteArray?
+
+  /** Encodes paste data per terminal modes (bracketed paste). */
+  external fun nativeEngineEncodePaste(handle: Long, text: String): ByteArray
+
+  /** Formats terminal contents as plain text (unwrap, trim). */
+  external fun nativeEngineGetFormattedText(handle: Long, unwrap: Boolean, trim: Boolean): String?
+
+  /** Retrieves the OSC 8 hyperlink URI at [col] of screen row [row] (0 is the top of the scrollback). */
+  external fun nativeEngineGetHyperlink(handle: Long, col: Int, row: Int): String?
+
+  /** Unicode codepoint display width (0, 1, or 2). */
+  external fun nativeUnicodeWidth(codePoint: Int): Int
+
+  /** Grapheme cluster display width. */
+  external fun nativeGraphemeWidth(text: String): Int
+
+  /** Active allocated bytes in the custom GhosttyAllocator. */
+  external fun nativeAllocatedBytes(): Long
+
+  /** Active allocated blocks in the custom GhosttyAllocator. */
+  external fun nativeAllocatedBlocks(): Long
+
+  /** Sets an optional allocation failure cap in bytes (0 = unconstrained). */
+  external fun nativeSetAllocationFailureCap(capBytes: Long)
+
+  /** Resets peak and lifetime counters in the custom GhosttyAllocator. */
+  external fun nativeResetAllocatorStats()
+
+  /** Sets a terminal mode explicitly (e.g. mode 2027 grapheme clustering). */
+  external fun nativeSetMode(handle: Long, modeNum: Int, ansi: Boolean, value: Boolean): Boolean
 }
 
 /** Raised when a PTY backend call fails; `errno` is preserved for evidence. */

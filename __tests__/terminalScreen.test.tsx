@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, Alert, AppState, type AppStateStatus, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
+import {ActivityIndicator, Alert, AppState, type AppStateStatus, Image, Keyboard, KeyboardAvoidingView, Linking, StyleSheet, Text, TextInput, Vibration} from 'react-native';
 import {TerminalGrid} from '../src/terminal/TerminalGrid';
 import type {Spec} from '../src/native/NativeTerminalRuntime';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
@@ -1209,7 +1209,7 @@ describe('TerminalScreen', () => {
     expect(renderer.root.findByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(0);
     const initialKeyboardToggle = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(initialKeyboardToggle.props.accessibilityLabel).toBe('Show keyboard');
-    expect(initialKeyboardToggle.findByType(Text).props.children).toBe('SHOW');
+    expect(initialKeyboardToggle.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard.png'));
     const inputElement = renderer.root.findByProps({testID: 'terminal-input'});
     const input = renderer.root.findByType(TextInput).instance;
     await ReactTestRenderer.act(async () => { inputElement.props.onLayout(); });
@@ -1229,7 +1229,7 @@ describe('TerminalScreen', () => {
     expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 5, columns: 50}));
     const hideButton = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(hideButton.props.accessibilityLabel).toBe('Hide keyboard');
-    expect(hideButton.findByType(Text).props.children).toBe('HIDE');
+    expect(hideButton.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard-hide.png'));
     const blur = jest.spyOn(input, 'blur').mockClear();
     await ReactTestRenderer.act(async () => { hideButton.props.onPress(); });
     expect(dismiss).toHaveBeenCalledTimes(1);
@@ -1243,12 +1243,18 @@ describe('TerminalScreen', () => {
     expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 10, columns: 50}));
     const showButton = renderer.root.findByProps({testID: 'terminal-keyboard-toggle'});
     expect(showButton.props.accessibilityLabel).toBe('Show keyboard');
-    expect(showButton.findByType(Text).props.children).toBe('SHOW');
+    expect(showButton.findByType(Image).props.source).toBe(require('../src/terminal/key-icons/keyboard.png'));
     expect(focus).not.toHaveBeenCalled();
+    // A tap on the output never opens the keyboard; the keyboard key does.
     await ReactTestRenderer.act(async () => {
       const touchTarget = renderer.root.findByProps({testID: 'terminal-output'});
       touchTarget.props.onTouchStart(terminalTouch(40, 90));
       touchTarget.props.onTouchEnd(terminalTouch(40, 90));
+      await flushAsync();
+    });
+    expect(focus).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      showButton.props.onPress();
       await flushAsync();
     });
     expect(focus).toHaveBeenCalled();
@@ -1779,7 +1785,7 @@ describe('TerminalScreen', () => {
       output().props.onTouchEnd(terminalTouch(41, 91));
       await flushAsync();
     });
-    expect(focus).toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
@@ -1799,9 +1805,7 @@ describe('TerminalScreen', () => {
     const focus = jest.spyOn(input, 'focus').mockClear();
     const blur = jest.spyOn(input, 'blur').mockClear();
     await ReactTestRenderer.act(async () => {
-      const output = renderer.root.findByProps({testID: 'terminal-output'});
-      output.props.onTouchStart(terminalTouch(40, 90));
-      output.props.onTouchEnd(terminalTouch(40, 90));
+      renderer.root.findByProps({testID: 'terminal-keyboard-toggle'}).props.onPress();
       runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('pending\x1b[6n')});
       renderer.unmount();
     });
@@ -1830,6 +1834,69 @@ describe('TerminalScreen', () => {
     expect(renderer.root.findByProps({testID: 'terminal-error'}).props.children).toBe('terminal_resize_failed');
     expect(renderer.root.findByProps({testID: 'terminal-input'}).props.editable).toBe(false);
     expect(runtime.stopCalls).toEqual(['s-1-1']);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
+  test('uses padding keyboard avoidance without remounting or restoring stale portrait viewport across rotation', async () => {
+    const runtime = fakeRuntime();
+    runtime.spec.resizeSession = jest.fn(runtime.spec.resizeSession);
+    const keyboardListeners: Partial<Record<'keyboardDidShow' | 'keyboardDidHide', (event: never) => void>> = {};
+    jest.spyOn(Keyboard, 'addListener').mockImplementation((event, listener) => {
+      if (event === 'keyboardDidShow' || event === 'keyboardDidHide') {
+        keyboardListeners[event] = listener as (event: never) => void;
+      }
+      return {remove: jest.fn()};
+    });
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} />);
+      await flushAsync();
+    });
+
+    const kav = renderer.root.findByType(KeyboardAvoidingView);
+    expect(kav.props.behavior).toBe('padding');
+
+    // Only TerminalGrid (terminal-output) handles onLayout; parent wrapper (<View style={styles.output}>) does not duplicate it.
+    const terminalOutput = renderer.root.findByProps({testID: 'terminal-output'});
+    expect(renderer.root.findByType(TerminalGrid).parent?.props.onLayout).toBeUndefined();
+
+    // Commit portrait viewport while keyboard is hidden.
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 720}}});
+      await flushAsync();
+    });
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 40, columns: 50}));
+
+    // Keyboard opens in portrait, then user rotates to landscape and keyboard hides.
+    await ReactTestRenderer.act(async () => {
+      keyboardListeners.keyboardDidShow?.({} as never);
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 360}}});
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 800, height: 270}}});
+      keyboardListeners.keyboardDidHide?.({} as never);
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+    // Must stay at landscape dimensions (width 800 -> 100 columns, 270 -> 15 rows) rather than reverting to portrait.
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 15, columns: 100}));
+
+    // Rotate back to portrait; KeyboardAvoidingView instance must not have remounted.
+    await ReactTestRenderer.act(async () => {
+      terminalOutput.props.onLayout({nativeEvent: {layout: {width: 400, height: 720}}});
+      jest.advanceTimersByTime(120);
+      await flushAsync();
+    });
+    expect(renderer.root.findByType(KeyboardAvoidingView)).toBe(kav);
+    expect(runtime.spec.resizeSession).toHaveBeenLastCalledWith(expect.objectContaining({rows: 40, columns: 50}));
+
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 

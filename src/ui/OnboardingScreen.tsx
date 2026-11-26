@@ -497,7 +497,7 @@ const KEY_INFO = {
   esc: {label: 'ESC', detail: 'Interrupts an agent or closes a menu.'},
   slash: {label: '/', detail: 'Starts a slash command, like /help.'},
   dash: {label: '―', detail: 'A dash, for command options.'},
-  keyboard: {label: 'SHOW', detail: 'Shows or hides the keyboard.'},
+  keyboard: {label: 'KEYBOARD', detail: 'Shows or hides the keyboard.'},
   up: {label: '↑', detail: 'Moves up a menu, or back through earlier commands.'},
   down: {label: '↓', detail: 'Moves down a menu.'},
   left: {label: '←', detail: 'Moves the cursor left.'},

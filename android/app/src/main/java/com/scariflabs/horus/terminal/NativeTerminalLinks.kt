@@ -100,6 +100,16 @@ internal object NativeTerminalLinks {
     return cache.rangesFor(lines, first, last)[row - first]
   }
 
+  /**
+   * Returns the URL covering frame row [row], [column] of [frame], checking
+   * OSC 8 hyperlinks before text detection.
+   */
+  fun urlAt(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, row: Int, column: Int): String? {
+    val link = engine.withNativeHandle { h -> TerminalPtyJni.nativeEngineGetHyperlink(h, column, frame.screenRow(row)) }
+    if (!link.isNullOrEmpty()) return link
+    return urlAt(frame.lines, row, column)
+  }
+
   /** Returns the URL covering ([row], [column]), following wrapped rows. */
   fun urlAt(lines: Array<NativeTerminalEngine.FrameRow>, row: Int, column: Int): String? {
     if (row !in lines.indices) return null
@@ -165,7 +175,10 @@ internal object NativeTerminalLinks {
     for (index in first..last) {
       val line = lines[index]
       val start = if (index == first) 0 else indentOf(line)
-      for (column in start until line.columns) {
+      // A row that continues below ends where its text does; blanks after a
+      // URL broken inside a padded panel would end the URL early.
+      val end = if (index == last) line.columns else line.columns - trailingBlanks(line)
+      for (column in start until end) {
         text.add(line.text[column])
         width.add(line.width[column])
         rows.add(index - first)
@@ -205,16 +218,70 @@ internal object NativeTerminalLinks {
   /** Deepest indent a continuation row may have, e.g. Claude Code's two-space margin. */
   private const val MAX_CONTINUATION_INDENT = 8
 
-  /** True when [row] runs to its last cell and the next row starts with text. */
-  private fun continuesToNext(lines: Array<NativeTerminalEngine.FrameRow>, row: Int): Boolean {
+  /**
+   * True when [row] goes on in the next row: it runs to its last cell, or it
+   * ends in a URL that cannot end there (an app wrapping text inside a padded
+   * panel, as OpenCode does, leaves "http://localhost:" with "8000" below).
+   * The next row must start with text, at most a short indent in.
+   */
+  private fun continuesToNext(lines: Array<NativeTerminalEngine.FrameRow>, row: Int, depth: Int = 0): Boolean {
     if (row < 0 || row + 1 >= lines.size) return false
     val current = lines[row]
     val next = lines[row + 1]
     if (current.columns == 0 || next.columns == 0) return false
+    val indent = indentOf(next)
+    if (indent > MAX_CONTINUATION_INDENT) return false
     val lastCell = current.text[current.columns - 1]
     val lastFilled = (lastCell.isEmpty() && current.width[current.columns - 1].toInt() == 0) || lastCell.isNotBlank()
-    return lastFilled && indentOf(next) <= MAX_CONTINUATION_INDENT
+    if (lastFilled) return true
+    val token = trailingToken(current) ?: return false
+    if (!continuesUrl(token.last(), next.text[indent])) return false
+    // The URL starts on this row, or this whole row continues one from above.
+    if (token.contains("://")) return true
+    return depth < MAX_WRAPPED_ROWS && token.length == current.columns - indentOf(current) - trailingBlanks(current) &&
+      continuesToNext(lines, row - 1, depth + 1)
   }
+
+  /** The last run of non-blank cells in [line], or null for a blank row. */
+  private fun trailingToken(line: NativeTerminalEngine.FrameRow): String? {
+    var end = line.columns - 1
+    while (end >= 0 && line.text[end].isBlank()) end -= 1
+    if (end < 0) return null
+    var start = end
+    while (start > 0 && line.text[start - 1].isNotBlank()) start -= 1
+    val token = StringBuilder(end - start + 1)
+    for (column in start..end) token.append(line.text[column])
+    return token.toString()
+  }
+
+  private fun trailingBlanks(line: NativeTerminalEngine.FrameRow): Int {
+    var blanks = 0
+    while (blanks < line.columns && line.text[line.columns - 1 - blanks].isBlank()) blanks += 1
+    return blanks
+  }
+
+  /**
+   * Whether a URL ending in [last] goes on with the next row's first cell.
+   * Wrappers break URLs after these characters, and URLs rarely end on them.
+   * A colon needs a port below. A slash can end a URL, so a capital below
+   * (a new sentence) does not continue it. Periods and question marks end
+   * sentences, so they never continue a URL.
+   */
+  private fun continuesUrl(last: Char, nextCell: String): Boolean {
+    if (nextCell.length != 1) return false
+    val next = nextCell[0]
+    return when (last) {
+      ':' -> next.isDigit()
+      '/' -> (next.isLetterOrDigit() && !next.isUpperCase()) || URL_CONTINUATION_STARTS.indexOf(next) >= 0
+      in UNFINISHED_URL_ENDINGS -> next.isLetterOrDigit() || URL_CONTINUATION_STARTS.indexOf(next) >= 0
+      else -> false
+    }
+  }
+
+  /** Besides ':' and '/', characters a URL is broken after and almost never ends on. */
+  private const val UNFINISHED_URL_ENDINGS = "-_=&#%+~@"
+
+  private const val URL_CONTINUATION_STARTS = "_~%#=&"
 
   private fun logicalStart(lines: Array<NativeTerminalEngine.FrameRow>, row: Int): Int {
     var first = row

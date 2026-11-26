@@ -147,6 +147,7 @@ class TerminalRuntimeModule(
     TerminalDebugLog.record(appContext, "module_created")
     appContext.addLifecycleEventListener(visibilityListener)
     if (appContext.lifecycleState == LifecycleState.RESUMED) sessionServiceClient.reportUiVisibility(true)
+    NativeTerminalEngineRegistry.setDefaultBackend(sessionSettings.readEngineBackend())
     NativeTerminalEngineRegistry.configureClipboardWriter(::writeTerminalClipboard)
     NativeTerminalEngineRegistry.configureOutputGapListener(::requestRedrawAfterOutputGap)
     NativeTerminalEngineRegistry.configureInputWriter { sessionId, bytes ->
@@ -410,7 +411,7 @@ class TerminalRuntimeModule(
       promise.resolve(sessionSettingsError("internal_error"))
       return
     }
-    promise.resolve(sessionSettingsSuccess(sessionSettings.readLimit()))
+    promise.resolve(sessionSettingsSuccess())
   }
 
   override fun getDownloadSources(promise: Promise) {
@@ -464,7 +465,26 @@ class TerminalRuntimeModule(
       promise.resolve(sessionSettingsError("internal_error"))
       return
     }
-    promise.resolve(sessionSettingsSuccess(limit))
+    promise.resolve(sessionSettingsSuccess())
+  }
+
+  /** Applies to shells started after the change. */
+  override fun setZshTheme(request: ReadableMap, promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    val raw = if (request.hasKey("zshTheme") && request.getType("zshTheme") == ReadableType.String) request.getString("zshTheme") else null
+    val theme = ZshTheme.fromId(raw)
+    if (theme == null) {
+      promise.resolve(sessionSettingsError("invalid_request"))
+      return
+    }
+    if (!sessionSettings.writeZshTheme(theme)) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    promise.resolve(sessionSettingsSuccess())
   }
 
   override fun getDebugLog(promise: Promise) {
@@ -855,6 +875,7 @@ class TerminalRuntimeModule(
         promise.resolve(sessionError(requestId, "invalid_request"))
         return
       }
+      NativeTerminalEngineRegistry.noteUserInput(sessionId)
       sessionServiceClient.writeSession(requestId, sessionId, bytes) { response ->
         deliver(promise, sessionWriteResponse(response, requestId))
       }
@@ -1251,11 +1272,12 @@ class TerminalRuntimeModule(
     sources.npmRegistry?.let { putString("npmRegistry", it) }
   }
 
-  private fun sessionSettingsSuccess(limit: Int): WritableMap = Arguments.createMap().apply {
+  private fun sessionSettingsSuccess(): WritableMap = Arguments.createMap().apply {
     putString("status", "success")
-    putInt("maxConcurrentSessions", limit)
+    putInt("maxConcurrentSessions", sessionSettings.readLimit())
     putInt("minConcurrentSessions", TerminalSessionContract.MIN_ACTIVE_SESSIONS)
     putInt("maxSupportedConcurrentSessions", TerminalSessionContract.MAX_ACTIVE_SESSIONS)
+    putString("zshTheme", sessionSettings.readZshTheme().id)
   }
 
   private fun sessionSettingsError(errorCode: String): WritableMap = Arguments.createMap().apply {
@@ -1339,12 +1361,13 @@ class TerminalRuntimeModule(
       promise.resolve(null)
       return
     }
-    val frame = NativeTerminalEngineRegistry.get(sessionId)?.currentFrame()
+    val engine = NativeTerminalEngineRegistry.get(sessionId)
+    val frame = engine?.currentFrame()
     val rowIndex = row.toInt()
-    promise.resolve(frame?.let { NativeTerminalLinks.urlAt(it.lines, rowIndex, column.toInt()) })
+    promise.resolve(if (engine != null && frame != null) NativeTerminalLinks.urlAt(engine, frame, rowIndex, column.toInt()) else null)
   }
 
-  /** Reads the current native terminal frame and bounded normal-buffer scrollback as selectable plain text. */
+  /** Reads the native terminal's screen and scrollback as selectable plain text, bounded to the newest text. */
   override fun getTerminalText(sessionId: String, promise: Promise) {
     if (isInvalidated() || !TerminalSessionContract.isValidSessionId(sessionId)) {
       promise.resolve(Arguments.createMap().apply {
@@ -1361,7 +1384,7 @@ class TerminalRuntimeModule(
       })
       return
     }
-    val snapshot = NativeTerminalText.from(engine.currentFrame().lines)
+    val snapshot = NativeTerminalText.from(engine)
     promise.resolve(Arguments.createMap().apply {
       putString("status", "success")
       putString("text", snapshot.text)

@@ -37,6 +37,8 @@ class ProotSessionLauncher(
   private val seccompAcceleration: Boolean = false,
   /** Alpine mirror and npm registry for package installs inside the guest. */
   private val downloadSources: DownloadSources = DownloadSources(),
+  /** The prompt written into each guest's managed zshrc block. */
+  private val zshTheme: ZshTheme = ZshTheme.DEFAULT,
   private val hardlinkDir: File = File(scratchDir.absoluteFile.parentFile, "l"),
 ) {
 
@@ -400,6 +402,9 @@ class ProotSessionLauncher(
       add("XDG_DATA_HOME=$launchHomePath/.local/share")
       add("XDG_CACHE_HOME=$launchHomePath/.cache")
       add("TERM=$term")
+      // The terminal opens OSC 8 hyperlinks on a tap. Without this, Node CLIs
+      // (Claude Code, npm) print bare URLs that wrapping can cut in two.
+      add("FORCE_HYPERLINK=1")
       if (toolchainTarget == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE) {
         // Claude's fullscreen alternate buffer owns its own sparse viewport
         // and bypasses terminal scrollback. Keep conversation output in the
@@ -946,7 +951,7 @@ class ProotSessionLauncher(
   private fun guestHomePathFor(username: String): String = "/home/$username"
 
   /**
-   * Give every interactive guest the same small zsh theme. Neither pinned
+   * Give every interactive guest the chosen small zsh theme. Neither pinned
    * rootfs includes zsh, so the profile is ready for the first install and
    * automatically hands future login shells to zsh once it exists. User content outside these bounded blocks is preserved.
    */
@@ -976,7 +981,7 @@ class ProotSessionLauncher(
       existingZshrc,
       ZSHRC_BEGIN,
       ZSHRC_END,
-      ZSHRC_BLOCK,
+      zshrcBlock(zshTheme),
     )
     if (updatedZshrc != existingZshrc) atomicWrite(zshrc, updatedZshrc)
   }
@@ -1306,7 +1311,7 @@ class ProotSessionLauncher(
       export DOTNET_CLI_USE_MSBUILD_SERVER="${'$'}{DOTNET_CLI_USE_MSBUILD_SERVER:-0}"
       export UseSharedCompilation="${'$'}{UseSharedCompilation:-false}"
     """.trimIndent()
-    private val ZSHRC_BLOCK = """
+    private fun zshrcBlock(theme: ZshTheme): String = """
       $ZSHRC_BEGIN
 ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       setopt prompt_subst
@@ -1330,9 +1335,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         stty -echo 2>/dev/null || true
         unset HORUS_BOOTSTRAP
       fi
-      # duellj theme, kept inline so it works without Oh My Zsh on Alpine:
-      # two-line user/host/path/history prompt without a per-line clock.
-      PROMPT=$'%{\e[0;34m%}%B┌─[%b%{\e[0m%}%{\e[1;32m%}%n%{\e[1;34m%}@%{\e[0m%}%{\e[0;36m%}%m%{\e[0;34m%}%B]%b%{\e[0m%} - %b%{\e[0;34m%}%B[%b%{\e[1;37m%}%~%{\e[0;34m%}%B]%b%{\e[0m%} - %{\e[0;34m%}%B[%b%{\e[0;33m%}%!%{\e[0;34m%}%B]%b%{\e[0m%}\n%{\e[0;34m%}%B└─[%{\e[1;35m%}${'$'}%{\e[0;34m%}%B]%{\e[0m%}%b '
+${theme.script().prependIndent("      ")}
       PS2='%F{blue}>%f '
       $ZSHRC_END
     """.trimIndent()

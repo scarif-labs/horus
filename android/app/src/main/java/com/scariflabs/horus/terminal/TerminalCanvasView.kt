@@ -1,54 +1,66 @@
 package com.scariflabs.horus.terminal
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
 import android.os.SystemClock
+import android.view.ActionMode
+import android.view.HapticFeedbackConstants
+import android.view.Menu
+import android.view.MenuItem
+import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
-import android.view.ViewTreeObserver
+import android.view.ViewConfiguration
+import android.widget.OverScroller
+import android.widget.Toast
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
-import com.facebook.react.bridge.WritableMap
+import com.facebook.react.uimanager.events.NativeGestureUtil
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
-private class NativeFrameMetaEvent(
+private class TerminalCanvasEvent(
   surfaceId: Int,
   viewTag: Int,
-  private val frame: NativeTerminalEngine.Frame,
-) : Event<NativeFrameMetaEvent>(surfaceId, viewTag) {
-  override fun getEventName(): String = EVENT_NAME
+  private val name: String,
+  private val coalesce: Boolean,
+  private val data: WritableMap,
+) : Event<TerminalCanvasEvent>(surfaceId, viewTag) {
+  override fun getEventName(): String = name
 
-  override fun canCoalesce(): Boolean = true
+  override fun canCoalesce(): Boolean = coalesce
 
-  override fun getEventData(): WritableMap = Arguments.createMap().apply {
-    putBoolean("alternate", frame.alternate)
-    putInt("contentRows", frame.contentRows)
-    putInt("rows", frame.rows)
-    putInt("cursorRow", frame.cursorRow)
-    putInt("lastContentRow", frame.lastContentRow)
-    putBoolean("mouseTracking", frame.mouseTracking)
-    putBoolean("mouseSgr", frame.mouseSgr)
-  }
-
-  companion object {
-    const val EVENT_NAME = "topNativeFrameMeta"
-  }
+  override fun getEventData(): WritableMap = data
 }
 
 /**
- * A compact Canvas renderer for both the JS fallback snapshot and the native
- * interactive terminal engine. The native path keeps PTY parsing and frame
- * publication outside the React Native heap.
+ * The terminal surface. With a native session it draws libghostty frames and
+ * handles touch itself, like a desktop terminal: drag and fling scroll the
+ * scrollback with pixel precision, the view stays put while output arrives
+ * above it, and it follows the output again once scrolled to the bottom. On
+ * a full-screen app a drag becomes mouse-wheel or arrow-key input. A long
+ * press selects text, with handles and the system Copy toolbar. A tap opens
+ * a link or clicks for apps that track the mouse; it never opens the keyboard.
+ *
+ * Without a native session it draws a JS snapshot frame inside a ScrollView.
  */
 class TerminalCanvasView(context: Context) : View(context) {
   private data class Cell(
@@ -91,6 +103,10 @@ class TerminalCanvasView(context: Context) : View(context) {
     val strikethrough: Boolean,
   )
 
+  private data class ViewportRequest(val follow: Boolean, val topRow: Int, val above: Int, val below: Int)
+
+  private enum class TouchMode { NONE, PENDING, SCROLL, WHEEL, SELECT, HANDLE, IGNORED }
+
   private val normalTypeface = loadTypeface("fonts/FiraCode.ttf", Typeface.MONOSPACE)
   private val boldTypeface = loadTypeface("fonts/FiraCode_bold.ttf", normalTypeface, bold = true)
   private val italicTypeface = Typeface.create(normalTypeface, Typeface.ITALIC)
@@ -99,9 +115,6 @@ class TerminalCanvasView(context: Context) : View(context) {
   private val wrappedLinkCache = NativeTerminalLinks.WrappedLinkCache()
   private val visibleRect = Rect()
   private val fontMetrics = Paint.FontMetrics()
-  // The canvas is as tall as scrollback + screen inside a ScrollView. Only
-  // the rows in (or near) the viewport are recorded, so re-record on scroll.
-  private val scrollListener = ViewTreeObserver.OnScrollChangedListener { invalidate() }
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
     isLinearText = true
   }
@@ -120,22 +133,82 @@ class TerminalCanvasView(context: Context) : View(context) {
   private var nativeEngine: NativeTerminalEngine? = null
   private var nativeSubscription: AutoCloseable? = null
   private var nativeLoadingText: String? = null
-  private var lastNativeFrameAlternate: Boolean? = null
-  private var lastNativeFrameContentRows = -1
-  private var lastNativeFrameRows = -1
-  private var lastNativeFrameCursorRow = -1
-  private var lastNativeFrameLastContentRow = -1
-  private var lastNativeFrameMouseTracking: Boolean? = null
-  private var lastNativeFrameMouseSgr: Boolean? = null
+  private var lastMetaAlternate: Boolean? = null
+  private var lastMetaHasContent: Boolean? = null
+  private var lastMetaMouseTracking: Boolean? = null
+  private var lastMetaMouseSgr: Boolean? = null
   private var nativeCursorHiddenAt = 0L
   private var nativeCursorLastRow = -1
   private var nativeCursorLastColumn = -1
   private var loadingSweep = 0f
 
+  // Scroll position. While [following], the view shows the end of the
+  // output; otherwise [scrollTop] is the screen row (0 = top of the
+  // scrollback, fractional for smooth scrolling) at the top edge.
+  private var following = true
+  private var scrollTop = 0.0
+  // Alternate screens have no scrollback; when taller than the view (the
+  // keyboard is open), this many rows are scrolled off to keep the cursor visible.
+  private var alternateOffset = 0.0
+  private var lastTailAnchor = 0
+  private var lastFrame: NativeTerminalEngine.Frame? = null
+  private var lastRequest: ViewportRequest? = null
+  private var lastInputCount = 0L
+  private val scroller = OverScroller(context)
+  private var flingIsWheel = false
+  private var flingLastY = 0
+  private var velocityTracker: VelocityTracker? = null
+  private val viewConfiguration = ViewConfiguration.get(context)
+  private val touchSlop = viewConfiguration.scaledTouchSlop
+  private val minFlingVelocity = viewConfiguration.scaledMinimumFlingVelocity
+  private val maxFlingVelocity = viewConfiguration.scaledMaximumFlingVelocity
+  private var touchMode = TouchMode.NONE
+  private var touchActive = false
+  /** The latest touch event, kept to hand React Native when a long press claims the gesture. */
+  private var lastEvent: MotionEvent? = null
+  private var gestureClaimed = false
+  private var downX = 0f
+  private var downY = 0f
+  private var lastTouchX = 0f
+  private var lastTouchY = 0f
+  private var wheelRemainder = 0f
+  private var scrollbarShownAt = 0L
+
+  // Selection. The terminal owns the selected range; the view keeps the
+  // long-pressed word to extend from, or the fixed end while a handle moves.
+  private var anchorStart: IntArray? = null
+  private var anchorEnd: IntArray? = null
+  private var handleFixed: IntArray? = null
+  /** The finger moved after the long press, so the selection follows it. */
+  private var selectionDragged = false
+  /** From the finger to the centre of the cell the grabbed handle marks. */
+  private var handleOffsetX = 0f
+  private var handleOffsetY = 0f
+  private var selectionBounds: IntArray? = null
+  private var selectionBoundsFrame: NativeTerminalEngine.Frame? = null
+  private var selectionActive = false
+  /** The frame shown when the selection began; it predates the selection, so it has none. */
+  private var selectionStartFrame: NativeTerminalEngine.Frame? = null
+  private var selectionClearRequest = 0
+  private var actionMode: ActionMode? = null
+  private var restartingActionMode = false
+  private var autoScrollRows = 0.0
+  private val handleRect = RectF()
+  private val longPress = Runnable { onLongPress() }
+  private val autoScroll = object : Runnable {
+    override fun run() {
+      if (autoScrollRows == 0.0 || (touchMode != TouchMode.SELECT && touchMode != TouchMode.HANDLE)) return
+      scrollByRows(autoScrollRows)
+      dragSelectionTo(lastTouchX, lastTouchY)
+      postOnAnimation(this)
+    }
+  }
+
   init {
     setWillNotDraw(false)
     setBackgroundColor(backgroundColor)
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    isHapticFeedbackEnabled = true
   }
 
   fun setFrame(value: ReadableMap?) {
@@ -146,27 +219,35 @@ class TerminalCanvasView(context: Context) : View(context) {
   fun setNativeSessionId(value: String?) {
     if (nativeSessionId == value && (value == null || nativeEngine != null)) return
     nativeSessionId = value?.takeIf(String::isNotEmpty)
-    lastNativeFrameAlternate = null
-    lastNativeFrameContentRows = -1
-    lastNativeFrameRows = -1
-    lastNativeFrameCursorRow = -1
-    lastNativeFrameLastContentRow = -1
-    lastNativeFrameMouseTracking = null
-    lastNativeFrameMouseSgr = null
+    lastMetaAlternate = null
+    lastMetaHasContent = null
+    lastMetaMouseTracking = null
+    lastMetaMouseSgr = null
     nativeCursorHiddenAt = 0L
     nativeCursorLastRow = -1
     nativeCursorLastColumn = -1
+    following = true
+    scrollTop = 0.0
+    alternateOffset = 0.0
+    lastFrame = null
+    lastRequest = null
+    scroller.forceFinished(true)
+    endSelectionUi()
     bindNativeEngine()
   }
 
   fun setNativeRows(value: Int) {
-    nativeRows = value.coerceIn(2, 250)
-    if (nativeSessionId != null) bindNativeEngine()
+    val coerced = value.coerceIn(2, 250)
+    if (nativeRows == coerced) return
+    nativeRows = coerced
+    if (nativeSessionId != null && nativeEngine == null) bindNativeEngine() else invalidate()
   }
 
   fun setNativeColumns(value: Int) {
-    nativeColumns = value.coerceIn(2, 500)
-    if (nativeSessionId != null) bindNativeEngine()
+    val coerced = value.coerceIn(2, 500)
+    if (nativeColumns == coerced) return
+    nativeColumns = coerced
+    if (nativeSessionId != null && nativeEngine == null) bindNativeEngine() else invalidate()
   }
 
   fun setNativeLoadingText(value: String?) {
@@ -219,47 +300,73 @@ class TerminalCanvasView(context: Context) : View(context) {
     invalidate()
   }
 
+  /** React Native asks to drop the selection (Back) by bumping this counter. */
+  fun setSelectionClearRequest(value: Int) {
+    if (value == selectionClearRequest) return
+    selectionClearRequest = value
+    clearSelection()
+  }
+
+  private fun clearSelection() {
+    nativeEngine?.clearSelection()
+    endSelectionUi()
+  }
+
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    viewTreeObserver.addOnScrollChangedListener(scrollListener)
     if (nativeSessionId != null) bindNativeEngine()
   }
 
   override fun onDetachedFromWindow() {
-    viewTreeObserver.removeOnScrollChangedListener(scrollListener)
     nativeSubscription?.close()
     nativeSubscription = null
+    removeCallbacks(longPress)
+    actionMode?.finish()
+    actionMode = null
+    lastEvent?.recycle()
+    lastEvent = null
     super.onDetachedFromWindow()
   }
 
+  override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    super.onSizeChanged(w, h, oldw, oldh)
+    invalidate()
+  }
+
+  private val density: Float get() = resources.displayMetrics.density
+  private val cellWidthPx: Float get() = cellWidthDp * density
+  private val cellHeightPx: Float get() = cellHeightDp * density
+  private val visibleRows: Double get() = if (cellHeightPx > 0f) height / cellHeightPx.toDouble() else 0.0
+
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
-    canvas.drawColor(backgroundColor)
-    val density = resources.displayMetrics.density
-    val cellWidth = cellWidthDp * density
-    val cellHeight = cellHeightDp * density
-    if (!cellWidth.isFinite() || !cellHeight.isFinite() || cellWidth <= 0f || cellHeight <= 0f) return
+    val cellWidth = cellWidthPx
+    val cellHeight = cellHeightPx
+    if (!cellWidth.isFinite() || !cellHeight.isFinite() || cellWidth <= 0f || cellHeight <= 0f) {
+      canvas.drawColor(backgroundColor)
+      return
+    }
 
     paint.textSize = fontSizeDp * density
-    val currentNativeFrame = nativeEngine?.currentFrame()
-    if (currentNativeFrame != null) {
-      notifyNativeFrameMeta(currentNativeFrame)
+    val engine = nativeEngine
+    if (engine != null) {
+      val current = engine.displayFrame()
+      canvas.drawColor(current.defaultBackgroundColor)
+      notifyNativeFrameMeta(current)
       val loadingText = nativeLoadingText
       // During first-run provisioning the native parser is already receiving
       // the installer transcript in the normal screen. Show that bounded
       // transcript as soon as it has content; keep the spinner only while the
       // PTY is still blank or the alternate TUI has not painted yet.
-      if (loadingText != null && !currentNativeFrame.hasVisibleContent) {
+      if (loadingText != null && !current.hasVisibleContent) {
         drawLoading(canvas, loadingText, density)
         postInvalidateOnAnimation()
         return
       }
-      drawNativeFrame(canvas, currentNativeFrame, cellWidth, cellHeight)
-      if (running && updateNativeCursor(currentNativeFrame) && nativeCursorLastRow in 0 until currentNativeFrame.contentRows) {
-        drawCursor(canvas, nativeCursorLastRow, nativeCursorLastColumn, cellWidth, cellHeight)
-      }
+      drawNativeFrame(canvas, engine, current, cellWidth, cellHeight)
       return
     }
+    canvas.drawColor(backgroundColor)
     val loadingText = nativeLoadingText
     if (nativeSessionId != null && loadingText != null) {
       drawLoading(canvas, loadingText, density)
@@ -278,15 +385,164 @@ class TerminalCanvasView(context: Context) : View(context) {
     }
 
     if (running && currentFrame.cursorVisible && currentFrame.cursorRow in currentFrame.lines.indices) {
-      drawCursor(canvas, currentFrame.cursorRow, currentFrame.cursorColumn, cellWidth, cellHeight)
+      paint.style = Paint.Style.FILL
+      paint.color = CURSOR_COLOR
+      val left = currentFrame.cursorColumn.coerceAtLeast(0) * cellWidth
+      val top = currentFrame.cursorRow * cellHeight
+      canvas.drawRect(left, top, left + cellWidth, top + cellHeight, paint)
     }
   }
 
-  private fun drawCursor(canvas: Canvas, row: Int, column: Int, cellWidth: Float, cellHeight: Float) {
-    val cursorLeft = column.coerceAtLeast(0) * cellWidth
-    paint.style = Paint.Style.FILL
+  // ---------------------------------------------------------------------------
+  // Native frame layout and drawing
+  // ---------------------------------------------------------------------------
+
+  /** Screen row at the top edge while following the output. */
+  private fun tailTop(frame: NativeTerminalEngine.Frame): Double {
+    val activeTop = frame.activeTop
+    val visible = visibleRows
+    if (frame.alternate) {
+      val cursor = if (frame.cursorRow >= 0) frame.screenRow(frame.cursorRow) - activeTop else -1
+      alternateOffset = TerminalViewport.alternateOffset(alternateOffset, frame.rows, visible, cursor)
+      return activeTop + alternateOffset
+    }
+    // Scrolled back, the frame may not hold the whole active screen: keep the last anchor.
+    val activeCaptured = frame.frameRow(activeTop) >= 0 && frame.frameRow(activeTop + frame.rows - 1) < frame.lines.size
+    var anchor = lastTailAnchor
+    if (activeCaptured) {
+      anchor = -1
+      if (frame.lastContentRow >= 0) anchor = frame.screenRow(frame.lastContentRow) - activeTop
+      if (frame.cursorRow >= 0) anchor = max(anchor, frame.screenRow(frame.cursorRow) - activeTop)
+      lastTailAnchor = anchor.coerceAtLeast(0)
+    }
+    return activeTop + TerminalViewport.tailOffset(frame.rows, visible, anchor)
+  }
+
+  /** Screen row at the top edge of the view for [frame]. */
+  private fun viewTop(frame: NativeTerminalEngine.Frame): Double {
+    val tail = tailTop(frame)
+    if (following || frame.alternate) return tail
+    if (scrollTop >= tail) {
+      following = true
+      return tail
+    }
+    scrollTop = scrollTop.coerceAtLeast(0.0)
+    return scrollTop
+  }
+
+  /**
+   * Keeps the scroll position on the same text when the scrollback lost rows
+   * at the top (the history limit) or rows were renumbered, using row identity.
+   */
+  private fun reanchor(previous: NativeTerminalEngine.Frame?, next: NativeTerminalEngine.Frame) {
+    if (following || previous == null || previous === next) return
+    val previousIds = previous.rowIds ?: return
+    val nextIds = next.rowIds ?: return
+    val previousIndex = previous.frameRow(floor(scrollTop).toInt())
+    if (previousIndex !in previous.lines.indices) return
+    val id0 = previousIds[previousIndex * 2]
+    val id1 = previousIds[previousIndex * 2 + 1]
+    if (id0 == 0L && id1 == 0L) return
+    for (index in next.lines.indices) {
+      if (nextIds[index * 2] == id0 && nextIds[index * 2 + 1] == id1) {
+        val delta = next.screenRow(index) - previous.screenRow(previousIndex)
+        if (delta != 0) scrollTop += delta
+        return
+      }
+    }
+  }
+
+  /** Asks the engine to capture the rows around [top] that the view needs next. */
+  private fun ensureViewport(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, top: Double) {
+    val rows = frame.rows.coerceAtLeast(2)
+    val request = if (following || frame.alternate) {
+      // At rest only the screen is needed. A finger on the glass may start a
+      // scroll, so capture a screen of scrollback above to scroll into at once.
+      ViewportRequest(true, 0, if (touchActive || !scroller.isFinished) rows else FOLLOW_IDLE_ABOVE, 0)
+    } else {
+      val captureStart = frame.screenRow(0)
+      val captureEnd = frame.screenRow(frame.lines.size)
+      val margin = max(4, rows / 3)
+      val visible = visibleRows
+      val short = (top < captureStart + margin && captureStart > 0) ||
+        (top + visible > captureEnd - margin && captureEnd < frame.totalRows) ||
+        frame.followingActive && top + visible < frame.activeTop
+      val previous = lastRequest
+      if (!short && previous != null && !previous.follow) return
+      ViewportRequest(false, floor(top).toInt().coerceAtLeast(0), rows, rows)
+    }
+    if (request == lastRequest) return
+    lastRequest = request
+    engine.setViewport(request.follow, request.topRow, request.above, request.below)
+  }
+
+  private fun drawNativeFrame(
+    canvas: Canvas,
+    engine: NativeTerminalEngine,
+    frame: NativeTerminalEngine.Frame,
+    cellWidth: Float,
+    cellHeight: Float,
+  ) {
+    reanchor(lastFrame, frame)
+    lastFrame = frame
+    if (engine.inputCount != lastInputCount) {
+      // Typing jumps back to the output and ends a selection, like a desktop terminal.
+      lastInputCount = engine.inputCount
+      if (!following) {
+        following = true
+        scroller.forceFinished(true)
+      }
+      if (selectionActive) clearSelection()
+    }
+    if (selectionActive && frame.selection == null && frame !== selectionStartFrame &&
+      touchMode != TouchMode.SELECT && touchMode != TouchMode.HANDLE
+    ) {
+      // The app cleared the screen under the selection.
+      endSelectionUi()
+    }
+
+    val top = viewTop(frame)
+    ensureViewport(engine, frame, top)
+    val background = frame.defaultBackgroundColor
+    val baselineOffset = baselineOffset(cellHeight)
+    val viewHeight = height.toFloat()
+    for (index in frame.lines.indices) {
+      val y = ((frame.screenRow(index) - top) * cellHeight).toFloat()
+      if (y + cellHeight <= 0f || y >= viewHeight) continue
+      val links = NativeTerminalLinks.rowLinks(frame.lines, index, wrappedLinkCache)
+      drawNativeLine(canvas, frame.lines[index], links, frame.columns, background, cellWidth, cellHeight, y, y + baselineOffset)
+    }
+    frame.selection?.let { drawSelection(canvas, frame, it, top, cellWidth, cellHeight) }
+    if (running && updateNativeCursor(frame) && nativeCursorLastRow in frame.lines.indices) {
+      drawCursor(canvas, frame, ((frame.screenRow(nativeCursorLastRow) - top) * cellHeight).toFloat(), cellWidth, cellHeight)
+    }
+    if (selectionActive) drawHandles(canvas, engine, frame, top, cellWidth, cellHeight)
+    drawScrollbar(canvas, frame, top)
+  }
+
+  private fun drawCursor(canvas: Canvas, frame: NativeTerminalEngine.Frame, top: Float, cellWidth: Float, cellHeight: Float) {
+    val left = nativeCursorLastColumn.coerceAtLeast(0) * cellWidth
     paint.color = CURSOR_COLOR
-    canvas.drawRect(cursorLeft, row * cellHeight, cursorLeft + cellWidth, (row + 1) * cellHeight, paint)
+    when (frame.cursorStyle) {
+      NativeTerminalEngine.CURSOR_STYLE_BAR -> {
+        paint.style = Paint.Style.FILL
+        canvas.drawRect(left, top, left + 2f * density, top + cellHeight, paint)
+      }
+      NativeTerminalEngine.CURSOR_STYLE_UNDERLINE -> {
+        paint.style = Paint.Style.FILL
+        canvas.drawRect(left, top + cellHeight - 2f * density, left + cellWidth, top + cellHeight, paint)
+      }
+      NativeTerminalEngine.CURSOR_STYLE_BLOCK_HOLLOW -> {
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = density
+        canvas.drawRect(left, top, left + cellWidth, top + cellHeight, paint)
+        paint.style = Paint.Style.FILL
+      }
+      else -> {
+        paint.style = Paint.Style.FILL
+        canvas.drawRect(left, top, left + cellWidth, top + cellHeight, paint)
+      }
+    }
   }
 
   /**
@@ -315,19 +571,580 @@ class TerminalCanvasView(context: Context) : View(context) {
     return false
   }
 
+  /** Tints the selected cells over the drawn text, one rect per row. */
+  private fun drawSelection(
+    canvas: Canvas,
+    frame: NativeTerminalEngine.Frame,
+    selection: IntArray,
+    top: Double,
+    cellWidth: Float,
+    cellHeight: Float,
+  ) {
+    paint.style = Paint.Style.FILL
+    paint.color = SELECTION_COLOR
+    for (index in frame.lines.indices) {
+      val start = selection[index * 2]
+      val end = selection[index * 2 + 1]
+      if (start < 0 || end <= start) continue
+      val y = ((frame.screenRow(index) - top) * cellHeight).toFloat()
+      if (y + cellHeight <= 0f || y >= height) continue
+      canvas.drawRect(start * cellWidth, y, end * cellWidth, y + cellHeight, paint)
+    }
+  }
+
+  /** The selection's ends for [frame], read once per frame. */
+  private fun boundsFor(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame): IntArray? {
+    if (selectionBoundsFrame !== frame) {
+      selectionBounds = engine.selectionBounds()
+      selectionBoundsFrame = frame
+    }
+    return selectionBounds
+  }
+
+  private fun drawHandles(
+    canvas: Canvas,
+    engine: NativeTerminalEngine,
+    frame: NativeTerminalEngine.Frame,
+    top: Double,
+    cellWidth: Float,
+    cellHeight: Float,
+  ) {
+    val bounds = boundsFor(engine, frame) ?: return
+    paint.style = Paint.Style.FILL
+    paint.color = HANDLE_COLOR
+    val radius = HANDLE_RADIUS_DP * density
+    val startX = bounds[0] * cellWidth
+    val startY = ((bounds[1] + 1 - top) * cellHeight).toFloat()
+    val endX = (bounds[2] + 1) * cellWidth
+    val endY = ((bounds[3] + 1 - top) * cellHeight).toFloat()
+    // Teardrops whose point touches the selection's outer corner.
+    canvas.drawCircle(startX - radius, startY + radius, radius, paint)
+    canvas.drawRect(startX - radius, startY, startX, startY + radius, paint)
+    canvas.drawCircle(endX + radius, endY + radius, radius, paint)
+    canvas.drawRect(endX, endY, endX + radius, endY + radius, paint)
+  }
+
+  /** A thin thumb on the right edge while scrolling, fading out after. */
+  private fun drawScrollbar(canvas: Canvas, frame: NativeTerminalEngine.Frame, top: Double) {
+    if (frame.alternate) return
+    val visible = visibleRows
+    val total = max(frame.totalRows.toDouble(), top + visible)
+    if (total <= visible + 0.5) return
+    val now = SystemClock.uptimeMillis()
+    val active = touchMode == TouchMode.SCROLL || (!scroller.isFinished && !flingIsWheel)
+    if (active) scrollbarShownAt = now
+    val age = now - scrollbarShownAt
+    if (scrollbarShownAt == 0L || age > SCROLLBAR_VISIBLE_MS + SCROLLBAR_FADE_MS) return
+    val alpha = if (age <= SCROLLBAR_VISIBLE_MS) 1f else 1f - (age - SCROLLBAR_VISIBLE_MS) / SCROLLBAR_FADE_MS.toFloat()
+    val viewHeight = height.toFloat()
+    val thumb = max(SCROLLBAR_MIN_DP * density, (visible / total * viewHeight).toFloat())
+    val position = (top / (total - visible)).coerceIn(0.0, 1.0).toFloat()
+    val thumbTop = position * (viewHeight - thumb)
+    val width = SCROLLBAR_WIDTH_DP * density
+    paint.style = Paint.Style.FILL
+    paint.color = withAlpha(SCROLLBAR_COLOR, (0x99 * alpha).roundToInt())
+    canvas.drawRoundRect(this.width - width - 2f * density, thumbTop, this.width - 2f * density, thumbTop + thumb, width, width, paint)
+    if (!active) postInvalidateOnAnimation()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Touch
+  // ---------------------------------------------------------------------------
+
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    val engine = nativeEngine ?: return super.onTouchEvent(event)
+    val current = engine.displayFrame()
+    velocityTracker?.addMovement(event)
+    lastEvent?.recycle()
+    lastEvent = MotionEvent.obtain(event)
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        val wasFlinging = !scroller.isFinished
+        scroller.forceFinished(true)
+        velocityTracker?.recycle()
+        velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
+        touchActive = true
+        downX = event.x
+        downY = event.y
+        lastTouchX = event.x
+        lastTouchY = event.y
+        wheelRemainder = 0f
+        touchMode = if (wasFlinging) TouchMode.IGNORED else TouchMode.PENDING
+        val handle = if (selectionActive) handleAt(engine, current, event.x, event.y) else 0
+        if (handle != 0) {
+          val bounds = boundsFor(engine, current)
+          if (bounds != null) {
+            handleFixed = if (handle < 0) intArrayOf(bounds[2], bounds[3]) else intArrayOf(bounds[0], bounds[1])
+            val top = viewTop(current)
+            val column = if (handle < 0) bounds[0] else bounds[2]
+            val row = if (handle < 0) bounds[1] else bounds[3]
+            handleOffsetX = (column + 0.5f) * cellWidthPx - event.x
+            handleOffsetY = ((row + 0.5 - top) * cellHeightPx).toFloat() - event.y
+            touchMode = TouchMode.HANDLE
+            claimGesture(event)
+            hideActionMode()
+          }
+        } else if (!wasFlinging) {
+          postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
+        }
+        // Capture scrollback above now, so a drag that starts has rows to show.
+        invalidate()
+        return true
+      }
+      MotionEvent.ACTION_MOVE -> {
+        val x = event.x
+        val y = event.y
+        when (touchMode) {
+          TouchMode.PENDING, TouchMode.IGNORED -> {
+            val dx = x - downX
+            val dy = y - downY
+            if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+              removeCallbacks(longPress)
+              if (abs(dy) >= abs(dx)) {
+                touchMode = if (current.alternate) TouchMode.WHEEL else TouchMode.SCROLL
+                claimGesture(event)
+                // Start from the slop edge so the content does not jump.
+                lastTouchY = y - (if (dy > 0) touchSlop else -touchSlop)
+              } else {
+                touchMode = TouchMode.IGNORED
+              }
+            }
+          }
+          else -> Unit
+        }
+        when (touchMode) {
+          TouchMode.SCROLL -> {
+            scrollByRows((lastTouchY - y) / cellHeightPx.toDouble())
+            lastTouchY = y
+          }
+          TouchMode.WHEEL -> {
+            wheel(engine, current, y - lastTouchY, x, y)
+            lastTouchY = y
+          }
+          TouchMode.SELECT, TouchMode.HANDLE -> {
+            // A held finger jitters: extend the long-pressed word only once
+            // the finger really moves, or a press beside it grabs the gap.
+            if (touchMode == TouchMode.SELECT && !selectionDragged) {
+              selectionDragged = hypot(x - downX, y - downY) > touchSlop
+            }
+            if (touchMode == TouchMode.HANDLE || selectionDragged) {
+              lastTouchX = x
+              lastTouchY = y
+              dragSelectionTo(x, y)
+              updateAutoScroll(y)
+            }
+          }
+          else -> Unit
+        }
+        return true
+      }
+      MotionEvent.ACTION_UP -> {
+        removeCallbacks(longPress)
+        touchActive = false
+        autoScrollRows = 0.0
+        val mode = touchMode
+        touchMode = TouchMode.NONE
+        when (mode) {
+          TouchMode.PENDING -> onTap(engine, current, event.x, event.y)
+          TouchMode.SCROLL, TouchMode.WHEEL -> {
+            val tracker = velocityTracker
+            tracker?.computeCurrentVelocity(1000, maxFlingVelocity.toFloat())
+            val velocity = tracker?.yVelocity ?: 0f
+            if (abs(velocity) > minFlingVelocity) fling(current, velocity, mode == TouchMode.WHEEL)
+          }
+          TouchMode.SELECT, TouchMode.HANDLE -> {
+            handleFixed = null
+            showActionMode()
+          }
+          else -> Unit
+        }
+        releaseGesture(event)
+        velocityTracker?.recycle()
+        velocityTracker = null
+        invalidate()
+        return true
+      }
+      MotionEvent.ACTION_CANCEL -> {
+        removeCallbacks(longPress)
+        touchActive = false
+        autoScrollRows = 0.0
+        if (touchMode == TouchMode.SELECT || touchMode == TouchMode.HANDLE) showActionMode()
+        touchMode = TouchMode.NONE
+        handleFixed = null
+        releaseGesture(event)
+        velocityTracker?.recycle()
+        velocityTracker = null
+        invalidate()
+        return true
+      }
+    }
+    return true
+  }
+
+  /** Takes the gesture from React Native's responders and any scrolling parent. */
+  private fun claimGesture(event: MotionEvent) {
+    parent?.requestDisallowInterceptTouchEvent(true)
+    if (gestureClaimed) return
+    gestureClaimed = true
+    NativeGestureUtil.notifyNativeGestureStarted(this, event)
+  }
+
+  private fun releaseGesture(event: MotionEvent) {
+    if (!gestureClaimed) return
+    gestureClaimed = false
+    NativeGestureUtil.notifyNativeGestureEnded(this, event)
+  }
+
+  private fun scrollByRows(rows: Double) {
+    val current = nativeEngine?.displayFrame() ?: return
+    if (current.alternate || rows == 0.0) return
+    val top = viewTop(current)
+    val tail = tailTop(current)
+    val next = (top + rows).coerceIn(0.0, max(0.0, tail))
+    following = next >= tail
+    scrollTop = next
+    invalidate()
+  }
+
+  private fun fling(frame: NativeTerminalEngine.Frame, velocityY: Float, wheel: Boolean) {
+    val cellHeight = cellHeightPx
+    flingIsWheel = wheel
+    if (wheel) {
+      flingLastY = 0
+      scroller.fling(0, 0, 0, velocityY.roundToInt(), 0, 0, Int.MIN_VALUE / 2, Int.MAX_VALUE / 2)
+    } else {
+      val top = viewTop(frame)
+      val start = (top * cellHeight).roundToInt()
+      val max = (tailTop(frame) * cellHeight).roundToInt()
+      scroller.fling(0, start, 0, -velocityY.roundToInt(), 0, 0, 0, max)
+    }
+    postInvalidateOnAnimation()
+  }
+
+  override fun computeScroll() {
+    if (!scroller.computeScrollOffset()) return
+    val engine = nativeEngine ?: return
+    val current = engine.displayFrame()
+    if (flingIsWheel) {
+      val y = scroller.currY
+      wheel(engine, current, (y - flingLastY).toFloat(), lastTouchX, lastTouchY)
+      flingLastY = y
+      if (abs(scroller.currVelocity) < minFlingVelocity) scroller.forceFinished(true)
+    } else if (current.alternate) {
+      scroller.forceFinished(true)
+    } else {
+      val tail = tailTop(current)
+      val next = (scroller.currY / cellHeightPx.toDouble()).coerceIn(0.0, max(0.0, tail))
+      following = next >= tail - FOLLOW_EPSILON_ROWS
+      scrollTop = next
+      if (following) scroller.forceFinished(true)
+    }
+    postInvalidateOnAnimation()
+  }
+
+  /**
+   * A drag on a full-screen app: wheel events when it tracks the mouse, arrow
+   * keys when it asked for them (mode 1007), otherwise Page Up/Down. [deltaY]
+   * is the finger's movement; down shows earlier content.
+   */
+  private fun wheel(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, deltaY: Float, x: Float, y: Float) {
+    val lineStep = cellHeightPx * WHEEL_ROWS_PER_TICK
+    val step = if (frame.mouseTracking || frame.mouseAlternateScroll) lineStep else max(lineStep, height / 2f)
+    wheelRemainder += deltaY
+    var ticks = (wheelRemainder / step).toInt()
+    if (ticks == 0) return
+    wheelRemainder -= ticks * step
+    ticks = ticks.coerceIn(-MAX_TICKS_PER_FRAME, MAX_TICKS_PER_FRAME)
+    val up = ticks > 0
+    val count = abs(ticks)
+    val bytes = engine.withNativeHandle { h ->
+      val column = (x / cellWidthPx).toInt().coerceIn(0, frame.columns - 1)
+      val row = (y / cellHeightPx + (tailTop(frame) - frame.activeTop)).toInt().coerceIn(0, frame.rows - 1)
+      val one = when {
+        frame.mouseTracking -> TerminalPtyJni.nativeEngineEncodeMouse(
+          h, column.toFloat(), row.toFloat(), if (up) MOUSE_WHEEL_UP else MOUSE_WHEEL_DOWN, MOUSE_PRESS, 0,
+        )
+        frame.mouseAlternateScroll -> TerminalPtyJni.nativeEngineEncodeKey(h, if (up) KEY_ARROW_UP else KEY_ARROW_DOWN, 0, KEY_PRESS, null)
+        else -> TerminalPtyJni.nativeEngineEncodeKey(h, if (up) KEY_PAGE_UP else KEY_PAGE_DOWN, 0, KEY_PRESS, null)
+      } ?: return@withNativeHandle null
+      ByteArray(one.size * count) { one[it % one.size] }
+    } ?: return
+    nativeSessionId?.let { NativeTerminalEngineRegistry.writeInput(it, bytes, userInput = false) }
+  }
+
+  private fun onTap(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, x: Float, y: Float) {
+    if (selectionActive) {
+      clearSelection()
+      return
+    }
+    val (column, screenRow) = cellAt(frame, x, y)
+    val index = frame.frameRow(screenRow)
+    val url = if (index in frame.lines.indices) NativeTerminalLinks.urlAt(engine, frame, index, column) else null
+    if (!url.isNullOrEmpty()) {
+      emit(EVENT_LINK, false, Arguments.createMap().apply { putString("url", url) })
+      return
+    }
+    if (frame.mouseTracking) {
+      // Apps that track the mouse (opencode, htop) get a click, as on a desktop.
+      val row = screenRow - frame.viewportTop
+      if (row in 0 until frame.rows) {
+        val bytes = engine.withNativeHandle { h ->
+          val press = TerminalPtyJni.nativeEngineEncodeMouse(h, column.toFloat(), row.toFloat(), MOUSE_LEFT, MOUSE_PRESS, 0)
+          val release = TerminalPtyJni.nativeEngineEncodeMouse(h, column.toFloat(), row.toFloat(), MOUSE_LEFT, MOUSE_RELEASE, 0)
+          (press ?: ByteArray(0)) + (release ?: ByteArray(0))
+        }
+        if (bytes != null && bytes.isNotEmpty()) {
+          nativeSessionId?.let { NativeTerminalEngineRegistry.writeInput(it, bytes, userInput = false) }
+        }
+      }
+    }
+    emit(EVENT_TAP, false, Arguments.createMap())
+  }
+
+  /** (column, screen row) under a point of the view. */
+  private fun cellAt(frame: NativeTerminalEngine.Frame, x: Float, y: Float): Pair<Int, Int> {
+    val column = floor(x / cellWidthPx).toInt().coerceIn(0, (frame.columns - 1).coerceAtLeast(0))
+    val screenRow = floor(viewTop(frame) + y / cellHeightPx).toInt().coerceIn(0, (frame.totalRows - 1).coerceAtLeast(0))
+    return column to screenRow
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selection
+  // ---------------------------------------------------------------------------
+
+  private fun onLongPress() {
+    if (touchMode != TouchMode.PENDING) return
+    val engine = nativeEngine ?: return
+    val current = engine.displayFrame()
+    val (column, screenRow) = cellAt(current, downX, downY)
+    // Hold the view still while selecting, even if output keeps arriving.
+    if (!current.alternate) {
+      scrollTop = viewTop(current)
+      following = false
+    }
+    selectionStartFrame = current
+    val word = engine.selectWord(column, screenRow) ?: return
+    anchorStart = intArrayOf(word[0], word[1])
+    anchorEnd = intArrayOf(word[2], word[3])
+    selectionBoundsFrame = null
+    selectionDragged = false
+    touchMode = TouchMode.SELECT
+    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    lastEvent?.let(::claimGesture)
+    setSelectionActive(true)
+    invalidate()
+  }
+
+  private fun dragSelectionTo(x: Float, y: Float) {
+    val engine = nativeEngine ?: return
+    val current = engine.displayFrame()
+    val fixed = handleFixed
+    val handleDrag = touchMode == TouchMode.HANDLE && fixed != null
+    val targetX = if (handleDrag) x + handleOffsetX else x
+    val targetY = if (handleDrag) y + handleOffsetY else y
+    val (column, screenRow) = cellAt(current, targetX.coerceAtLeast(0f), targetY.coerceIn(0f, height - 1f))
+    if (handleDrag) {
+      engine.selectRange(fixed[0], fixed[1], column, screenRow)
+    } else {
+      val start = anchorStart ?: return
+      val end = anchorEnd ?: return
+      when {
+        before(column, screenRow, start[0], start[1]) -> engine.selectRange(end[0], end[1], column, screenRow)
+        before(end[0], end[1], column, screenRow) -> engine.selectRange(start[0], start[1], column, screenRow)
+        else -> engine.selectRange(start[0], start[1], end[0], end[1])
+      }
+    }
+    selectionBoundsFrame = null
+  }
+
+  private fun before(column: Int, row: Int, otherColumn: Int, otherRow: Int): Boolean =
+    row < otherRow || (row == otherRow && column < otherColumn)
+
+  /** Scrolls while a selection drag sits near the top or bottom edge. */
+  private fun updateAutoScroll(y: Float) {
+    val edge = cellHeightPx * 1.5f
+    val next = when {
+      y < edge -> -AUTO_SCROLL_ROWS_PER_FRAME
+      y > height - edge -> AUTO_SCROLL_ROWS_PER_FRAME
+      else -> 0.0
+    }
+    val wasIdle = autoScrollRows == 0.0
+    autoScrollRows = next
+    if (next != 0.0 && wasIdle) postOnAnimation(autoScroll)
+  }
+
+  /** -1 for the start handle under the point, 1 for the end handle, else 0. */
+  private fun handleAt(engine: NativeTerminalEngine, frame: NativeTerminalEngine.Frame, x: Float, y: Float): Int {
+    val bounds = boundsFor(engine, frame) ?: return 0
+    val top = viewTop(frame)
+    val radius = HANDLE_RADIUS_DP * density
+    val slop = HANDLE_TOUCH_DP * density
+    val startX = bounds[0] * cellWidthPx - radius
+    val startY = ((bounds[1] + 1 - top) * cellHeightPx).toFloat() + radius
+    val endX = (bounds[2] + 1) * cellWidthPx + radius
+    val endY = ((bounds[3] + 1 - top) * cellHeightPx).toFloat() + radius
+    val toStart = hypot(x - startX, y - startY)
+    val toEnd = hypot(x - endX, y - endY)
+    return when {
+      toEnd <= slop && toEnd <= toStart -> 1
+      toStart <= slop -> -1
+      else -> 0
+    }
+  }
+
+  private fun setSelectionActive(active: Boolean) {
+    if (selectionActive == active) return
+    selectionActive = active
+    emit(EVENT_SELECTION, false, Arguments.createMap().apply { putBoolean("active", active) })
+  }
+
+  /** Forgets the selection UI; the caller clears the engine's selection if needed. */
+  private fun endSelectionUi() {
+    anchorStart = null
+    anchorEnd = null
+    handleFixed = null
+    selectionStartFrame = null
+    selectionBounds = null
+    selectionBoundsFrame = null
+    autoScrollRows = 0.0
+    if (touchMode == TouchMode.SELECT || touchMode == TouchMode.HANDLE) touchMode = TouchMode.IGNORED
+    setSelectionActive(false)
+    actionMode?.let {
+      actionMode = null
+      it.finish()
+    }
+    invalidate()
+  }
+
+  private fun hideActionMode() {
+    val mode = actionMode ?: return
+    restartingActionMode = true
+    actionMode = null
+    mode.finish()
+    restartingActionMode = false
+  }
+
+  private fun showActionMode() {
+    if (!selectionActive || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    actionMode?.let {
+      it.invalidateContentRect()
+      return
+    }
+    actionMode = startActionMode(selectionToolbar, ActionMode.TYPE_FLOATING)
+  }
+
+  private val selectionToolbar = object : ActionMode.Callback2() {
+    override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+      menu.add(Menu.NONE, MENU_COPY, 0, android.R.string.copy).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+      menu.add(Menu.NONE, MENU_SELECT_ALL, 1, android.R.string.selectAll).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+      return true
+    }
+
+    override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+
+    override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+      val engine = nativeEngine ?: return false
+      when (item.itemId) {
+        MENU_COPY -> {
+          copyToClipboard(engine.selectionText().orEmpty())
+          clearSelection()
+        }
+        MENU_SELECT_ALL -> {
+          engine.selectAll()
+          selectionBoundsFrame = null
+          mode.invalidateContentRect()
+          invalidate()
+        }
+        else -> return false
+      }
+      return true
+    }
+
+    override fun onDestroyActionMode(mode: ActionMode) {
+      if (actionMode === mode) actionMode = null
+      // Dismissing the toolbar (a tap elsewhere, Back) ends the selection.
+      if (!restartingActionMode && selectionActive && touchMode != TouchMode.SELECT && touchMode != TouchMode.HANDLE) {
+        clearSelection()
+      }
+    }
+
+    override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+      val engine = nativeEngine
+      val current = engine?.displayFrame()
+      val bounds = if (engine != null && current != null) boundsFor(engine, current) else null
+      if (current == null || bounds == null) {
+        outRect.set(0, 0, width, height / 2)
+        return
+      }
+      val top = viewTop(current)
+      val startY = ((bounds[1] - top) * cellHeightPx).toInt().coerceIn(0, height)
+      val endY = ((bounds[3] + 1 - top) * cellHeightPx).toInt().coerceIn(startY, height)
+      val left = if (bounds[1] == bounds[3]) (bounds[0] * cellWidthPx).toInt() else 0
+      val right = if (bounds[1] == bounds[3]) ((bounds[2] + 1) * cellWidthPx).toInt() else width
+      outRect.set(left, startY, right.coerceAtLeast(left + 1), endY.coerceAtLeast(startY + 1))
+    }
+  }
+
+  private fun copyToClipboard(text: String) {
+    if (text.isEmpty()) return
+    val copied = runCatching {
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      clipboard.setPrimaryClip(ClipData.newPlainText("Terminal", text))
+    }.isSuccess
+    // Android 13+ shows its own copied-text preview.
+    if (copied && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Events to React Native
+  // ---------------------------------------------------------------------------
+
+  private fun emit(name: String, coalesce: Boolean, data: WritableMap) {
+    if (id == NO_ID) return
+    val reactContext = context as? ThemedReactContext ?: return
+    UIManagerHelper.getEventDispatcher(reactContext)?.dispatchEvent(
+      TerminalCanvasEvent(UIManagerHelper.getSurfaceId(this), id, name, coalesce, data),
+    )
+  }
+
+  /** Tells React Native when the kind of screen changes; never per output line. */
+  private fun notifyNativeFrameMeta(frame: NativeTerminalEngine.Frame) {
+    val hasContent = frame.hasVisibleContent
+    if (lastMetaAlternate == frame.alternate && lastMetaHasContent == hasContent &&
+      lastMetaMouseTracking == frame.mouseTracking && lastMetaMouseSgr == frame.mouseSgr) return
+    lastMetaAlternate = frame.alternate
+    lastMetaHasContent = hasContent
+    lastMetaMouseTracking = frame.mouseTracking
+    lastMetaMouseSgr = frame.mouseSgr
+    emit(EVENT_FRAME_META, true, Arguments.createMap().apply {
+      putBoolean("alternate", frame.alternate)
+      putInt("contentRows", frame.contentRows)
+      putInt("rows", frame.rows)
+      putInt("cursorRow", frame.cursorRow)
+      putInt("lastContentRow", if (hasContent) frame.lastContentRow else -1)
+      putBoolean("mouseTracking", frame.mouseTracking)
+      putBoolean("mouseSgr", frame.mouseSgr)
+    })
+  }
+
+  // ---------------------------------------------------------------------------
+  // JS snapshot frames (no native session)
+  // ---------------------------------------------------------------------------
+
   /**
    * Updates [visibleRect] to the part of this view that can be on screen,
-   * padded by one viewport on each side so a fling reveals already-recorded
-   * rows before the scroll listener re-records. Falls back to the full view.
+   * padded by one viewport on each side. Falls back to the full view.
    */
   private fun updateVisibleRect() {
     if (!getLocalVisibleRect(visibleRect) || visibleRect.height() <= 0) {
       visibleRect.set(0, 0, width, height)
-      return
+    } else {
+      val pad = visibleRect.height()
+      visibleRect.top -= pad
+      visibleRect.bottom += pad
     }
-    val pad = visibleRect.height()
-    visibleRect.top -= pad
-    visibleRect.bottom += pad
   }
 
   private fun drawLoading(canvas: Canvas, text: String, density: Float) {
@@ -415,29 +1232,6 @@ class TerminalCanvasView(context: Context) : View(context) {
     flushRun()
   }
 
-  private fun drawNativeFrame(
-    canvas: Canvas,
-    frame: NativeTerminalEngine.Frame,
-    cellWidth: Float,
-    cellHeight: Float,
-  ) {
-    val baselineOffset = baselineOffset(cellHeight)
-    updateVisibleRect()
-    val firstRow = max(0, floor(visibleRect.top / cellHeight).toInt())
-    val lastRow = min(frame.contentRows, ceil(visibleRect.bottom / cellHeight).toInt())
-    for (row in firstRow until lastRow) {
-      val rowTop = row * cellHeight
-      val links = NativeTerminalLinks.rowLinks(frame.lines, row, wrappedLinkCache)
-      drawNativeLine(canvas, frame.lines[row], links, frame.columns, cellWidth, cellHeight, rowTop, rowTop + baselineOffset)
-    }
-  }
-
-  /**
-   * Draws one row with at most one text draw per run of same-styled ASCII
-   * cells. Styles are compared as (foreground, flags) primitives so the per
-   * cell loop does not allocate. Inverse video is already resolved in the
-   * row snapshot, so its colours are drawn as they are.
-   */
   /**
    * Paints a row's non-default backgrounds before its text, one rect per run
    * of adjacent same-colored cells instead of one per cell (TUI status bars
@@ -447,6 +1241,7 @@ class TerminalCanvasView(context: Context) : View(context) {
     canvas: Canvas,
     line: NativeTerminalEngine.FrameRow,
     columns: Int,
+    defaultBackground: Int,
     cellWidth: Float,
     top: Float,
     bottom: Float,
@@ -460,13 +1255,13 @@ class TerminalCanvasView(context: Context) : View(context) {
       // Zero-width cells are the trailing halves of wide glyphs, already
       // covered by the lead cell's width.
       if (column < columns && width <= 0) continue
-      val color = if (column < columns) line.background[column] else backgroundColor
+      val color = if (column < columns) line.background[column] else defaultBackground
       if (runStart >= 0 && (color != runColor || column != runEnd)) {
         paint.color = runColor
         canvas.drawRect(runStart * cellWidth, top, runEnd * cellWidth, bottom, paint)
         runStart = -1
       }
-      if (column < columns && color != backgroundColor) {
+      if (column < columns && color != defaultBackground) {
         if (runStart < 0) {
           runStart = column
           runColor = color
@@ -476,11 +1271,18 @@ class TerminalCanvasView(context: Context) : View(context) {
     }
   }
 
+  /**
+   * Draws one row with at most one text draw per run of same-styled ASCII
+   * cells. Styles are compared as (foreground, flags) primitives so the per
+   * cell loop does not allocate. Inverse video is already resolved in the
+   * row snapshot, so its colours are drawn as they are.
+   */
   private fun drawNativeLine(
     canvas: Canvas,
     line: NativeTerminalEngine.FrameRow,
     rowLinks: IntArray,
     frameColumns: Int,
+    defaultBackground: Int,
     cellWidth: Float,
     cellHeight: Float,
     rowTop: Float,
@@ -507,12 +1309,13 @@ class TerminalCanvasView(context: Context) : View(context) {
     var linkIndex = 0
     // Scrollback rows keep the width they were captured at.
     val columns = min(frameColumns, line.columns)
-    drawNativeBackgrounds(canvas, line, columns, cellWidth, rowTop, rowTop + cellHeight)
+    drawNativeBackgrounds(canvas, line, columns, defaultBackground, cellWidth, rowTop, rowTop + cellHeight)
     for (column in 0 until columns) {
       val width = line.width[column].toInt()
       if (width <= 0) continue
       while (linkIndex < rowLinks.size && rowLinks[linkIndex + 1] <= column) linkIndex += 2
-      val linked = linkIndex < rowLinks.size && rowLinks[linkIndex] <= column
+      val linked = (linkIndex < rowLinks.size && rowLinks[linkIndex] <= column) ||
+        line.flags[column] and NativeTerminalEngine.FLAG_HYPERLINK != 0
       val cellFlags = if (linked) {
         (line.flags[column] and NATIVE_STYLE_FLAGS) or NativeTerminalEngine.FLAG_UNDERLINE
       } else {
@@ -563,25 +1366,6 @@ class TerminalCanvasView(context: Context) : View(context) {
     paint.isUnderlineText = flags and NativeTerminalEngine.FLAG_UNDERLINE != 0
     paint.isStrikeThruText = flags and NativeTerminalEngine.FLAG_STRIKETHROUGH != 0
     canvas.drawText(text, 0, text.length, x, baseline, paint)
-  }
-
-  private fun notifyNativeFrameMeta(frame: NativeTerminalEngine.Frame) {
-    if (lastNativeFrameAlternate == frame.alternate && lastNativeFrameContentRows == frame.contentRows &&
-      lastNativeFrameRows == frame.rows &&
-      lastNativeFrameCursorRow == frame.cursorRow && lastNativeFrameLastContentRow == frame.lastContentRow &&
-      lastNativeFrameMouseTracking == frame.mouseTracking && lastNativeFrameMouseSgr == frame.mouseSgr) return
-    lastNativeFrameAlternate = frame.alternate
-    lastNativeFrameContentRows = frame.contentRows
-    lastNativeFrameRows = frame.rows
-    lastNativeFrameCursorRow = frame.cursorRow
-    lastNativeFrameLastContentRow = frame.lastContentRow
-    lastNativeFrameMouseTracking = frame.mouseTracking
-    lastNativeFrameMouseSgr = frame.mouseSgr
-    if (id == NO_ID) return
-    val reactContext = context as? ThemedReactContext ?: return
-    UIManagerHelper.getEventDispatcher(reactContext)?.dispatchEvent(
-      NativeFrameMetaEvent(UIManagerHelper.getSurfaceId(this), id, frame),
-    )
   }
 
   private fun drawText(canvas: Canvas, text: String, x: Float, baseline: Float, style: TextStyle) {
@@ -656,8 +1440,13 @@ class TerminalCanvasView(context: Context) : View(context) {
       invalidate()
       return
     }
-    nativeEngine = NativeTerminalEngineRegistry.ensure(sessionId, nativeRows, nativeColumns)
-    nativeSubscription = nativeEngine?.addListener { postInvalidateOnAnimation() }
+    // The PTY's size is owned by the session: binding must not resize the
+    // engine to this view, which is shorter while the keyboard is open.
+    val engine = NativeTerminalEngineRegistry.attach(sessionId, nativeRows, nativeColumns)
+    nativeEngine = engine
+    lastInputCount = engine.inputCount
+    lastRequest = null
+    nativeSubscription = engine.addListener { postInvalidateOnAnimation() }
     invalidate()
   }
 
@@ -669,7 +1458,7 @@ class TerminalCanvasView(context: Context) : View(context) {
    * Emoji-presentation characters are not in the subset and stay colour emoji.
    */
   private fun loadTypeface(assetPath: String, fallback: Typeface, bold: Boolean = false): Typeface = try {
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val primary = android.graphics.fonts.Font.Builder(context.assets, assetPath).build()
       val symbols = android.graphics.fonts.Font.Builder(context.assets, SYMBOLS_FONT_ASSET)
         .setWeight(if (bold) 700 else 400)
@@ -710,12 +1499,48 @@ class TerminalCanvasView(context: Context) : View(context) {
 
   private fun ReadableMap.getBooleanOrFalse(key: String): Boolean = hasKey(key) && !isNull(key) && getType(key) == com.facebook.react.bridge.ReadableType.Boolean && getBoolean(key)
 
-  private companion object {
-    const val NATIVE_CURSOR_HIDE_GRACE_MS = 120L
-    const val SYMBOLS_FONT_ASSET = "fonts/TerminalSymbols.ttf"
-    const val CURSOR_COLOR = 0x73F2F4F5
-    const val NATIVE_STYLE_FLAGS = NativeTerminalEngine.FLAG_BOLD or NativeTerminalEngine.FLAG_ITALIC or
+  internal companion object {
+    const val EVENT_FRAME_META = "topNativeFrameMeta"
+    const val EVENT_LINK = "topTerminalLink"
+    const val EVENT_TAP = "topTerminalTap"
+    const val EVENT_SELECTION = "topTerminalSelection"
+
+    private const val NATIVE_CURSOR_HIDE_GRACE_MS = 120L
+    private const val SYMBOLS_FONT_ASSET = "fonts/TerminalSymbols.ttf"
+    private const val CURSOR_COLOR = 0x73F2F4F5
+    /** Brand green (#80EB12) at about 35% so the text stays readable. */
+    private const val SELECTION_COLOR = 0x5980EB12
+    private const val HANDLE_COLOR = 0xFF80EB12.toInt()
+    private const val SCROLLBAR_COLOR = 0xFFF2F4F5.toInt()
+    private const val HANDLE_RADIUS_DP = 10f
+    private const val HANDLE_TOUCH_DP = 28f
+    private const val SCROLLBAR_WIDTH_DP = 3f
+    private const val SCROLLBAR_MIN_DP = 32f
+    private const val SCROLLBAR_VISIBLE_MS = 900L
+    private const val SCROLLBAR_FADE_MS = 300L
+    /** Scrollback rows captured above the screen while following and untouched. */
+    private const val FOLLOW_IDLE_ABOVE = 2
+    private const val FOLLOW_EPSILON_ROWS = 0.01
+    private const val AUTO_SCROLL_ROWS_PER_FRAME = 0.5
+    private const val WHEEL_ROWS_PER_TICK = 1.5f
+    private const val MAX_TICKS_PER_FRAME = 8
+    private const val MENU_COPY = 1
+    private const val MENU_SELECT_ALL = 2
+
+    // libghostty input enums (mouse/event.h, key/event.h).
+    private const val MOUSE_PRESS = 0
+    private const val MOUSE_RELEASE = 1
+    private const val MOUSE_LEFT = 1
+    private const val MOUSE_WHEEL_UP = 4
+    private const val MOUSE_WHEEL_DOWN = 5
+    private const val KEY_PRESS = 1
+    private const val KEY_PAGE_DOWN = 73
+    private const val KEY_PAGE_UP = 74
+    private const val KEY_ARROW_DOWN = 75
+    private const val KEY_ARROW_UP = 78
+
+    private const val NATIVE_STYLE_FLAGS = NativeTerminalEngine.FLAG_BOLD or NativeTerminalEngine.FLAG_ITALIC or
       NativeTerminalEngine.FLAG_DIM or NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH
-    const val NATIVE_LINE_FLAGS = NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH
+    private const val NATIVE_LINE_FLAGS = NativeTerminalEngine.FLAG_UNDERLINE or NativeTerminalEngine.FLAG_STRIKETHROUGH
   }
 }

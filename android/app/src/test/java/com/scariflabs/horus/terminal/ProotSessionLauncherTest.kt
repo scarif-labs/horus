@@ -251,6 +251,37 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun writesTheChosenZshThemeAndSwapsItInPlace() {
+    val base = Files.createTempDirectory("horus-zsh-theme").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val zshrc = File(home, ".zshrc").apply { writeText("alias ll='ls -l'\n") }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+
+      launcher(base, hostProc, zshTheme = ZshTheme.AGNOSTER).interactiveShellLaunchSpec(rootfs, home)
+      val agnoster = zshrc.readText()
+      assertTrue(agnoster.contains("agnoster without Oh My Zsh"))
+      assertTrue(agnoster.contains("horus_git_branch()"))
+      assertFalse(agnoster.contains("duellj theme"))
+      // The prompt keeps zsh's own $ syntax; Kotlin must not have expanded it.
+      assertTrue(agnoster.contains("\$horus_git_segment"))
+
+      launcher(base, hostProc, zshTheme = ZshTheme.DUELLJ).interactiveShellLaunchSpec(rootfs, home)
+      val duellj = zshrc.readText()
+      assertTrue(duellj.startsWith("alias ll='ls -l'\n"))
+      assertTrue(duellj.contains("duellj theme"))
+      assertFalse(duellj.contains("horus_git_branch"))
+      assertEquals(1, duellj.split(ProotSessionLauncher.ZSHRC_BEGIN).size - 1)
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun preservesUserProfileAndRepairsOneCodexPolicyBlockIdempotently() {
     val base = Files.createTempDirectory("horus-codex-profile").toFile()
     try {
@@ -2144,7 +2175,13 @@ class ProotSessionLauncherTest {
     }
   }
 
-  private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch"), hostDev: File = File("/dev")): ProotSessionLauncher =
+  private fun launcher(
+    base: File,
+    hostProc: File,
+    scratch: File = File(base, "scratch"),
+    hostDev: File = File("/dev"),
+    zshTheme: ZshTheme = ZshTheme.DEFAULT,
+  ): ProotSessionLauncher =
     ProotSessionLauncher(
       runtime = ProotRuntimeLocator.LocatedRuntime(
         prootBin = File(base, "libproot.so"),
@@ -2155,5 +2192,6 @@ class ProotSessionLauncherTest {
       scratchDir = scratch,
       hostProcDir = hostProc,
       hostDevDir = hostDev,
+      zshTheme = zshTheme,
     )
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import {Image, Pressable as RNPressable, StyleSheet, Text, Vibration, View} from 'react-native';
+import {Image, type ImageSourcePropType, Pressable as RNPressable, StyleSheet, Text, Vibration, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
@@ -7,6 +7,8 @@ import {uiColors} from './palette';
 import {TERMINAL_BACKGROUND, TERMINAL_FOREGROUND} from './terminalBuffer';
 
 const RETURN_ICON = require('./key-icons/return.png');
+const KEYBOARD_ICON = require('./key-icons/keyboard.png');
+const KEYBOARD_HIDE_ICON = require('./key-icons/keyboard-hide.png');
 
 /** The final byte of an arrow key's escape sequence. */
 export type TerminalArrow = 'A' | 'B' | 'C' | 'D';
@@ -16,12 +18,14 @@ type TerminalToolbarButtonProps = Readonly<{
   locked?: boolean;
   accessibilityLabel: string;
   disabled: boolean;
+  /** Drawn instead of the label, which then only names the key. */
+  icon?: ImageSourcePropType;
   label: string;
   onPress: () => void;
   testID: string;
 }>;
 
-function TerminalToolbarButton({active = false, locked = false, accessibilityLabel, disabled, label, onPress, testID}: TerminalToolbarButtonProps): React.JSX.Element {
+function TerminalToolbarButton({active = false, locked = false, accessibilityLabel, disabled, icon, label, onPress, testID}: TerminalToolbarButtonProps): React.JSX.Element {
   return (
     <Pressable
       accessibilityLabel={locked ? `${accessibilityLabel}, locked` : accessibilityLabel}
@@ -31,7 +35,9 @@ function TerminalToolbarButton({active = false, locked = false, accessibilityLab
       onPress={onPress}
       style={[styles.keyButton, active && styles.modifierButtonActive]}
       testID={testID}>
-      <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive, disabled && styles.keyButtonTextDisabled]}>{locked ? `${label} ●` : label}</Text>
+      {icon === undefined
+        ? <Text adjustsFontSizeToFit maxFontSizeMultiplier={1.3} numberOfLines={1} style={[styles.keyButtonText, active && styles.modifierButtonTextActive, disabled && styles.keyButtonTextDisabled]}>{locked ? `${label} ●` : label}</Text>
+        : <Image source={icon} style={[styles.keyButtonIcon, disabled && styles.keyButtonTextDisabled]} />}
     </Pressable>
   );
 }
@@ -125,7 +131,7 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
             <TerminalToolbarButton accessibilityLabel="Escape" disabled={!running} label="ESC" onPress={onEscape} testID="terminal-key-esc" />
             <TerminalToolbarButton accessibilityLabel="Slash" disabled={!running} label="/" onPress={() => onTerminalKey('/')} testID="terminal-key-slash" />
             <TerminalToolbarButton accessibilityLabel="Dash" disabled={!running} label="―" onPress={() => onTerminalKey('-')} testID="terminal-key-dash" />
-            <TerminalToolbarButton accessibilityLabel={keyboardVisible ? 'Hide keyboard' : 'Show keyboard'} disabled={!running} label={keyboardVisible ? 'HIDE' : 'SHOW'} onPress={onKeyboardToggle} testID="terminal-keyboard-toggle" />
+            <TerminalToolbarButton accessibilityLabel={keyboardVisible ? 'Hide keyboard' : 'Show keyboard'} disabled={!running} icon={keyboardVisible ? KEYBOARD_HIDE_ICON : KEYBOARD_ICON} label="KEYBOARD" onPress={onKeyboardToggle} testID="terminal-keyboard-toggle" />
             <TerminalToolbarButton accessibilityLabel="Arrow up" disabled={!running} label="↑" onPress={() => onArrow('A')} testID="terminal-key-arrow-up" />
             <TerminalToolbarButton accessibilityLabel="Paste" disabled={!running} label="PASTE" onPress={onPaste} testID="terminal-key-paste" />
             {toolchain === 'codex' && running ? (
@@ -166,6 +172,7 @@ const styles = StyleSheet.create({
   keyButton: {alignItems: 'center', backgroundColor: TERMINAL_BACKGROUND, borderRightColor: uiColors.borderSoft, borderRightWidth: 1, flex: 1, justifyContent: 'center', minWidth: 0, paddingHorizontal: 0},
   keyButtonText: {color: TERMINAL_FOREGROUND, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800'},
   keyButtonTextDisabled: {opacity: 0.35},
+  keyButtonIcon: {height: 20, tintColor: TERMINAL_FOREGROUND, width: 20},
   modifierButtonActive: {backgroundColor: uiColors.accent},
   modifierButtonTextActive: {color: TERMINAL_BACKGROUND},
   returnKeyUpper: {backgroundColor: TERMINAL_BACKGROUND, borderColor: uiColors.border, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 1, height: 42, width: 72},

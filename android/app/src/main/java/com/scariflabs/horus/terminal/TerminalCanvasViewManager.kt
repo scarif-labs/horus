@@ -17,6 +17,11 @@ class TerminalCanvasViewManager : SimpleViewManager<TerminalCanvasView>() {
     view.setFrame(frame)
   }
 
+  @ReactProp(name = "selectionClearRequest", defaultInt = 0)
+  fun setSelectionClearRequest(view: TerminalCanvasView, value: Int) {
+    view.setSelectionClearRequest(value)
+  }
+
   @ReactProp(name = "sessionId")
   fun setSessionId(view: TerminalCanvasView, value: String?) {
     view.setNativeSessionId(value)
@@ -64,7 +69,10 @@ class TerminalCanvasViewManager : SimpleViewManager<TerminalCanvasView>() {
 
   override fun getExportedCustomDirectEventTypeConstants(): MutableMap<String, Any> =
     MapBuilder.builder<String, Any>()
-      .put("topNativeFrameMeta", MapBuilder.of("registrationName", "onNativeFrameMeta"))
+      .put(TerminalCanvasView.EVENT_FRAME_META, MapBuilder.of("registrationName", "onNativeFrameMeta"))
+      .put(TerminalCanvasView.EVENT_LINK, MapBuilder.of("registrationName", "onTerminalLink"))
+      .put(TerminalCanvasView.EVENT_TAP, MapBuilder.of("registrationName", "onTerminalTap"))
+      .put(TerminalCanvasView.EVENT_SELECTION, MapBuilder.of("registrationName", "onTerminalSelection"))
       .build()
       .toMutableMap()
 

@@ -1,15 +1,16 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 import {SessionSettingsScreen} from '../src/ui/SessionSettingsScreen';
-import type {SessionSettingsResult} from '../src/terminal/session/sessionSettings';
+import type {SessionSettingsResult, ZshThemeId} from '../src/terminal/session/sessionSettings';
 
-function settings(limit: number): SessionSettingsResult {
+function settings(limit: number, zshTheme: ZshThemeId = 'duellj'): SessionSettingsResult {
   return {
     kind: 'success',
     settings: {
       maxConcurrentSessions: limit,
       minConcurrentSessions: 1,
       maxSupportedConcurrentSessions: 4,
+      zshTheme,
     },
   };
 }
@@ -45,6 +46,43 @@ describe('SessionSettingsScreen', () => {
     await ReactTestRenderer.act(async () => {
       renderer?.unmount();
     });
+  });
+
+  test('shows the saved zsh theme and saves a new one', async () => {
+    const saveZshTheme = jest.fn(async (theme: ZshThemeId) => settings(2, theme));
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<SessionSettingsScreen onBack={() => undefined} readSettings={async () => settings(2, 'minimal')} saveZshTheme={saveZshTheme} />);
+      await Promise.resolve();
+    });
+    const option = (id: string) => renderer!.root.findByProps({testID: `settings-zsh-theme-${id}`});
+    const options = () => renderer!.root.findAll(node => typeof node.props.testID === 'string' && /^settings-zsh-theme-(duellj|robbyrussell|minimal|agnoster)$/.test(node.props.testID) && typeof node.type === 'function');
+    const expand = async () => {
+      await ReactTestRenderer.act(async () => { option('current').props.onPress(); });
+    };
+    // Folded: only the current theme shows.
+    expect(option('current').props.accessibilityLabel).toBe('Shell theme, minimal');
+    expect(options()).toHaveLength(0);
+
+    await expand();
+    expect(option('minimal').props.accessibilityState).toMatchObject({checked: true});
+    expect(option('duellj').props.accessibilityState).toMatchObject({checked: false});
+    await ReactTestRenderer.act(async () => {
+      option('minimal').props.onPress();
+      await Promise.resolve();
+    });
+    expect(saveZshTheme).not.toHaveBeenCalled();
+    expect(option('current').props.accessibilityLabel).toBe('Shell theme, minimal');
+
+    await expand();
+    await ReactTestRenderer.act(async () => {
+      option('agnoster').props.onPress();
+      await Promise.resolve();
+    });
+    expect(saveZshTheme).toHaveBeenCalledWith('agnoster');
+    expect(option('current').props.accessibilityLabel).toBe('Shell theme, agnoster');
+    expect(options()).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
 
   test('opens the documentation from the Help section', async () => {

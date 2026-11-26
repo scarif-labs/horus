@@ -1,0 +1,7 @@
+# F-Droid scanner ignore list
+# Ignores vendored C/C++ dependencies, headers, and build caches during fdroid scanner checks.
+# All vendored libghostty-vt components (including simdutf, highway, and wuffs) are licensed
+# under permissive open-source licenses (MIT / Apache-2.0) documented in THIRD_PARTY_NOTICES.md.
+native/cache/
+native/libghostty-vt/
+android/app/build/generated/libghostty-vt/

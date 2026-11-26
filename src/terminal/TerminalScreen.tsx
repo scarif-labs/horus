@@ -12,6 +12,7 @@ import {
   StatusBar,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {UI_FONT_FAMILY} from '../ui/typography';
@@ -240,6 +241,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const keyboardVisibleRef = React.useRef(keyboardVisible);
   const lastExpandedViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
   const [transcriptPagerOpen, setTranscriptPagerOpen] = React.useState(false);
+  useWindowDimensions();
+  const topInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0;
   const size = terminalSize(
     viewport.height > 0 ? viewport.height / TERMINAL_CELL_HEIGHT : TERMINAL_SESSION_DEFAULT_ROWS,
     viewport.width > 0 ? viewport.width / cellWidth : TERMINAL_SESSION_DEFAULT_COLUMNS,
@@ -333,11 +336,14 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const commitViewport = React.useCallback((nextViewport: TerminalViewport) => {
     const expanded = lastExpandedViewportRef.current;
+    if (expanded !== undefined && nextViewport.width !== expanded.width) {
+      lastExpandedViewportRef.current = undefined;
+    }
     // Keep the largest hidden-keyboard viewport. Android can dispatch the
     // shrinking layout before keyboardDidShow, so a low intermediate height
     // must not replace the geometry we need to restore on keyboardDidHide.
     if (!keyboardVisibleRef.current &&
-      (expanded === undefined || nextViewport.height >= expanded.height || nextViewport.width !== expanded.width)) {
+      (lastExpandedViewportRef.current === undefined || nextViewport.height >= (lastExpandedViewportRef.current?.height ?? 0))) {
       lastExpandedViewportRef.current = nextViewport;
     }
     const previous = viewportRef.current;
@@ -348,6 +354,9 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const scheduleViewportCommit = React.useCallback((nextViewport: TerminalViewport) => {
     pendingViewportRef.current = nextViewport;
+    if (lastExpandedViewportRef.current !== undefined && nextViewport.width !== lastExpandedViewportRef.current.width) {
+      lastExpandedViewportRef.current = undefined;
+    }
     if (viewportRef.current.width === 0 || viewportRef.current.height === 0) {
       pendingViewportRef.current = undefined;
       commitViewport(nextViewport);
@@ -527,7 +536,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       keyboardVisibleRef.current = false;
       setKeyboardVisible(false);
       const expanded = lastExpandedViewportRef.current;
-      if (expanded !== undefined) scheduleViewportCommit(expanded);
+      const currentWidth = viewportRef.current.width;
+      if (expanded !== undefined && (currentWidth <= 0 || expanded.width === currentWidth)) {
+        scheduleViewportCommit(expanded);
+      }
     });
     return () => {
       showSubscription.remove();
@@ -1156,7 +1168,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     const requested = requestedSizeRef.current;
     if (requested?.rows === size.rows && requested.columns === size.columns) return;
     const expandedViewport = lastExpandedViewportRef.current;
-    const expandedRows = expandedViewport === undefined
+    const currentWidth = viewportRef.current.width;
+    const expandedRows = expandedViewport === undefined || (currentWidth > 0 && expandedViewport.width !== currentWidth)
       ? undefined
       : terminalSize(expandedViewport.height / TERMINAL_CELL_HEIGHT, size.columns).rows;
     // The Android IME changes the React viewport height, but it should not
@@ -1212,21 +1225,20 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   return (
     <>
       <StatusBar barStyle="light-content" />
-      <View style={styles.safeArea} testID="terminal-screen">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} collapsable={false} importantForAccessibility={copyTextOpen ? 'no-hide-descendants' : 'auto'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
+      <View style={[styles.safeArea, {paddingTop: topInset}]} testID="terminal-screen">
+        <KeyboardAvoidingView behavior="padding" collapsable={false} importantForAccessibility={copyTextOpen ? 'no-hide-descendants' : 'auto'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
           <TerminalHeader onBack={onBack} onHome={onHome} />
 
-          <View onLayout={handleOutputLayout} style={styles.output}>
+          <View style={styles.output}>
             <TerminalGrid
               frame={frame}
               nativeSessionId={nativeSessionId}
-              nativeRows={requestedSizeRef.current?.rows ?? size.rows}
+              nativeRows={nativeSessionId !== undefined ? size.rows : (requestedSizeRef.current?.rows ?? size.rows)}
               nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
               cellWidth={cellWidth}
               running={running}
               onNativeScreenChange={setNativeScreen}
               onCellWidth={measureCellWidth}
-              onTap={focusTerminalInput}
               onLinkPress={openTerminalLink}
               onSwipe={handleOutputSwipe}
               onMouseWheel={handleOutputMouseWheel}
@@ -1363,7 +1375,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
           />}
         </KeyboardAvoidingView>
         {copyTextOpen ? (
-          <View accessibilityViewIsModal style={styles.copyTextOverlay} testID="terminal-copy-text-screen">
+          <View accessibilityViewIsModal style={[styles.copyTextOverlay, {top: topInset}]} testID="terminal-copy-text-screen">
             <View style={styles.copyTextHeader}>
               <Text style={styles.copyTextTitle}>TERMINAL TEXT</Text>
               <Pressable accessibilityLabel="Back to terminal" accessibilityRole="button" onPress={closeCopyText} style={styles.copyTextBack} testID="terminal-copy-text-back">
@@ -1386,7 +1398,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 }
 
 const styles = StyleSheet.create({
-  safeArea: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0},
+  safeArea: {backgroundColor: TERMINAL_BACKGROUND, flex: 1},
   keyboardRoot: {flex: 1},
   floatingHeader: {alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end', left: 0, paddingHorizontal: 12, position: 'absolute', right: 0, top: 8, zIndex: 10},
   floatingGroup: {alignItems: 'center', borderColor: 'rgba(48, 56, 59, 0.65)', borderRadius: 22, borderWidth: 1, flexDirection: 'row', height: 44, justifyContent: 'center', paddingHorizontal: 5},
@@ -1398,7 +1410,7 @@ const styles = StyleSheet.create({
   logToggleText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
   historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
   keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
-  copyTextOverlay: {backgroundColor: TERMINAL_BACKGROUND, bottom: 0, elevation: 30, left: 0, position: 'absolute', right: 0, top: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0, zIndex: 30},
+  copyTextOverlay: {backgroundColor: TERMINAL_BACKGROUND, bottom: 0, elevation: 30, left: 0, position: 'absolute', right: 0, zIndex: 30},
   copyTextHeader: {alignItems: 'center', borderBottomColor: uiColors.border, borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 54, paddingHorizontal: 14},
   copyTextTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.7},
   copyTextBack: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 36, minWidth: 66, paddingHorizontal: 10},
