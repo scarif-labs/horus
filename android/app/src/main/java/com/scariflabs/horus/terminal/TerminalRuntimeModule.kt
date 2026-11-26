@@ -411,7 +411,7 @@ class TerminalRuntimeModule(
       promise.resolve(sessionSettingsError("internal_error"))
       return
     }
-    promise.resolve(sessionSettingsSuccess(sessionSettings.readLimit()))
+    promise.resolve(sessionSettingsSuccess())
   }
 
   override fun getDownloadSources(promise: Promise) {
@@ -465,7 +465,26 @@ class TerminalRuntimeModule(
       promise.resolve(sessionSettingsError("internal_error"))
       return
     }
-    promise.resolve(sessionSettingsSuccess(limit))
+    promise.resolve(sessionSettingsSuccess())
+  }
+
+  /** Applies to shells started after the change. */
+  override fun setZshTheme(request: ReadableMap, promise: Promise) {
+    if (isInvalidated()) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    val raw = if (request.hasKey("zshTheme") && request.getType("zshTheme") == ReadableType.String) request.getString("zshTheme") else null
+    val theme = ZshTheme.fromId(raw)
+    if (theme == null) {
+      promise.resolve(sessionSettingsError("invalid_request"))
+      return
+    }
+    if (!sessionSettings.writeZshTheme(theme)) {
+      promise.resolve(sessionSettingsError("internal_error"))
+      return
+    }
+    promise.resolve(sessionSettingsSuccess())
   }
 
   override fun getDebugLog(promise: Promise) {
@@ -1253,11 +1272,12 @@ class TerminalRuntimeModule(
     sources.npmRegistry?.let { putString("npmRegistry", it) }
   }
 
-  private fun sessionSettingsSuccess(limit: Int): WritableMap = Arguments.createMap().apply {
+  private fun sessionSettingsSuccess(): WritableMap = Arguments.createMap().apply {
     putString("status", "success")
-    putInt("maxConcurrentSessions", limit)
+    putInt("maxConcurrentSessions", sessionSettings.readLimit())
     putInt("minConcurrentSessions", TerminalSessionContract.MIN_ACTIVE_SESSIONS)
     putInt("maxSupportedConcurrentSessions", TerminalSessionContract.MAX_ACTIVE_SESSIONS)
+    putString("zshTheme", sessionSettings.readZshTheme().id)
   }
 
   private fun sessionSettingsError(errorCode: String): WritableMap = Arguments.createMap().apply {

@@ -39,6 +39,7 @@ class TerminalSessionSpecFactory(
     locateProotRuntimeUncached()
   }
   private val downloadSourceSettings = DownloadSourceSettings.forStorageRoot(context.filesDir)
+  private val sessionSettings = TerminalSessionSettings(File(paths.base, "settings/session-settings.json"))
   private val store = DistroStoreCore(
     paths = paths,
     downloader = HttpArchiveDownloader(),
@@ -98,6 +99,7 @@ class TerminalSessionSpecFactory(
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
         downloadSources = downloadSourceSettings.read(),
+        zshTheme = sessionSettings.readZshTheme(),
       )
       val launch = if (toolchainTarget == null) {
         launcher.interactiveShellLaunchSpec(
@@ -180,6 +182,7 @@ class TerminalSessionSpecFactory(
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
         downloadSources = downloadSourceSettings.read(),
+        zshTheme = sessionSettings.readZshTheme(),
       )
       if (launcher.hasProvisionedToolchain(rootfsDir, guestHomeDir, target)) {
         ProvisionBuildOutcome.Ready(target)
@@ -226,6 +229,7 @@ class TerminalSessionSpecFactory(
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = ::activeDnsServers,
         downloadSources = downloadSourceSettings.read(),
+        zshTheme = sessionSettings.readZshTheme(),
       )
       val guestHomeDir = activeGuestHome(null)
       // The active user's home may postdate the pairing; give it the paired keys.

@@ -45,4 +45,26 @@ class TerminalSessionSettingsTest {
       }
     }
   }
+
+  @Test
+  fun `zsh theme defaults, round-trips, and keeps the other settings`() {
+    val root = Files.createTempDirectory("horus-session-settings-theme").toFile()
+    try {
+      val file = root.resolve("settings/session-settings.json")
+      val settings = TerminalSessionSettings(file)
+      assertEquals(ZshTheme.DEFAULT, settings.readZshTheme())
+      assertTrue(settings.writeLimit(TerminalSessionContract.MAX_ACTIVE_SESSIONS))
+      assertTrue(settings.writeZshTheme(ZshTheme.AGNOSTER))
+      assertEquals(ZshTheme.AGNOSTER, settings.readZshTheme())
+      assertEquals(TerminalSessionContract.MAX_ACTIVE_SESSIONS, settings.readLimit())
+
+      // A theme id from a newer build falls back to the default.
+      file.writeText("{\"zshTheme\":\"spaceship\"}")
+      assertEquals(ZshTheme.DEFAULT, settings.readZshTheme())
+    } finally {
+      Files.walk(root.toPath()).use { paths ->
+        paths.sorted(Comparator.reverseOrder()).forEach { path -> Files.deleteIfExists(path) }
+      }
+    }
+  }
 }

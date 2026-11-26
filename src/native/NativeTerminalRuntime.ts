@@ -132,6 +132,7 @@ export type SessionSettingsResponse = {
   maxConcurrentSessions?: number;
   minConcurrentSessions?: number;
   maxSupportedConcurrentSessions?: number;
+  zshTheme?: string;
   errorCode?: TerminalRuntimeErrorCode;
 };
 
@@ -150,6 +151,10 @@ export type SetDownloadSourcesRequest = {
 
 export type SetSessionLimitRequest = {
   maxConcurrentSessions: number;
+};
+
+export type SetZshThemeRequest = {
+  zshTheme: string;
 };
 
 export type TerminalDebugLogResponse = {
@@ -563,6 +568,8 @@ export interface Spec extends TurboModule {
   getRuntimeStatus(): Promise<TerminalRuntimeStatusResponse>;
   getSessionSettings(): Promise<SessionSettingsResponse>;
   setSessionLimit(request: SetSessionLimitRequest): Promise<SessionSettingsResponse>;
+  /** The guest zsh prompt, for shells started from now on. */
+  setZshTheme(request: SetZshThemeRequest): Promise<SessionSettingsResponse>;
   /** The Alpine mirror and npm registry used for downloads. */
   getDownloadSources(): Promise<DownloadSourcesResponse>;
   setDownloadSources(request: SetDownloadSourcesRequest): Promise<DownloadSourcesResponse>;
